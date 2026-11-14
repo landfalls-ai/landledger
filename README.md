@@ -7,5 +7,8 @@ stay the books of record.
 
 Clickland measures, Landledger accounts, Landflow acts, Landbright says who, Datarails reports.
 
-Status: **plan and prototype.** Start at [docs/plan.md](docs/plan.md), then [docs/architecture.md](docs/architecture.md)
-and [docs/ui.md](docs/ui.md). Open `ui/prototype.html` in a browser for the clickable console.
+Status: **wave 1 foundations built**: exact money in micro-units, FOCUS 1.4 cost records with ledger-style corrections
+and lockable months, sign-in with Landbright, API keys, the hash-chained audit log, webhooks, and the console's shell
+with Rates and rules. Ingest, allocation and the money screens are next. Start at [docs/plan.md](docs/plan.md), then
+[docs/architecture.md](docs/architecture.md) and [docs/ui.md](docs/ui.md); to run it, [docs/development.md](docs/development.md).
+Open `ui/prototype.html` in a browser for the clickable console.

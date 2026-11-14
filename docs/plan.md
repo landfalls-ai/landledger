@@ -14,7 +14,8 @@ explained. Landledger is management reporting (showback); the accounting system 
 
 1. **Agents request; people decide.** No key, token or tool lets an agent approve.
 2. **Every figure says whether it is estimated or invoiced.** Notional cluster cost never goes to the books as actuals.
-3. **Money is exact.** Integer minor units with a currency; decimal rates; FX by date.
+3. **Money is exact.** Amounts in integer micro-units (10⁻⁶) with a currency, rounded to the minor unit only when
+   posted or shown; decimal rates; FX by date ([money.md](money.md), refined by spec 001).
 4. **Nothing is edited.** Records, decisions and the audit log are appended; closed months lock.
 5. **Landledger reads the family; nobody depends on it.** If it is down, flows wait and nothing else breaks.
 6. **Local only, fakes first.** OrbStack, development credentials, a fake Datarails; real outside services wait for

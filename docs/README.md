@@ -4,6 +4,9 @@
 |---|---|
 | [plan.md](plan.md) | The waves, the principles, sibling changes, measures, open decisions |
 | [architecture.md](architecture.md) | Processes, code map, data, jobs, the land family's interfaces, controls |
+| [development.md](development.md) | Setup, ports, commands, where each area's code starts, conventions, how to check a change |
+| [money.md](money.md) | Micro-units, the two rounding modes, splits, FX, records and corrections, periods |
+| [reference/api.md](reference/api.md), [reference/env.md](reference/env.md) | Every route and every environment variable |
 | [ui.md](ui.md) | The console's screens and the rules they follow; `../ui/prototype.html` is the clickable version |
 | [research.md](research.md) | Wave 0's study on one page: what OpenCost and FOCUS 1.4 teach, what the sources give today, the decisions (D1–D15) and what is still open |
 | [research/opencost.md](research/opencost.md) | OpenCost v1.121.3 read by file and line: the cost model, max(request, usage), idle, shared cost, custom pricing, the API, what Landledger takes, changes or rejects |

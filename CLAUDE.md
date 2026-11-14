@@ -1,7 +1,9 @@
 # Landledger
 
-The land family's cost subledger for technology and AI spend (see README.md). Today the repository holds the plan, the
-architecture, the screen spec and a static prototype. No product code yet.
+The land family's cost subledger for technology and AI spend (see README.md). A pnpm + Nx monorepo: `apps/api`
+(Fastify), `apps/console` (React + Vite), `libs/money`, `libs/focus`, `libs/contracts`, `libs/schema`, `libs/tokens`;
+Postgres in `deploy/compose.infra.yml`. Wave 1's foundations are built (money, records, periods, sign-in, the shell);
+ingest, allocation and the money screens are next.
 
 ## Read first
 
@@ -9,16 +11,29 @@ architecture, the screen spec and a static prototype. No product code yet.
 - `docs/plan.md`: the waves, the principles, the changes asked of sibling repos, the open decisions.
 - `docs/architecture.md`: processes, code map, data, jobs, and how it meets each land product.
 - `docs/ui.md` and `ui/prototype.html`: the console's screens.
+- `docs/development.md`: setup, ports, commands, where each area's code starts, how to check a change.
+- `docs/money.md`: micro-units, the two rounding modes, splits, corrections, periods.
 
 ## Rules
 
 - **Agents request; people decide.** Nothing an agent holds (API key, MCP session, token) may approve a request.
-- **Money is exact:** integer minor units with an ISO 4217 code; rates as decimals; never floats.
-- **Append only:** cost records, decisions and the audit log are never updated; locked periods never change.
+- **Money is exact:** amounts are bigint **micro-units** (10⁻⁶ of the major unit) with an ISO 4217 code; rates and
+  quantities exact decimals from strings; never floats. Computed amounts round half-even to the micro-unit; posted or
+  shown amounts round half away from zero to the currency's minor unit (`docs/money.md`).
+- **Append only:** cost records, decisions and the audit log are never updated; locked periods never change. A
+  correction is a reversal and a re-entry (FOCUS ledger style); a correction to a locked month goes to the open month
+  with `ChargeClass = Correction`.
 - **Every figure is labelled** `estimated` or `invoiced`; notional cluster cost never goes to the books as actuals.
 - Spec-driven (the Landbright method): a feature starts as `specs/NNN-name/` (spec, plan, tasks).
 - Docs move with the code: each change updates its page, `docs/limitations.md` and `docs/roadmap.md` when they exist,
   and gets a row in `docs/history.md`.
+
+## Checking a change
+
+```bash
+pnpm verify                 # format, typecheck, lint, unit tests, build
+pnpm test:integration       # against the landledger-infra Postgres (pnpm dev:up first)
+```
 
 ## Local only
 

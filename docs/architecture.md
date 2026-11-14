@@ -28,8 +28,8 @@ apps/api            routes, jobs, MCP server, SCIM server, webhooks out
 apps/console        the finance console
 apps/views          the MCP App view
 libs/contracts      zod schemas and types shared by everything (the API contract)
-libs/money          Money (integer minor units + ISO 4217 code), Rate (exact decimal), FX by date; no floats
-libs/focus          FOCUS 1.4 column names and checks, and Landledger's x_ extension columns
+libs/money          Money (bigint micro-units + ISO 4217 code), Decimal, Rate and Quantity, split, FX by date; no floats
+libs/focus          the 45 FOCUS 1.4 columns kept and the x_ columns, check(record), reverse and correct
 libs/allocation     the rules engine: selectors → cost center, team, product, P&L class, capitalisable
 libs/schema         Postgres migrations (append-only list)
 libs/tokens         @land/tokens, copied from Landflow with a drift test (as Clickland does)
@@ -41,12 +41,13 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 
 | Table | Holds | Changes |
 |---|---|---|
-| `cost_records` | one row per resource, charge and day, in FOCUS 1.4 columns (`ChargePeriodStart`, `ChargeCategory`, `ServiceName`, `ResourceId`, `ConsumedQuantity`, `ConsumedUnit`, `ListUnitPrice`, `BilledCost`, `EffectiveCost`, `BillingCurrency`, `Tags`) plus `x_Basis` (`estimated` or `invoiced`), `x_Source`, `x_RateCardVersion`, `x_IngestRun` | append only; a correction is a new row with `ChargeClass = Correction` in the open period |
+| `cost_records` | one row per resource, charge and day in 45 FOCUS 1.4 columns ([research/focus.md](research/focus.md) §3; amounts as bigint micro-units, partitioned by billing month), plus `x_RecordId`, `x_Basis` (`estimated` or `invoiced`), `x_Source`, `x_SourceKey`, `x_SourceCost`, `x_RateCardVersion`, `x_IngestRunId`, `x_CorrectionOfId`, `x_WorkflowId`, `x_AgentId`, `x_ActorId`; `cost_records_focus` shows them under FOCUS names | append only; a correction is a reversal (additive columns negated, `x_CorrectionOfId` set) and a re-entry; `ChargeClass = Correction` only for a locked month, booked in the open month with the original charge day ([money.md](money.md)) |
+| `ingest_runs`, `provisional_usage` | each ingest run (source, day, counts, warnings, outcome); today's figures so far, same row shape | a run is finished once; provisional rows are replaced every hour and never summed with records |
 | `allocations` | each record's split to cost center, team, product, P&L class, capitalisable flag, with the rule and its version | rebuilt for open periods only |
 | `cost_centers`, `teams`, `products` | the dimensions, with owners (Landbright identities) | versioned |
-| `rate_cards`, `rate_card_versions` | prices per unit: vCPU-hour, GiB-hour, GB-month, per million tokens per model | a new version is a request; effective-dated |
+| `rate_cards`, `rate_card_versions`, `rate_lines` | prices per FOCUS pricing unit: `Core-Hours`, `GiB-Hours`, `GB-Months`, `GB`, `1000000 Tokens` per model | a version is a proposal until a person approves it; then its lines never change; effective-dated |
 | `allocation_rules` | ordered selectors (namespace, label, service, agent, workflow, provider) and shared-cost splits | a change is a request; effective-dated |
-| `fx_rates` | rate per currency pair and date, with its source | append only |
+| `fx_rates` | rate per currency pair and date, with its source | append only; a conversion records the rate's id |
 | `budgets` | amount per cost center and month, version, source (Datarails, CSV, entered) | versioned |
 | `forecasts` | per cost center and month, from drivers (tokens, pod-hours, runs), with a range | recomputed daily |
 | `requests` | a proposed spend: kind, amount (monthly or once), cost center, evidence, origin (Landflow run, pull request, Landbright request, console) | status moves forward only |
@@ -55,7 +56,7 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 | `reservations` | budget reserved by an approved request until real cost arrives | reserved → consumed or released |
 | `contracts` | vendor, product, cost center, value, seats, term, renewal and notice dates | versioned |
 | `invoices`, `reconciliations` | provider invoices and how estimated usage matched them | append only |
-| `periods` | each month: open, closing, locked; who locked it | locked is final |
+| `periods` | each month: open, closing, locked; who closed and locked it | one step forward at a time, by a person; locked is final and refuses inserts |
 | `audit_log` | every change above, each entry carrying the hash of the one before | append only |
 | `outbox` | webhook deliveries (Standard Webhooks, the Clickland pattern) | retried, then kept |
 
