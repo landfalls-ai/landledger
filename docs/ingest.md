@@ -75,10 +75,17 @@ Local models (Ollama) cost 0 on their own line: their hardware is in the cluster
   usage per sample), at the rate card's prices. Per cluster and resource, **idle** = capacity × rate − Σ allocated
   cost, as its own record (`clickland:<day>:<cluster>:idle:<resource>`, tag `idle=true`, service *Cluster idle*,
   unit price empty because the quantity is a remainder). A negative idle is kept as is, with a warning.
-- **Docker** containers have no requests and no host capacity: priced on usage, no idle. Their namespace is
-  `compose:<project>`.
-- **Storage**: GB-months for volume claims with their own capacity; a claim on the node's own filesystem is not priced
-  separately (it is in the node) and gives a warning.
+- **Docker** containers have no requests: priced on usage. Their namespace is `compose:<project>`. On this machine the
+  Docker engine and OrbStack's Kubernetes node are one VM, so the node's capacity already includes what Docker uses:
+  with `LANDLEDGER_DOCKER_SHARES_CLUSTER` (default `orbstack`) Docker's usage is taken out of that node's idle, Docker
+  keeping its own rows, and the day adds up to capacity × rate once (idle method version 2). `none` for a Docker host
+  of its own: then Docker is priced on top, with no idle.
+- **Storage**: GB-months for volume claims of their own size. A claim on the node's own filesystem (local-path)
+  reports the node disk's size, not its own: Clickland flags it, and a claim of the same cluster within 1% of a flagged
+  claim's size is taken as the node disk too. Such a claim is priced at its requested size when the rollup gives it
+  (`requestedGiBHours`); otherwise it is kept as a quantity only (zero cost, `PricingCategory` *Other*,
+  `SkuPriceDetails.Applied = false`, method `LandledgerClaimOnNodeDisk`) with a coverage warning, so the disk is never
+  priced once per claim.
 - **Network**: bytes as zero-cost rows (quantity only) until finance decides how egress is priced
   ([research.md](research.md) §7).
 
@@ -102,4 +109,5 @@ instrumentation patches it). The cost figures go back as metrics: [spend.md](spe
 
 - Clickland adds workload owners and pod labels: until then a Deployment's name is derived from its pod name and label
   rules match nothing.
-- The insights-only backfill, network pricing, a Docker host's capacity.
+- The insights-only backfill, network pricing, a Docker host's own capacity (when it is not the cluster's node).
+- Clickland does not report a claim's requested size yet, so claims on the node disk are quantity-only.

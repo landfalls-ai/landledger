@@ -383,7 +383,15 @@ export interface ClicklandDayInput {
   day: string;
   rollup: ClicklandRollup;
   version: PricedVersion;
+  /**
+   * The Kubernetes cluster whose node the Docker engine shares (OrbStack: one machine runs both). Its capacity is the
+   * whole machine, so Docker's usage is taken out of that node's idle: the day adds up to capacity × rate once.
+   */
+  dockerSharesCluster?: string | null;
 }
+
+/** Claims whose size is within this share of a claim flagged on the node's filesystem report the node disk too. */
+const NODE_DISK_TOLERANCE = '0.01';
 
 const EMPTY = '-';
 const dec = (s: string | null | undefined) => Decimal.parse(s ?? '0');
@@ -392,8 +400,10 @@ const dec = (s: string | null | undefined) => Decimal.parse(s ?? '0');
  * A UTC day of Clickland's rollup as records, OpenCost's model (docs/research.md D1): per cluster and resource (CPU,
  * memory) one row per workload container for its allocated quantity, and one idle row for capacity − Σ allocated, the
  * two adding up exactly to allocatable × rate (FOCUS split-cost columns: idle has no AllocatedResourceId). Docker
- * containers are priced on usage, with no idle. Storage: persistent volume claims' capacity, except claims on the
- * node's own disk, which report the disk (a warning). Network: bytes sent, as a quantity with no price.
+ * containers are priced on usage; when the engine shares a cluster's node (`dockerSharesCluster`) their usage comes out
+ * of that node's idle, so nothing is priced twice; on a host of its own Docker has no idle. Storage: persistent volume
+ * claims' capacity; a claim on the node's own disk reports the disk's size, so it is priced at its requested size when
+ * the rollup has it, else kept as a quantity with no price. Network: bytes sent, as a quantity with no price.
  */
 export function buildClicklandDay(input: ClicklandDayInput): BuiltDay {
   const { day, rollup, version } = input;
@@ -457,12 +467,27 @@ export function buildClicklandDay(input: ClicklandDayInput): BuiltDay {
 
   const byCluster = new Map<string, Row[]>();
   for (const r of rows.values()) byCluster.set(r.cluster, [...(byCluster.get(r.cluster) ?? []), r]);
+  // Docker on the same machine as a cluster's node: priced with that node, so its usage comes out of the node's idle.
+  const sharedWith =
+    input.dockerSharesCluster && byCluster.has('docker') && clusters.has(input.dockerSharesCluster)
+      ? input.dockerSharesCluster
+      : null;
+  const priceLists = new Map<string, Row[]>();
+  for (const [cluster, list] of byCluster)
+    if (!(sharedWith && cluster === 'docker'))
+      priceLists.set(cluster, [...list, ...(cluster === sharedWith ? byCluster.get('docker')! : [])]);
+  if (sharedWith && !byCluster.has(sharedWith)) priceLists.set(sharedWith, byCluster.get('docker')!);
+  if (input.dockerSharesCluster && byCluster.has('docker') && !sharedWith)
+    warnings.push(
+      `Clickland: no node capacity for ${input.dockerSharesCluster}, which the Docker engine shares; Docker priced on its own`,
+    );
 
-  for (const [cluster, list] of byCluster) {
+  for (const [cluster, list] of priceLists) {
     const docker = cluster === 'docker';
     const cap = docker ? null : (clusters.get(cluster) ?? null);
     if (!docker && !cap)
       warnings.push(`Clickland: no node capacity for cluster ${cluster}; its rows are priced with no idle`);
+    const withDocker = cluster === sharedWith;
     for (const resource of ['cpu', 'memory'] as const) {
       const line = clusterLine(version, resource);
       if (!line) {
@@ -512,12 +537,18 @@ export function buildClicklandDay(input: ClicklandDayInput): BuiltDay {
               CapacityCost: p.capacityCost!.toDecimal().toString(),
               Remainder: true,
             },
-            ChargeDescription: `Idle ${resource === 'cpu' ? 'CPU' : 'memory'} on ${cluster}: capacity less what workloads were allocated`,
+            ChargeDescription: `Idle ${resource === 'cpu' ? 'CPU' : 'memory'} on ${cluster}: capacity less what workloads${withDocker ? ' and the Docker containers on the same machine' : ''} were allocated`,
             AllocatedMethodId: 'LandledgerK8sMaxRequestUsage',
-            AllocatedMethodDetails: {
-              Basis: 'capacity − Σ allocated; cost = capacity × rate − Σ allocated costs',
-              Version: 1,
-            },
+            AllocatedMethodDetails: withDocker
+              ? {
+                  Basis:
+                    'capacity − Σ allocated (pods, and Docker containers on the same node by usage); cost = capacity × rate − Σ allocated costs',
+                  Version: 2,
+                }
+              : {
+                  Basis: 'capacity − Σ allocated; cost = capacity × rate − Σ allocated costs',
+                  Version: 1,
+                },
             AllocatedResourceId: null,
             AllocatedResourceName: 'Idle',
             Tags: { resource, idle: 'true', cluster, service: 'Cluster idle', namespace: '' },
@@ -527,6 +558,10 @@ export function buildClicklandDay(input: ClicklandDayInput): BuiltDay {
         );
       }
     }
+  }
+  for (const [cluster, list] of byCluster) {
+    const docker = cluster === 'docker';
+    const cap = docker ? null : (clusters.get(cluster) ?? null);
     // Network: bytes sent, a quantity with no price until finance decides what counts as egress.
     for (const r of list) {
       if (!r.tx || r.tx.isZero()) continue;
@@ -556,44 +591,89 @@ export function buildClicklandDay(input: ClicklandDayInput): BuiltDay {
     }
   }
 
-  // Storage: claims' capacity × hours as GB-months.
+  // Storage: claims' capacity × hours as GB-months. A claim on the node's own filesystem (local-path) reports the node
+  // disk's size, not its own: Clickland flags it, and a claim of the same cluster within 1% of a flagged one's size is
+  // the node disk too (Clickland flags by sample, and a sample a little off the disk's size misses its flag). Such a
+  // claim is priced at its requested size when the rollup has it, else kept as a quantity with no price.
   const storage = clusterLine(version, 'storage');
-  const shared: string[] = [];
+  const flagged = rollup.volumes.filter((v) => v.sharesNodeFilesystem);
+  const onNodeDisk = (v: (typeof rollup.volumes)[number]) =>
+    v.sharesNodeFilesystem ||
+    flagged.some(
+      (f) =>
+        f.cluster === v.cluster &&
+        !dec(f.capacityGiBHours).isZero() &&
+        dec(v.capacityGiBHours)
+          .minus(dec(f.capacityGiBHours))
+          .abs()
+          .compare(dec(f.capacityGiBHours).times(NODE_DISK_TOLERANCE)) <= 0,
+    );
+  const unpriced: string[] = [];
+  const byRequest: string[] = [];
   for (const v of rollup.volumes) {
-    if (v.sharesNodeFilesystem) {
-      shared.push(`${v.namespace}/${v.claim}`);
+    const nodeDisk = onNodeDisk(v);
+    const requested = v.requestedGiBHours == null ? null : dec(v.requestedGiBHours);
+    const cap = clusters.get(v.cluster);
+    const common = {
+      ...clusterCommon(v.cluster, false, cap?.nodes ?? []),
+      ServiceCategory: 'Storage' as const,
+      ServiceSubcategory: 'Block Storage',
+      AllocatedResourceId: `k8s:${v.cluster}/${v.namespace}/pvc/${v.claim}`,
+      AllocatedResourceName: `${v.namespace}/${v.claim}`,
+      Tags: { resource: 'storage', cluster: v.cluster, namespace: v.namespace, claim: v.claim, service: v.claim },
+      x_SourceKey: `clickland:${day}:${v.cluster}:${v.namespace}/pvc/${v.claim}:storage`,
+      x_RateCardVersion: version.id,
+    };
+    if (nodeDisk && requested === null) {
+      // The size reported is the node disk's: a quantity, with no price, until the claim's own size is known.
+      unpriced.push(`${v.namespace}/${v.claim}`);
+      records.push(
+        record(day, {
+          ...common,
+          ConsumedQuantity: dec(v.capacityGiBHours),
+          ConsumedUnit: 'GiB-Hours',
+          PricingCategory: 'Other',
+          SkuId: storage?.skuId ?? 'landledger:k8s:storage',
+          SkuMeter: 'Storage (node disk)',
+          SkuPriceId: storage?.skuPriceId ?? 'landledger:k8s:storage',
+          SkuPriceDetails: {
+            Applied: false,
+            Reason:
+              "On the node's own filesystem (local-path): the size reported is the node disk's, and the claim's requested size is not collected",
+          },
+          ChargeDescription: `Volume claim ${v.namespace}/${v.claim} on the node's disk: the node disk's size × hours (not priced)`,
+          AllocatedMethodId: 'LandledgerClaimOnNodeDisk',
+          AllocatedMethodDetails: { Basis: 'quantity only: the node disk, not the claim', Version: 1 },
+        }),
+      );
       continue;
     }
     if (!storage) continue;
-    const quantity = gibHoursToGbMonths(dec(v.capacityGiBHours), version.hoursPerMonth);
+    const gibHours = nodeDisk ? requested! : dec(v.capacityGiBHours);
+    if (nodeDisk) byRequest.push(`${v.namespace}/${v.claim}`);
+    const quantity = gibHoursToGbMonths(gibHours, version.hoursPerMonth);
     if (quantity.isZero()) continue;
-    const cap = clusters.get(v.cluster);
     records.push(
       record(day, {
-        ...clusterCommon(v.cluster, false, cap?.nodes ?? []),
+        ...common,
         ...priced(storage, quantity),
-        ServiceCategory: 'Storage',
-        ServiceSubcategory: 'Block Storage',
-        ConsumedQuantity: dec(v.usedGiBHours),
+        ConsumedQuantity: nodeDisk ? gibHours : dec(v.usedGiBHours),
         ConsumedUnit: 'GiB-Hours',
-        ChargeDescription: `Volume claim ${v.namespace}/${v.claim}: capacity × hours`,
-        AllocatedMethodId: 'LandledgerClaimCapacity',
+        ChargeDescription: `Volume claim ${v.namespace}/${v.claim}: ${nodeDisk ? 'requested size' : 'capacity'} × hours`,
+        AllocatedMethodId: nodeDisk ? 'LandledgerClaimRequest' : 'LandledgerClaimCapacity',
         AllocatedMethodDetails: {
-          Basis: 'claim capacity GiB-hours × 1.073741824 ÷ hours per month',
+          Basis: `claim ${nodeDisk ? 'requested' : 'capacity'} GiB-hours × 1.073741824 ÷ hours per month`,
           HoursPerMonth: version.hoursPerMonth.toString(),
         },
-        AllocatedResourceId: `k8s:${v.cluster}/${v.namespace}/pvc/${v.claim}`,
-        AllocatedResourceName: `${v.namespace}/${v.claim}`,
-        Tags: { resource: 'storage', cluster: v.cluster, namespace: v.namespace, claim: v.claim, service: v.claim },
-        x_SourceKey: `clickland:${day}:${v.cluster}:${v.namespace}/pvc/${v.claim}:storage`,
-        x_RateCardVersion: version.id,
       }),
     );
   }
-  if (shared.length)
+  if (unpriced.length)
     warnings.push(
-      `Storage not priced for ${shared.length} claim(s) on the node's own disk (their size is the disk's): ${shared.join(', ')}`,
+      `Storage not priced for ${unpriced.length} claim(s) on the node's own disk (the size reported is the disk's, and their requested size isn't collected): ${unpriced.join(', ')}`,
     );
+  if (byRequest.length)
+    warnings.push(`Storage priced at the requested size for ${byRequest.length} claim(s) on the node's own disk`);
   return { records, warnings, read: rollup.rows.length + rollup.capacity.length + rollup.volumes.length };
 }
 

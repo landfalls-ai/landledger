@@ -64,6 +64,7 @@ export function createServices(
       service: config.landflow?.service ?? 'landflow-host',
       namespace: config.landflow?.namespace ?? 'landflow-dev',
     },
+    dockerSharesCluster: config.dockerSharesCluster,
     log,
     now,
     // Records entered: allocate the months they landed in (their own, or the open month for a correction).

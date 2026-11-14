@@ -28,6 +28,7 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_LANDFLOW_SERVICE`, `LANDLEDGER_LANDFLOW_NAMESPACE` | `landflow-host`, `landflow-dev` | The service and namespace AI records are tagged with (where Landflow runs) |
 | `LANDLEDGER_CLICKLAND_URL`, `LANDLEDGER_CLICKLAND_KEY` | unset | Clickland's API and a key for `POST /api/usage/rollup`. Unset: no cluster ingest |
 | `LANDLEDGER_CLICKLAND_LABELS` | unset | Pod labels to ask the rollup for, comma-separated |
+| `LANDLEDGER_DOCKER_SHARES_CLUSTER` | `orbstack` | The Kubernetes cluster whose node the Docker engine shares (OrbStack runs both on one machine): Docker's usage comes out of that node's idle, so a day adds up to capacity × rate once. `none` when Docker runs on a host of its own |
 | `LANDLEDGER_CLICKLAND_CONSOLE_URL` | `http://localhost:4711` | Where Explore's *Open in Clickland* links go |
 | `LANDLEDGER_INGEST` | on | `off` stops the hourly ingest tick |
 | `LANDLEDGER_COST_METRICS` | on | `off` stops sending `landledger.cost.*` metrics to Clickland |

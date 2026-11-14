@@ -11,7 +11,8 @@ import { RATE_CARD_V1, seed } from '../src/seed.js';
 import { createServices, type Services } from '../src/services.js';
 import { call, DANA, fakeSources, KEY, TAL, testConfig, YOAV } from './fakes.js';
 
-const config = testConfig();
+// The Docker engine shares OrbStack's node, as it does on this machine.
+const config = testConfig({ dockerSharesCluster: 'orbstack' });
 const sources = fakeSources();
 const { fetchImpl } = sources;
 
@@ -86,10 +87,11 @@ describe.skipIf(!integrationEnabled('db'))('wave 1 against Postgres', () => {
     const [{ net }] =
       await sql`SELECT coalesce(sum(effective_cost_micros), 0)::text AS net FROM cost_records WHERE source = 'landflow'`;
     expect(net).toBe('0');
-    // Capacity × rate still adds up exactly after the correction: 24 × 0.034 + 48 × 0.0045 = 1.032 (+ Docker 0.034).
+    // Capacity × rate still adds up exactly after the correction, Docker included (it shares the node, so it comes out
+    // of idle): 24 × 0.034 + 48 × 0.0045 = 1.032.
     const [{ total }] =
       await sql`SELECT sum(effective_cost_micros)::text AS total FROM cost_records WHERE source = 'clickland'`;
-    expect(total).toBe('1066000');
+    expect(total).toBe('1032000');
   });
 
   it('keeps today provisional and replaces it on every run', async () => {

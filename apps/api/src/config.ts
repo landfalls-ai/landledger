@@ -40,6 +40,11 @@ export interface Config {
   costMetricsEndpoint: string | null;
   /** Ingest every hour (and cost metrics every few minutes) when background jobs run; LANDLEDGER_INGEST=off stops it. */
   ingestJobs: boolean;
+  /**
+   * The Kubernetes cluster whose node the Docker engine runs on (OrbStack runs both in one machine): Docker's usage is
+   * taken out of that node's idle, so the day adds up to capacity × rate once. Null when Docker has its own host.
+   */
+  dockerSharesCluster: string | null;
 }
 
 const expandHome = (path: string) => (path.startsWith('~/') ? `${homedir()}${path.slice(1)}` : path);
@@ -122,5 +127,9 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
         : (env.LANDLEDGER_COST_METRICS_ENDPOINT ??
           `${(env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://127.0.0.1:24318').replace(/\/$/, '')}/v1/metrics`),
     ingestJobs: env.LANDLEDGER_INGEST !== 'off',
+    dockerSharesCluster:
+      (env.LANDLEDGER_DOCKER_SHARES_CLUSTER ?? 'orbstack') === 'none'
+        ? null
+        : (env.LANDLEDGER_DOCKER_SHARES_CLUSTER ?? 'orbstack') || null,
   };
 }

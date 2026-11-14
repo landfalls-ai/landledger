@@ -29,6 +29,7 @@ const config = (over: Partial<Config> = {}): Config => ({
   clicklandConsoleUrl: 'http://localhost:4711',
   costMetricsEndpoint: null,
   ingestJobs: false,
+  dockerSharesCluster: null,
   ...over,
 });
 

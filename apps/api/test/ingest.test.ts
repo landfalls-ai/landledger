@@ -324,6 +324,25 @@ const rollup = ClicklandRollup.parse({
       usedGiBHours: '1',
       sharesNodeFilesystem: true,
     },
+    {
+      // Not flagged, but within 1% of the flagged claim's size: the node disk too.
+      cluster: 'orbstack',
+      namespace: 'landflow-dev',
+      claim: 'landflow-cache-go',
+      capacityGiBHours: '9950',
+      usedGiBHours: '1',
+      sharesNodeFilesystem: false,
+    },
+    {
+      // On the node disk, with its requested size known: priced at that.
+      cluster: 'orbstack',
+      namespace: 'landflow-dev',
+      claim: 'landflow-data',
+      capacityGiBHours: '9999',
+      requestedGiBHours: '73',
+      usedGiBHours: '1',
+      sharesNodeFilesystem: true,
+    },
   ],
   coverage: {
     sources: [
@@ -367,11 +386,49 @@ describe('Clickland usage → records', () => {
     expect(net.ConsumedQuantity!.toString()).toBe('0.5');
   });
 
-  it('prices claims as GB-months, and leaves claims on the node disk unpriced with a warning', () => {
+  it("prices claims as GB-months; a claim on the node's disk at its requested size, else as a quantity only", () => {
     // 730 GiB-hours = 1 GiB-month = 1.073741824 GB-months × 0.10.
     expect(cost('clickland:2026-11-14:orbstack:landflow-dev/pvc/landflow-cache-npm:storage')).toBe('USD 0.107374');
-    expect(out.records.some((r) => r.x_SourceKey.includes('landflow-cache-pypi'))).toBe(false);
-    expect(out.warnings.some((w) => w.includes('landflow-cache-pypi'))).toBe(true);
+    expect(cost('clickland:2026-11-14:orbstack:landflow-dev/pvc/landflow-data:storage')).toBe('USD 0.010737');
+    for (const claim of ['landflow-cache-pypi', 'landflow-cache-go']) {
+      const r = out.records.find(
+        (x) => x.x_SourceKey === `clickland:2026-11-14:orbstack:landflow-dev/pvc/${claim}:storage`,
+      )!;
+      expect(r.EffectiveCost.isZero()).toBe(true);
+      expect(r.PricingCategory).toBe('Other');
+      expect(r.ConsumedUnit).toBe('GiB-Hours');
+      expect((r.SkuPriceDetails as { Applied: boolean }).Applied).toBe(false);
+    }
+    expect(out.warnings.some((w) => w.includes('landflow-cache-pypi, landflow-dev/landflow-cache-go'))).toBe(true);
+    expect(out.warnings.some((w) => w.includes('requested size for 1 claim'))).toBe(true);
+  });
+
+  it('takes Docker out of idle when the engine shares the node: the day adds up to capacity × rate once', () => {
+    const shared = buildClicklandDay({ day: '2026-11-14', rollup, version: VERSION, dockerSharesCluster: 'orbstack' });
+    const of = (resource: string) =>
+      Money.sum(
+        shared.records
+          .filter((r) => (r.Tags as { resource: string }).resource === resource)
+          .map((r) => r.EffectiveCost),
+        'USD',
+      ).toString();
+    expect(of('cpu')).toBe('USD 0.340000'); // 10 core-hours × 0.034: pods, Docker and idle together
+    expect(of('memory')).toBe('USD 0.090000'); // 20 GiB-hours × 0.0045
+    const sharedCost = (key: string) => shared.records.find((r) => r.x_SourceKey === key)?.EffectiveCost.toString();
+    // Docker keeps its own rows; the money moves out of idle.
+    expect(sharedCost('clickland:2026-11-14:docker:clickland-infra/clickhouse/clickland-infra-clickhouse-1:cpu')).toBe(
+      'USD 0.034000',
+    );
+    expect(sharedCost('clickland:2026-11-14:orbstack:idle:cpu')).toBe('USD 0.238000'); // 0.34 − 0.068 − 0.034
+    expect(sharedCost('clickland:2026-11-14:orbstack:idle:memory')).toBe('USD 0.063000'); // 0.09 − 0.018 − 0.009
+    // Not sharing: Docker on top of the node's whole capacity, which double counts on one machine.
+    expect(
+      Money.sum(
+        out.records.filter((r) => (r.Tags as { resource: string }).resource === 'cpu').map((r) => r.EffectiveCost),
+        'USD',
+      ).toString(),
+    ).toBe('USD 0.374000');
+    for (const r of shared.records) expect(valid(r)).toEqual([]);
   });
 
   it('keeps every record within FOCUS and the ledger rules', () => {

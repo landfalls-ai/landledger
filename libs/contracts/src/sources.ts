@@ -135,6 +135,8 @@ export const ClicklandRollup = z.object({
         capacityGiBHours: Q,
         usedGiBHours: Q,
         sharesNodeFilesystem: z.boolean(),
+        /** The claim's requested size × hours, when Clickland collects it (it doesn't yet for local-path claims). */
+        requestedGiBHours: Q.nullish(),
       }),
     )
     .default([]),

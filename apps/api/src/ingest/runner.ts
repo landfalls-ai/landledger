@@ -42,6 +42,8 @@ export interface IngestOptions {
   clickland: ClicklandClient | null;
   /** Where Landflow runs: AI rows name it as the costed service. */
   landflowHost: { service: string; namespace: string };
+  /** The cluster whose node the Docker engine shares (its usage comes out of that node's idle), or null. */
+  dockerSharesCluster?: string | null;
   log: IngestLog;
   now?: () => Date;
   /** After a run that entered records: allocation of the months it touched. */
@@ -276,7 +278,12 @@ export class Ingest {
         `No approved rate card on ${day}: cluster usage is priced only by an approved rate card (approve v1 in Rate cards)`,
       );
     const rollup = await ck.rollup(start, new Date(end.getTime() + 1));
-    const built = buildClicklandDay({ day, rollup, version });
+    const built = buildClicklandDay({
+      day,
+      rollup,
+      version,
+      dockerSharesCluster: this.options.dockerSharesCluster ?? null,
+    });
     const firsts = rollup.coverage.sources
       .map((s) => s.firstSample)
       .filter((s): s is string => !!s)
