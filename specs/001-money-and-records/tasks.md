@@ -31,3 +31,14 @@ Ordered; each task ends with its tests passing.
 - [x] T014 Docs: `docs/money.md` (the units, the two rounding modes and why, splits, corrections), the refined money
       principle in `CLAUDE.md`, `docs/plan.md` and `docs/architecture.md` (micro-units, `x_IngestRunId`, the correction
       rule), `docs/reference/` for the routes, history.
+
+## Review of wave 1 (14 Nov 2026)
+
+- [x] R001 Month views read by billing period, also after a lock; tests.
+- [x] R002 Lock checks: the month has ended, every source-day has a complete run, no provisional or unallocated rows;
+      a controller's override with an audited reason; tests for a mid-month lock and an override.
+- [x] R003 Original cost, currency and `fx_rate_id` on records (0006); a non-USD amount reaching `Money.sum` throws; tests.
+- [x] R004 Invoice ↔ estimate links and the read rule; `cost_center_codes` with FKs; tests.
+- [x] R005 Audit anchor (0007): OTLP span and log, `audit.anchor` webhook, `audit_anchors`; verify reports a cut-off
+      tail; tests.
+- [x] R006 The app role `landledger_app` (0008) and sealed secrets; tests that the app can't update, delete or truncate.

@@ -34,3 +34,11 @@ Ordered; each task ends with its tests passing. Depends on spec 001 and on spec 
       *Done 2026-11-14* except the previewed rule change (T010): the dev rule set approved by the CFO, the shared pool on its own row, the spread view in Explore.
 - [x] T013 Docs: `docs/allocation.md` (rules, first match, the two layers, shares, generations), `docs/reference/` for
       the routes, limitations (label rules wait for Clickland), history.
+
+## Review of wave 1 (14 Nov 2026)
+
+- [x] R001 A late record in a closing month joins the newest generation; tests.
+- [x] R002 Rule set approval by a person only (a trigger); a rebuild records its actor (system for dev); tests.
+- [x] R003 Budgets refused for a locked month; budget codes checked against cost center codes; dev budgets re-seeded
+      against real figures (v2); tests.
+- [x] R004 "Shared pool" on its own row instead of "Not classified".

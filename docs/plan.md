@@ -48,6 +48,11 @@ Each wave ends with something finance can use, checked live, with screenshots at
 - **Built 14 Nov 2026** ([ingest.md](ingest.md), [rate-cards.md](rate-cards.md), [allocation.md](allocation.md),
   [spend.md](spend.md)). Not yet: rule set proposals with a preview, the insights-only backfill, recorded fixtures,
   Approve buttons in the console (approvals are made from a person's signed-in session), invoiced figures.
+- **Reviewed 14 Nov 2026:** every blocker, should-fix and nit fixed (history has a row each): billing-period reads,
+  Docker out of the shared node's idle, a forecast on observed hours, four eyes on line authors, whole-month locks,
+  repricing from the effective date, empty answers that never reverse a day, original currency and invoice links,
+  the audit anchor, sealed secrets and the `landledger_app` role. Node-disk claims stay unpriced until Clickland
+  reports a claim's requested size.
 
 ### Wave 2 · Control the spend
 

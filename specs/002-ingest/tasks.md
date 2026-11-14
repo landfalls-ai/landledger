@@ -46,3 +46,15 @@ Ordered; each task ends with its tests passing. Depends on spec 001's T001–T01
 - [x] T018 Docs: `docs/ingest.md` (sources, keys, completeness, late data, backfill limits), `docs/rate-cards.md`,
       `docs/reference/` (routes, `LANDLEDGER_LANDFLOW_*` and `LANDLEDGER_CLICKLAND_*` variables), limitations
       (network unpriced, storage, cache adjustment), history.
+
+## Review of wave 1 (14 Nov 2026)
+
+- [x] R001 Docker on the shared node comes out of idle (idle method v2); a day totals capacity × rate; tests.
+- [x] R002 Node-disk claims not priced at the node's size (quantity only until Clickland reports requested size); tests.
+- [x] R003 An empty source answer never reverses a day unless forced with an audited reason; tests.
+- [x] R004 Four eyes on rate cards: proposers are users, lines record `added_by`, authors don't approve (0005); AI
+      lines by a signed-in person only; tests.
+- [x] R005 An approved rate card reprices every open-month day from `effective_from`; refused in a locked month; tests.
+- [x] R006 The forecast on Σcost ÷ Σobserved hours per source, "Not enough data yet" under 3 full days, data since;
+      tests with partial days and the 00–02 UTC window.
+- [x] R007 Live re-ingest and screenshots at 390 and 1440 px (`study/wave1-screens/`).
