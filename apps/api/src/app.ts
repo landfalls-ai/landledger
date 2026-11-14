@@ -13,6 +13,17 @@ import {
   RecordsQuery,
   SpendQuery,
   WebhookInput,
+  AppliedInput,
+  CancelInput,
+  CreateRequestInput,
+  DecisionInput,
+  ExceptionsQuery,
+  ProposePolicyInput,
+  RateCardProposalInput,
+  RequestsQuery,
+  ReservationsQuery,
+  ReserveInput,
+  RuleSetProposalInput,
 } from '@landledger/contracts';
 import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyRequest } from 'fastify';
@@ -21,6 +32,7 @@ import { registerAuthRoutes } from './auth.js';
 import { ApiError } from './errors.js';
 import { toCsv, toXlsx, type Sheet } from './export.js';
 import { createMcpServer } from './mcp.js';
+import { registerScim } from './scim.js';
 import { actorOf, identify, type Principal, requireScope, SESSION_COOKIE } from './principal.js';
 import type { Services } from './services.js';
 
@@ -168,6 +180,27 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
     return reply.status(204).send();
   });
 
+  // SCIM tokens (Landbright's push, /scim/v2) ---------------------------------------------------------------------------
+  const ScimTokenInput = z.object({ name: z.string().trim().min(1).max(100) });
+  const person = (r: FastifyRequest, what: string) => {
+    if (r.principal.kind !== 'person' && r.principal.kind !== 'dev')
+      throw new ApiError('forbidden', `A person ${what}; an API key never does`);
+  };
+  app.get('/api/scim/tokens', async (r) => (need(r, 'admin'), { tokens: await services.scimTokens.list() }));
+  app.post('/api/scim/tokens', async (r, reply) => {
+    need(r, 'admin');
+    person(r, 'mints a SCIM token');
+    const { name } = parse(ScimTokenInput, r.body);
+    return reply.status(201).send(await services.scimTokens.create(name, actorOf(r.principal)));
+  });
+  app.delete('/api/scim/tokens/:id', async (r, reply) => {
+    need(r, 'admin');
+    person(r, 'revokes a SCIM token');
+    await services.scimTokens.revoke(parse(Id, r.params).id, r.principal);
+    return reply.status(204).send();
+  });
+  await registerScim(app, services.scim, services.scimTokens);
+
   // Webhooks out ----------------------------------------------------------------------------------------------------
   app.get('/api/webhooks', async (r) => (need(r, 'admin'), { webhooks: await webhooks.list() }));
   app.post('/api/webhooks', async (r, reply) => {
@@ -216,17 +249,17 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
 
   // Rate cards: approval (people only) and the AI lines from Landflow's price table ---------------------------------
   const VersionId = z.object({ id: z.string().min(1).max(100) });
-  app.post('/api/rate-cards/versions/:id/approve', async (r) => {
-    need(r, 'admin');
-    const approved = await rateCards.approve(parse(VersionId, r.params).id, r.principal);
-    // The new prices reach every day from the effective date, not only the days the hourly job re-reads.
-    const runs = await ingest.reprice(
-      approved.effectiveFrom,
-      actorOf(r.principal).actor,
-      `rate card v${approved.version} approved`,
+  // Approving a version is a request now (wave 2): the route answers 409 with the version's request to decide.
+  const foldedIntoRequests = (type: 'rate_card_version' | 'rule_set_version') => async (r: FastifyRequest) => {
+    need(r, 'read');
+    const requestId = await services.proposals.requestForVersion(type, parse(VersionId, r.params).id);
+    throw new ApiError(
+      'conflict',
+      `Approving a ${type === 'rate_card_version' ? 'rate card' : 'rule set'} version is a request now: decide request ${requestId} with POST /api/requests/${requestId}/decisions`,
+      { requestId },
     );
-    return { ...approved, repriced: repricedOf(runs) };
-  });
+  };
+  app.post('/api/rate-cards/versions/:id/approve', foldedIntoRequests('rate_card_version'));
   app.post('/api/rate-cards/versions/:id/ai-lines', async (r, reply) => {
     need(r, 'admin');
     if (!services.landflow) throw new ApiError('unavailable', 'Landflow is not configured');
@@ -240,10 +273,7 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
 
   // Allocation (spec 003) ----------------------------------------------------------------------------------------------
   app.get('/api/allocation/rule-sets', async (r) => (need(r, 'read'), { versions: await allocation.versions() }));
-  app.post('/api/allocation/rule-sets/versions/:id/approve', async (r) => {
-    need(r, 'admin');
-    return allocation.approve(parse(VersionId, r.params).id, r.principal);
-  });
+  app.post('/api/allocation/rule-sets/versions/:id/approve', foldedIntoRequests('rule_set_version'));
   app.post('/api/allocation/rebuild/:month', async (r, reply) => {
     need(r, 'admin');
     if (r.principal.kind !== 'person' && r.principal.kind !== 'dev')
@@ -319,10 +349,106 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
       .send(toCsv(groups));
   });
 
+  // Requests, decisions, reservations, policies, proposals, exceptions (wave 2, spec 004) ------------------------------
+  const { requests, reservations, policies, proposals, exceptions } = services;
+  const Sha = z.object({ id: z.string().min(1).max(100), sha256: z.string().regex(/^[0-9a-f]{64}$/) });
+  const ReleaseInput = z.object({ reason: z.string().trim().max(1000).default('') });
+  const viaOf = (r: FastifyRequest) => (r.principal.kind === 'person' ? 'session' : 'key') as 'session' | 'key';
+  const aPerson = (r: FastifyRequest, what: string) => {
+    if (r.principal.kind !== 'person')
+      throw new ApiError(
+        'forbidden',
+        `A person signed in with Landbright ${what}; an API key or the local developer doesn't`,
+      );
+  };
+  app.get('/api/requests', async (r) => (need(r, 'read'), requests.list(parse(RequestsQuery, r.query), r.principal)));
+  app.post('/api/requests', async (r, reply) => {
+    need(r, 'requests:write');
+    const { request, created } = await requests.create(parse(CreateRequestInput, r.body), r.principal, viaOf(r));
+    return reply.status(created ? 201 : 200).send({ request });
+  });
+  app.get('/api/requests/:id', async (r) => (need(r, 'read'), requests.detail(parse(Id, r.params).id, r.principal)));
+  app.get('/api/requests/:id/evidence/:sha256', async (r) => {
+    need(r, 'read');
+    const { id, sha256 } = parse(Sha, r.params);
+    return requests.storedSnapshot(id, sha256);
+  });
+  app.get(
+    '/api/requests/:id/decisions',
+    async (r) => (need(r, 'read'), { decisions: await requests.decisions(parse(Id, r.params).id) }),
+  );
+  app.post('/api/requests/:id/submit', async (r) => {
+    need(r, 'requests:write');
+    return { request: await requests.submit(parse(Id, r.params).id, r.principal) };
+  });
+  app.post('/api/requests/:id/cancel', async (r) => {
+    need(r, 'requests:write');
+    const { reason } = parse(CancelInput, r.body ?? {});
+    return { request: await requests.cancel(parse(Id, r.params).id, reason, r.principal) };
+  });
+  // A decision is a person's: their session, or a decisions:relay key naming them (checked in Requests.decide).
+  app.post('/api/requests/:id/decisions', async (r, reply) => {
+    need(r, r.principal.kind === 'key' ? 'decisions:relay' : 'read');
+    return reply
+      .status(201)
+      .send(await requests.decide(parse(Id, r.params).id, parse(DecisionInput, r.body), r.principal));
+  });
+  app.post('/api/requests/:id/applied', async (r) => {
+    need(r, 'requests:write');
+    return { request: await requests.applied(parse(Id, r.params).id, parse(AppliedInput, r.body ?? {}), r.principal) };
+  });
+
+  app.get(
+    '/api/reservations',
+    async (r) => (need(r, 'read'), { reservations: await reservations.list(parse(ReservationsQuery, r.query)) }),
+  );
+  app.post('/api/reservations', async (r, reply) => {
+    need(r, 'reservations:write');
+    const { reservation, created } = await reservations.reserve(parse(ReserveInput, r.body), r.principal);
+    return reply.status(created ? 201 : 200).send({ reservation });
+  });
+  app.post('/api/reservations/:id/release', async (r) => {
+    need(r, 'reservations:write');
+    const { reason } = parse(ReleaseInput, r.body ?? {});
+    return { reservation: await reservations.release(parse(Id, r.params).id, reason, r.principal) };
+  });
+
+  app.get('/api/policies', async (r) => (need(r, 'read'), { policies: await policies.list() }));
+  app.post('/api/policies', async (r, reply) => {
+    need(r, 'requests:write');
+    aPerson(r, 'proposes a policy');
+    return reply
+      .status(201)
+      .send(await proposals.proposePolicy(parse(ProposePolicyInput, r.body), policies, r.principal));
+  });
+
+  const RatePreview = RateCardProposalInput.pick({ effectiveFrom: true, changes: true });
+  const RulesPreview = RuleSetProposalInput.pick({ effectiveFrom: true, rules: true, shares: true });
+  app.post('/api/rate-cards/proposals/preview', async (r) => {
+    need(r, 'read');
+    return proposals.previewRateCard(parse(RatePreview, r.body));
+  });
+  app.post('/api/rate-cards/proposals', async (r, reply) => {
+    need(r, 'requests:write');
+    aPerson(r, 'proposes a rate card');
+    return reply.status(201).send(await proposals.proposeRateCard(parse(RateCardProposalInput, r.body), r.principal));
+  });
+  app.post('/api/allocation/rule-sets/proposals/preview', async (r) => {
+    need(r, 'read');
+    return proposals.previewRuleSet(parse(RulesPreview, r.body));
+  });
+  app.post('/api/allocation/rule-sets/proposals', async (r, reply) => {
+    need(r, 'requests:write');
+    aPerson(r, 'proposes allocation rules');
+    return reply.status(201).send(await proposals.proposeRuleSet(parse(RuleSetProposalInput, r.body), r.principal));
+  });
+
+  app.get('/api/exceptions', async (r) => (need(r, 'read'), exceptions.report(parse(ExceptionsQuery, r.query))));
+
   // MCP (stateless Streamable HTTP, Clickland's pattern): spend_by and budget_status -------------------------------------
   app.post('/api/mcp', async (request, reply) => {
     need(request, 'read');
-    const server = createMcpServer(spend, request.principal);
+    const server = createMcpServer(services, request.principal);
     const transport = new NodeStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

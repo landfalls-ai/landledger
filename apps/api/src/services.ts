@@ -14,6 +14,12 @@ import { Ingest, type IngestLog } from './ingest/runner.js';
 import { ClicklandClient, LandflowClient } from './ingest/sources.js';
 import { emitCostMetrics } from './metrics.js';
 import { RateCards } from './ratecards.js';
+import { Scim, ScimTokens } from './scim.js';
+import { Exceptions } from './exceptions.js';
+import { Policies } from './policies.js';
+import { Proposals } from './proposals.js';
+import { Requests } from './requests.js';
+import { Reservations } from './reservations.js';
 import { SecretBox } from './secrets.js';
 import { Spend } from './spend.js';
 
@@ -33,6 +39,13 @@ export interface Services {
   budgets: Budgets;
   spend: Spend;
   ingest: Ingest;
+  scim: Scim;
+  scimTokens: ScimTokens;
+  policies: Policies;
+  reservations: Reservations;
+  requests: Requests;
+  proposals: Proposals;
+  exceptions: Exceptions;
   landflow: LandflowClient | null;
   log: IngestLog;
   fetchImpl: typeof fetch;
@@ -78,6 +91,32 @@ export function createServices(
         await allocation.allocatePending(month);
     },
   });
+  const policies = new Policies(sql);
+  const reservations = new Reservations(sql, audit, spend, now);
+  const requests = new Requests(
+    sql,
+    audit,
+    webhooks,
+    spend,
+    reservations,
+    policies,
+    rateCards,
+    allocation,
+    config,
+    now,
+  );
+  // A rate card or rule set approved through its request: re-price every day from its first, or rebuild open months.
+  requests.afterApplied = async (change, info) => {
+    if (change.type === 'rate_card_version')
+      await ingest.reprice(info.effectiveFrom, info.by, `rate card v${info.version} approved`);
+    else if (change.type === 'rule_set_version')
+      await allocation.rebuildOpen(info.effectiveFrom.slice(0, 7), `rule set v${info.version} approved`, {
+        actor: info.by,
+        actorKind: 'person',
+      });
+  };
+  const proposals = new Proposals(sql, audit, spend, allocation, requests, now);
+  const exceptions = new Exceptions(sql, audit, webhooks, spend, policies, now);
   return {
     config,
     sql,
@@ -93,6 +132,13 @@ export function createServices(
     budgets,
     spend,
     ingest,
+    scim: new Scim(sql, audit, config.oidc?.issuer ?? 'http://localhost:4402/oidc'),
+    scimTokens: new ScimTokens(sql, audit),
+    policies,
+    reservations,
+    requests,
+    proposals,
+    exceptions,
     landflow,
     log,
     fetchImpl,
@@ -119,6 +165,11 @@ export function startBackgroundJobs(services: Services, log: (msg: string, err?:
   };
   loop('webhook dispatcher', 2_000, () => services.webhooks.dispatchDue());
   loop('session cleanup', 3_600_000, async () => (await services.sessions.cleanup(), 0));
+  // Wave 2: step deadlines (escalate, then expire), reservations consumed or released, budget alerts, the weekly report.
+  loop('step deadlines', 60_000, async () => (await services.requests.expireDue(), 0));
+  loop('reservations', 600_000, async () => (await services.reservations.settle(), 0));
+  loop('budget alerts', 900_000, async () => (await services.exceptions.budgetAlerts(), 0));
+  loop('weekly exceptions', 3_600_000, () => services.exceptions.weekly());
   const { config } = services;
   if (config.auditAnchorMinutes > 0) {
     // The audit chain's head, out to Clickland and webhooks (anchors.ts); the first a minute after start.

@@ -213,11 +213,11 @@ const daysBetween = (from: string, to: string) =>
   Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS) + 1;
 export const addDays = (d: string, n: number) =>
   new Date(Date.parse(`${d}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
-const monthDays = (month: string) => {
+export const monthDays = (month: string) => {
   const [y, m] = month.split('-').map(Number) as [number, number];
   return new Date(Date.UTC(y, m, 0)).getUTCDate();
 };
-const addMonths = (month: string, n: number) => {
+export const addMonths = (month: string, n: number) => {
   const [y, m] = month.split('-').map(Number) as [number, number];
   return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7);
 };
@@ -356,6 +356,14 @@ export class Spend {
 
   today() {
     return this.now().toISOString().slice(0, 10);
+  }
+
+  /** What approved requests still hold in a month, per cost center: each reservation's amount less what it consumed. */
+  async reservedByCostCenter(month: string): Promise<Map<string, Money>> {
+    const rows = await this.sql<{ cost_center: string; micros: string }[]>`
+      SELECT cost_center, sum(greatest(amount_micros - consumed_micros, 0))::text AS micros FROM reservations
+      WHERE status = 'reserved' AND month = ${`${month}-01`} GROUP BY cost_center`;
+    return new Map(rows.map((r) => [r.cost_center, Money.ofMicros(r.micros, USD)]));
   }
 
   async costCenters(): Promise<Map<string, CostCenterInfo>> {
@@ -737,6 +745,8 @@ export class Spend {
     const forecast = isCurrent ? (ready ? project(ready.mid) : null) : mtd;
 
     const budgets = await this.budgets.forMonth(m);
+    const reserved = await this.reservedByCostCenter(m);
+    const reservedTotal = Money.sum(reserved.values(), USD);
     const budgetTotal = budgets.size
       ? Money.sum(
           [...budgets.values()].map((b) => b.amount),
@@ -747,7 +757,7 @@ export class Spend {
 
     // Cost centers: month to date, and a forecast at each one's own cost per observed hour, per source.
     const ccOf = (l: Line) => (l.correction ? CORRECTIONS : l.costCenter);
-    const codes = new Set([...lines.map(ccOf), ...budgets.keys()]);
+    const codes = new Set([...lines.map(ccOf), ...budgets.keys(), ...reserved.keys()]);
     const ccRate = (code: string) => {
       if (!rr?.enough) return null;
       let r = Decimal.ZERO;
@@ -775,7 +785,7 @@ export class Spend {
         invoiced: amount(sumOf(mine.filter((l) => l.basis === 'invoiced'))),
         budget: b ? amount(b) : null,
         forecast: f ? amount(f) : null,
-        reserved: amount(zero()),
+        reserved: amount(reserved.get(code) ?? zero()),
         state: stateOf(actual, f, b),
       };
     });
@@ -889,8 +899,8 @@ export class Spend {
         importedAt: imports[0]?.importedAt ?? null,
         origin: imports.some((i) => i.origin === 'dev-seed') ? 'dev-seed' : (imports[0]?.origin ?? null),
       },
-      leftAfterReservations: budgetTotal ? amount(budgetTotal.minus(mtd)) : null,
-      reserved: amount(zero()),
+      leftAfterReservations: budgetTotal ? amount(budgetTotal.minus(mtd).minus(reservedTotal)) : null,
+      reserved: amount(reservedTotal),
       burn,
       costCenters: ccLines,
       byCategory: group(
@@ -946,11 +956,13 @@ export class Spend {
     const rows: BudgetLine[] = ov.costCenters.map((c) => {
       const b = budgets.get(c.code)?.amount ?? null;
       const actual = Money.parse(c.monthToDate, USD);
+      const held = Money.parse(c.reserved, USD);
       const f = c.forecast ? Money.parse(c.forecast, USD) : null;
       const variance = b && f ? f.minus(b) : null;
       return {
         ...c,
-        available: b ? amount(b.minus(actual)) : null,
+        // Budget left: budget − actuals − what approved requests still hold.
+        available: b ? amount(b.minus(actual).minus(held)) : null,
         variance: variance ? amount(variance) : null,
         variancePct: b && variance && !b.isZero() ? pct(variance, b) : null,
         months: months.map((mm) => ({
@@ -968,6 +980,10 @@ export class Spend {
       );
     const tb = total('budget');
     const ta = total('monthToDate');
+    const tr = Money.sum(
+      rows.map((r) => Money.parse(r.reserved, USD)),
+      USD,
+    );
     const tf = rows.every((r) => r.forecast !== null)
       ? Money.sum(
           rows.map((r) => Money.parse(r.forecast!, USD)),
@@ -983,8 +999,8 @@ export class Spend {
       totals: {
         budget: amount(tb),
         actual: amount(ta),
-        reserved: amount(zero()),
-        available: amount(tb.minus(ta)),
+        reserved: amount(tr),
+        available: amount(tb.minus(ta).minus(tr)),
         forecast: tf ? amount(tf) : null,
         variance: tf && hasBudget ? amount(tf.minus(tb)) : null,
         variancePct: tf && hasBudget && !tb.isZero() ? pct(tf.minus(tb), tb) : null,

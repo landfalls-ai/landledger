@@ -12,7 +12,8 @@
     "seed": "tsx src/seed.ts",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "ingest": "tsx --import ./src/instrument.ts src/cli.ts"
+    "ingest": "tsx --import ./src/instrument.ts src/cli.ts",
+    "scim:token": "tsx src/scim-token.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.5",

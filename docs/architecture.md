@@ -135,8 +135,9 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 - **Sign-in:** Landledger is an OIDC relying party (client `landledger-local`, scopes `openid email profile roles`).
   Group names in the `roles` claim map to roles: `Finance CFO`, `Finance Controllers`, `Finance FP&A`,
   `Budget Owners`, `Landledger Auditors`, `Engineering` (request and read own).
-- **SCIM 2.0** at `/scim/v2` (Users, Groups) for when Landbright pushes (its wave 2); until then users and groups come
-  from the claim at sign-in.
+- **SCIM 2.0** at `/scim/v2` (Users, Groups), built in wave 2 after Clickland's ([identity.md](identity.md)):
+  deactivation ends sessions at once; SCIM memberships, once pushed, decide roles on the next request; until Landbright
+  pushes, groups come from the claim at sign-in.
 - **Policies name groups,** so changing who approves is a Landbright change, with Landbright's own approvals and
   audit.
 - **Paid seats:** a Landbright access request for an app with seats starts a Landflow flow that raises a *tool or

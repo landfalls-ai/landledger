@@ -27,7 +27,8 @@ Clickland. Code: `apps/api/src/spend.ts` (reads), `budgets.ts`, `export.ts`, `mc
   says how much of the budget is used and how much of the month has been observed, not how much has passed.
 - **P&L classes**: the shared pool (idle capacity, before it is spread) is its own class, _Shared pool_; _Not
   classified_ is only what the rules sent nowhere.
-- **Left after reservations**: budget less month to date less reservations (none until wave 2).
+- **Left after reservations**: budget less month to date less what approved requests still hold (reservations'
+  remaining, [approvals.md](approvals.md#reservations)). **Needs you** lists the requests waiting on the signed-in person.
 
 ## Overview (`GET /api/overview?month=`)
 
@@ -89,5 +90,5 @@ never rates, budgets or contracts. Compose services are named `<project>/<servic
 
 ## Open
 
-- Invoiced figures (wave 3), reservations (wave 2), teams and products in the dev data.
+- Invoiced figures (wave 3), teams and products in the dev data.
 - A cost column on Clickland's Services page from these metrics is Clickland's to build.

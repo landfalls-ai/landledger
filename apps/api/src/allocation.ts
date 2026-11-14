@@ -24,6 +24,7 @@ import { day as dayOf, type Sql, type Tx } from './db.js';
 import { ApiError, notFound } from './errors.js';
 import { newId } from './ids.js';
 import { actorOf, type Principal } from './principal.js';
+import type { VersionApprover } from './ratecards.js';
 
 /** Who builds a generation, as the audit log names them (`actorOf` for a principal). */
 export type Actor = { actor: string; actorKind: ActorKind };
@@ -326,42 +327,50 @@ export class Allocation {
       );
     if (!by.roles.some((r) => r === 'controller' || r === 'cfo'))
       throw new ApiError('forbidden', 'Approving allocation rules is for the controller or the CFO');
-    const approved = await this.sql.begin(async (tx) => {
-      const [v] = await tx<VersionRow[]>`SELECT * FROM allocation_rule_set_versions WHERE id = ${versionId} FOR UPDATE`;
-      if (!v) throw notFound('Rule set version');
-      if (v.approved_at) throw new ApiError('conflict', `Version ${v.version} is already approved`);
-      if (v.proposed_by === by.id)
-        throw new ApiError('forbidden', 'The person who proposed a rule set version cannot approve it');
-      const from = dayOf(v.effective_from);
-      await tx`
-        UPDATE allocation_rule_set_versions SET effective_to = ${from}
-        WHERE rule_set_id = ${v.rule_set_id} AND approved_at IS NOT NULL AND effective_to IS NULL AND effective_from < ${from}`;
-      const [row] = await tx<VersionRow[]>`
-        UPDATE allocation_rule_set_versions SET approved_by = ${by.id}, approved_at = now() WHERE id = ${versionId} RETURNING *`;
-      await this.audit.append(
-        {
-          ...actorOf(by),
-          action: 'allocation.rule_set_approved',
-          subjectType: 'allocation_rule_set_version',
-          subjectId: versionId,
-          data: {
-            version: v.version,
-            effectiveFrom: from,
-            proposedBy: v.proposed_by,
-            approvedBy: by.email ?? by.id,
-            rules: v.rules.length,
-          },
-        },
-        tx,
-      );
-      return { ...ruleSetVersionOf(row!), approvedBy: by.email ?? by.id };
-    });
+    const label = by.email ?? by.id;
+    const approved = (await this.sql.begin((tx) =>
+      this.approveIn(tx, versionId, { id: by.id, label, roles: by.roles, actor: label, actorKind: 'person' }),
+    )) as Awaited<ReturnType<Allocation['approveIn']>>;
     const rebuilt = await this.rebuildOpen(
       approved.effectiveFrom.slice(0, 7),
       `rule set v${approved.version} approved`,
       actorOf(by),
     );
     return { version: approved, rebuilt };
+  }
+
+  /** Approves a proposed version inside a transaction (the request path, and `approve`); the caller rebuilds after. */
+  async approveIn(tx: Tx, versionId: string, by: VersionApprover) {
+    const [v] = await tx<VersionRow[]>`SELECT * FROM allocation_rule_set_versions WHERE id = ${versionId} FOR UPDATE`;
+    if (!v) throw notFound('Rule set version');
+    if (v.approved_at) throw new ApiError('conflict', `Version ${v.version} is already approved`);
+    if (v.proposed_by === by.id)
+      throw new ApiError('forbidden', 'The person who proposed a rule set version cannot approve it');
+    const from = dayOf(v.effective_from);
+    await tx`
+      UPDATE allocation_rule_set_versions SET effective_to = ${from}
+      WHERE rule_set_id = ${v.rule_set_id} AND approved_at IS NOT NULL AND effective_to IS NULL AND effective_from < ${from}`;
+    const [row] = await tx<VersionRow[]>`
+      UPDATE allocation_rule_set_versions SET approved_by = ${by.id}, approved_at = now() WHERE id = ${versionId} RETURNING *`;
+    await this.audit.append(
+      {
+        actor: by.actor,
+        actorKind: by.actorKind,
+        action: 'allocation.rule_set_approved',
+        subjectType: 'allocation_rule_set_version',
+        subjectId: versionId,
+        data: {
+          version: v.version,
+          effectiveFrom: from,
+          proposedBy: v.proposed_by,
+          approvedBy: by.label,
+          ...(by.requestId ? { requestId: by.requestId } : {}),
+          rules: v.rules.length,
+        },
+      },
+      tx,
+    );
+    return { ...ruleSetVersionOf(row!), approvedBy: by.label };
   }
 
   /** Open months from `fromMonth` that have records: a new generation each. */

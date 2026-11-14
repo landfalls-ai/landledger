@@ -16,6 +16,16 @@ import { ApiError, notFound } from './errors.js';
 import { sha256 } from './ids.js';
 import { actorOf, type Principal } from './principal.js';
 
+/** Who approves a version: a person (users.id), as the audit log names them. */
+export interface VersionApprover {
+  id: string;
+  label: string;
+  roles: readonly string[];
+  actor: string;
+  actorKind: 'person';
+  requestId?: string;
+}
+
 type VersionRow = {
   id: string;
   rate_card_id: string;
@@ -225,55 +235,65 @@ export class RateCards {
       );
     if (!by.roles.some((r) => r === 'controller' || r === 'cfo'))
       throw new ApiError('forbidden', 'Approving a rate card is for the controller or the CFO');
-    return this.sql.begin(async (tx) => {
-      const [v] = await tx<VersionRow[]>`SELECT * FROM rate_card_versions WHERE id = ${versionId} FOR UPDATE`;
-      if (!v) throw notFound('Rate card version');
-      if (v.approved_at) throw new ApiError('conflict', `Version ${v.version} is already approved`);
-      if (v.proposed_by === by.id)
-        throw new ApiError('forbidden', 'The person who proposed a rate card version cannot approve it');
-      const lines = await tx<LineRow[]>`SELECT * FROM rate_lines WHERE version_id = ${versionId}`;
-      if (!lines.length) throw new ApiError('bad_request', 'A version with no lines is not approved');
-      if (lines.some((l) => l.added_by === by.id))
-        throw new ApiError('forbidden', 'A person who added lines to a rate card version cannot approve it');
-      const from = day(v.effective_from);
-      const [locked] = await tx`
-        SELECT month FROM periods WHERE status <> 'open' AND month >= date_trunc('month', ${from}::date) LIMIT 1`;
-      if (locked)
-        throw new ApiError('conflict', `A rate card can't take effect in a closing or locked month (${from})`);
-      const ended = await tx<VersionRow[]>`
-        UPDATE rate_card_versions SET effective_to = ${from}
-        WHERE rate_card_id = ${v.rate_card_id} AND approved_at IS NOT NULL AND effective_to IS NULL
-          AND effective_from < ${from}
-        RETURNING *`;
-      const [approved] = await tx<VersionRow[]>`
-        UPDATE rate_card_versions SET approved_by = ${by.id}, approved_at = now() WHERE id = ${versionId} RETURNING *`;
-      await this.audit.append(
-        {
-          ...actorOf(by),
-          action: 'rate_card.version_approved',
-          subjectType: 'rate_card_version',
-          subjectId: versionId,
-          data: {
-            version: v.version,
-            effectiveFrom: from,
-            proposedBy: v.proposed_by,
-            approvedBy: by.email ?? by.id,
-            roles: by.roles,
-            lines: lines.length,
-            linesAddedBy: [...new Set(lines.map((l) => l.added_by))].sort(),
-            linesSha256: linesHash(lines),
-            ended: ended.map((e) => ({ id: e.id, effectiveTo: from })),
-          },
+    const label = by.email ?? by.id;
+    return this.sql.begin((tx) =>
+      this.approveIn(tx, versionId, { id: by.id, label, roles: by.roles, actor: label, actorKind: 'person' }),
+    ) as Promise<Awaited<ReturnType<RateCards['approveIn']>>>;
+  }
+
+  /**
+   * Approves a proposed version inside a transaction: the request path (the last step's person) and `approve` above.
+   * The database checks again that the approver is a person who neither proposed it nor added a line (0005).
+   */
+  async approveIn(tx: Tx, versionId: string, by: VersionApprover) {
+    const [v] = await tx<VersionRow[]>`SELECT * FROM rate_card_versions WHERE id = ${versionId} FOR UPDATE`;
+    if (!v) throw notFound('Rate card version');
+    if (v.approved_at) throw new ApiError('conflict', `Version ${v.version} is already approved`);
+    if (v.proposed_by === by.id)
+      throw new ApiError('forbidden', 'The person who proposed a rate card version cannot approve it');
+    const lines = await tx<LineRow[]>`SELECT * FROM rate_lines WHERE version_id = ${versionId}`;
+    if (!lines.length) throw new ApiError('bad_request', 'A version with no lines is not approved');
+    if (lines.some((l) => l.added_by === by.id))
+      throw new ApiError('forbidden', 'A person who added lines to a rate card version cannot approve it');
+    const from = day(v.effective_from);
+    const [locked] = await tx`
+      SELECT month FROM periods WHERE status <> 'open' AND month >= date_trunc('month', ${from}::date) LIMIT 1`;
+    if (locked) throw new ApiError('conflict', `A rate card can't take effect in a closing or locked month (${from})`);
+    const ended = await tx<VersionRow[]>`
+      UPDATE rate_card_versions SET effective_to = ${from}
+      WHERE rate_card_id = ${v.rate_card_id} AND approved_at IS NOT NULL AND effective_to IS NULL
+        AND effective_from < ${from}
+      RETURNING *`;
+    const [approved] = await tx<VersionRow[]>`
+      UPDATE rate_card_versions SET approved_by = ${by.id}, approved_at = now() WHERE id = ${versionId} RETURNING *`;
+    await this.audit.append(
+      {
+        actor: by.actor,
+        actorKind: by.actorKind,
+        action: 'rate_card.version_approved',
+        subjectType: 'rate_card_version',
+        subjectId: versionId,
+        data: {
+          version: v.version,
+          effectiveFrom: from,
+          proposedBy: v.proposed_by,
+          approvedBy: by.label,
+          roles: by.roles,
+          ...(by.requestId ? { requestId: by.requestId } : {}),
+          lines: lines.length,
+          linesAddedBy: [...new Set(lines.map((l) => l.added_by))].sort(),
+          linesSha256: linesHash(lines),
+          ended: ended.map((e) => ({ id: e.id, effectiveTo: from })),
         },
-        tx,
-      );
-      return {
-        id: approved!.id,
-        version: approved!.version,
-        effectiveFrom: from,
-        approvedBy: by.email ?? by.id,
-        approvedAt: approved!.approved_at!.toISOString(),
-      };
-    });
+      },
+      tx,
+    );
+    return {
+      id: approved!.id,
+      version: approved!.version,
+      effectiveFrom: from,
+      approvedBy: by.label,
+      approvedAt: approved!.approved_at!.toISOString(),
+    };
   }
 }

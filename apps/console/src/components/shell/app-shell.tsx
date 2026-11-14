@@ -15,6 +15,8 @@ import { TopBar } from './top-bar';
 export const SIGN_IN_ERRORS: Record<string, string> = {
   no_role:
     'Your Landbright account isn’t in a Landledger group. Ask for Finance CFO, Finance Controllers, Finance FP&A, Budget Owners, Landledger Auditors or Engineering.',
+  inactive:
+    'Your Landledger account is turned off (Landbright deprovisioned it). Ask an administrator to turn it back on.',
   expired: 'That sign-in took too long or started in another browser. Try again.',
   denied: 'Landbright didn’t sign you in.',
   unavailable: 'Landbright isn’t answering. Try again in a moment.',

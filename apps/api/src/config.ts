@@ -53,6 +53,34 @@ export interface Config {
    * token is kept and webhooks can't be created.
    */
   secretKey: Buffer | null;
+  /** Business hours a pending step waits before it escalates (LANDLEDGER_STEP_DEADLINE_HOURS, default 24). */
+  stepDeadlineHours: number;
+  /** The business days (0 Sunday … 6 Saturday, UTC) deadlines count (LANDLEDGER_BUSINESS_DAYS, default Mon–Fri). */
+  businessDays: number[];
+}
+
+const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+/** `mon-fri`, `sun-thu`, `mon,tue,wed`: the business days, as UTC weekday numbers. */
+export function parseBusinessDays(value: string): number[] {
+  const out = new Set<number>();
+  for (const part of value
+    .toLowerCase()
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean)) {
+    const [a, b] = part.split('-').map((d) => DAY_NAMES.indexOf(d.slice(0, 3)));
+    if (a === undefined || a < 0 || (b !== undefined && b < 0))
+      throw new Error(`LANDLEDGER_BUSINESS_DAYS: "${part}" is not a day or a range of days (mon-fri)`);
+    if (b === undefined) out.add(a);
+    else
+      for (let d = a; ; d = (d + 1) % 7) {
+        out.add(d);
+        if (d === b) break;
+      }
+  }
+  if (!out.size) throw new Error('LANDLEDGER_BUSINESS_DAYS names no day');
+  return [...out].sort();
 }
 
 const expandHome = (path: string) => (path.startsWith('~/') ? `${homedir()}${path.slice(1)}` : path);
@@ -140,6 +168,13 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
         ? null
         : (env.LANDLEDGER_DOCKER_SHARES_CLUSTER ?? 'orbstack') || null,
     secretKey: env.LANDLEDGER_SECRET_KEY ? parseSecretKey(env.LANDLEDGER_SECRET_KEY) : null,
+    stepDeadlineHours: (() => {
+      const n = Number(env.LANDLEDGER_STEP_DEADLINE_HOURS ?? '24');
+      if (!Number.isInteger(n) || n < 1 || n > 24 * 30)
+        throw new Error('LANDLEDGER_STEP_DEADLINE_HOURS is a whole number of business hours, 1 to 720');
+      return n;
+    })(),
+    businessDays: parseBusinessDays(env.LANDLEDGER_BUSINESS_DAYS ?? 'mon-fri'),
     auditAnchorMinutes: (() => {
       const n = Number(env.LANDLEDGER_AUDIT_ANCHOR_MINUTES ?? '60');
       if (!Number.isInteger(n) || n < 0)

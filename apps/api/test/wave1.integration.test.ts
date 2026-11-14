@@ -227,7 +227,7 @@ describe.skipIf(!integrationEnabled('db'))('wave 1 against Postgres', () => {
         .json()
         .result.tools.map((t: { name: string }) => t.name)
         .sort(),
-    ).toEqual(['budget_status', 'spend_by']);
+    ).toEqual(['budget_status', 'create_request', 'get_request', 'list_requests', 'reserve', 'spend_by']);
     const res = await mcp({
       jsonrpc: '2.0',
       id: 2,

@@ -39,11 +39,16 @@ export function groupsFromClaims(claims: Record<string, unknown>): string[] {
   return [...new Set(raw.filter((g): g is string => typeof g === 'string'))];
 }
 
-/** Group names → Landledger roles; groups Landledger doesn't know (Everyone, …) are ignored. */
+const ROLE_BY_LOWER = new Map(Object.entries(ROLE_BY_GROUP).map(([g, r]) => [g.toLowerCase(), r]));
+
+/**
+ * Group names → Landledger roles, without case (SCIM's display names may differ in case); groups Landledger doesn't
+ * know (Everyone, …) are ignored.
+ */
 export function rolesFromGroups(groups: readonly string[]): Role[] {
   const roles = new Set<Role>();
   for (const g of groups) {
-    const role = ROLE_BY_GROUP[g];
+    const role = ROLE_BY_LOWER.get(g.toLowerCase());
     if (role) roles.add(role);
   }
   return [...roles].sort();

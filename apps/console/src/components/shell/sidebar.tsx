@@ -1,13 +1,11 @@
 import type { Me } from '@landledger/contracts';
 import { Link, NavLink } from 'react-router';
 import { cn } from '@/lib/cn';
+import { useWaitingCount } from '@/lib/requests';
 import { NAV_GROUPS, type NavItem } from '@/nav';
 import { Mark } from './mark';
 import { ThemeToggle } from './theme-toggle';
 import { UserRow } from './user-row';
-
-/** Waiting approvals; requests arrive in wave 2, so the count is hidden at zero. */
-export const APPROVALS_WAITING = 0;
 
 export function Count({ n }: { n: number }) {
   if (n <= 0) return null;
@@ -23,6 +21,7 @@ export function Count({ n }: { n: number }) {
 
 function Row({ item }: { item: NavItem }) {
   const Icon = item.icon;
+  const waiting = useWaitingCount();
   return (
     <NavLink
       to={item.href}
@@ -37,7 +36,7 @@ function Row({ item }: { item: NavItem }) {
       <span className="truncate">{item.label}</span>
       {item.href === '/approvals' && (
         <span className="ml-auto">
-          <Count n={APPROVALS_WAITING} />
+          <Count n={waiting} />
         </span>
       )}
     </NavLink>

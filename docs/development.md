@@ -12,6 +12,7 @@ pnpm install
 pnpm dev:up        # Postgres 18 on 127.0.0.1:25532 (project landledger-infra), waits until healthy
 pnpm db:migrate    # as the owner: applies libs/schema/migrations in one transaction, then gives landledger_app its password
 pnpm db:seed       # rate card v1 (a proposal) and the development cost centers; idempotent
+pnpm scim:token    # a SCIM token for Landbright's push, into ~/.config/land-family/landledger-scim.env (mode 600; never printed)
 pnpm serve         # the API on :4810 and the console on :4811, both watching
 ```
 

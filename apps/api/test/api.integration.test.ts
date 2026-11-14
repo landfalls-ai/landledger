@@ -32,6 +32,8 @@ const config = (over: Partial<Config> = {}): Config => ({
   ingestJobs: false,
   dockerSharesCluster: null,
   auditAnchorMinutes: 0,
+  stepDeadlineHours: 24,
+  businessDays: [1, 2, 3, 4, 5],
   secretKey: Buffer.alloc(32, 7),
   ...over,
 });

@@ -1,16 +1,26 @@
 /**
- * Landledger's MCP server (spec 002/003, wave 1): stateless Streamable HTTP at `POST /api/mcp`, Clickland's pattern —
- * one server per request, bound to the caller (a key with `read`, or a signed-in person). Two read-only tools:
- * `spend_by` (spend grouped by a dimension) and `budget_status` (each cost center against its budget). Amounts are
- * decimal strings in USD; nothing an agent calls here changes the ledger.
+ * Landledger's MCP server (specs 002–004): stateless Streamable HTTP at `POST /api/mcp`, Clickland's pattern — one
+ * server per request, bound to the caller (a key with `read`, or a signed-in person). Read tools: `spend_by`,
+ * `budget_status`, `list_requests`, `get_request`. Write tools: `create_request` (`requests:write`; an agent always
+ * with a sponsor, a person) and `reserve` (`reservations:write`). **There is no tool that decides**: agents request,
+ * people decide. Amounts are decimal strings in USD.
  */
-import { Dimension, DIMENSION_LABEL } from '@landledger/contracts';
+import {
+  AgentRef,
+  CreateRequestInput,
+  Dimension,
+  DIMENSION_LABEL,
+  PersonRef,
+  RequestBox,
+  RequestKind,
+  RequestOrigin,
+} from '@landledger/contracts';
 import { type CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { VERSION } from './version.js';
 import { ApiError } from './errors.js';
 import { type Principal, requireScope } from './principal.js';
-import type { Spend } from './spend.js';
+import type { Services } from './services.js';
 
 const ok = (data: unknown, text: string): CallToolResult => ({
   content: [{ type: 'text', text }],
@@ -54,29 +64,65 @@ export const BudgetStatusInput = z.object({
   costCenter: z.string().optional().describe('One cost center code, e.g. ENG-PLATFORM'),
 });
 
-export function createMcpServer(spend: Spend, principal: Principal): McpServer {
+export const ListRequestsInput = z.object({
+  box: RequestBox.default('all').describe('waiting (on the caller), mine (raised or sponsored), decided, open, all'),
+  kind: RequestKind.optional(),
+  costCenter: z.string().optional(),
+  limit: z.number().int().min(1).max(100).default(20),
+});
+export const GetRequestInput = z.object({ id: z.string().describe('The request id (req_…)') });
+export const CreateRequestTool = z.object({
+  kind: z.enum(['infra_change', 'ai_budget', 'tool_or_seat', 'other']),
+  title: z.string().min(3).max(200),
+  note: z.string().max(4000).default('').describe('Why, in the requester’s words'),
+  costCenter: z.string().describe('A cost center code, e.g. ENG-PLATFORM'),
+  amount: z.string().describe('USD in major units, e.g. "1840.00"'),
+  recurrence: z.enum(['monthly', 'once']),
+  start: z.iso.date().optional(),
+  end: z.iso.date().optional(),
+  evidence: z.record(z.string(), z.unknown()).default({}).describe('lines, basis, links, match (a selector)'),
+  origin: RequestOrigin.optional().describe('Where it comes from (default: mcp)'),
+  agent: AgentRef.optional().describe('The agent asking; then sponsor is required'),
+  sponsor: PersonRef.optional().describe('The person who answers for the agent (Landbright sub or email)'),
+  person: PersonRef.optional().describe('Or: the person asking, when no agent is'),
+  idempotencyKey: z.string().max(200).optional(),
+});
+export const ReserveTool = z.object({
+  requestId: z.string(),
+  month: z
+    .string()
+    .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+    .optional(),
+  amount: z.string().optional().describe('USD; at most what the request adds in the month'),
+});
+
+export function createMcpServer(services: Services, principal: Principal): McpServer {
+  const { spend, requests, reservations } = services;
   const server = new McpServer(
     { name: 'landledger', title: 'Landledger', version: VERSION },
     {
       instructions:
-        "Landledger is the land family's cost subledger for technology and AI spend (management reporting; the accounting system stays the book of record). spend_by groups spend by cost center, service, namespace, agent, model and more; budget_status says where each cost center stands against its budget. Amounts are USD strings; every figure is estimated (usage × the internal rate card) or invoiced. Read only: agents request, people decide.",
+        "Landledger is the land family's cost subledger for technology and AI spend (management reporting; the accounting system stays the book of record). spend_by groups spend by cost center, service, namespace, agent, model and more; budget_status says where each cost center stands against its budget. list_requests and get_request read spend requests and their approval path; create_request raises one (an agent always names its sponsor, a person); reserve holds budget for an approved request. Amounts are USD strings. Agents request; people decide: no tool approves or rejects.",
     },
   );
   const tool = <S extends z.ZodType>(
     name: string,
     config: { title: string; description: string; inputSchema: S },
     run: (args: z.output<S>) => Promise<CallToolResult>,
+    scope: 'read' | 'requests:write' | 'reservations:write' = 'read',
   ) =>
-    server.registerTool(name, { ...config, annotations: { readOnlyHint: true, openWorldHint: false } }, (async (
-      args: z.output<S>,
-    ) => {
-      try {
-        requireScope(principal, 'read');
-        return await run(args);
-      } catch (error) {
-        return fail(error);
-      }
-    }) as never);
+    server.registerTool(
+      name,
+      { ...config, annotations: { readOnlyHint: scope === 'read', destructiveHint: false, openWorldHint: false } },
+      (async (args: z.output<S>) => {
+        try {
+          requireScope(principal, scope);
+          return await run(args);
+        } catch (error) {
+          return fail(error);
+        }
+      }) as never,
+    );
 
   tool(
     'spend_by',
@@ -144,6 +190,107 @@ export function createMcpServer(spend: Spend, principal: Principal): McpServer {
       ].join('\n');
       return ok({ month: v.month, currency: v.currency, versions: v.versions, totals: v.totals, rows }, text);
     },
+  );
+  const usd = (a: string) => `USD ${a}`;
+  tool(
+    'list_requests',
+    {
+      title: 'List spend requests',
+      description:
+        'Spend requests (infra changes, AI budgets, tools or seats, rate card, rule set and policy changes) with their status, the step they wait on, the amount and the budget left after them. box: waiting (on the caller), mine (raised or sponsored), decided, open, all.',
+      inputSchema: ListRequestsInput,
+    },
+    async (a) => {
+      const r = await requests.list({ box: a.box, kind: a.kind, costCenter: a.costCenter, limit: a.limit }, principal);
+      const text = [
+        `${r.requests.length} request(s) (${a.box}); open ${r.counts.open}, waiting on you ${r.counts.waiting}.`,
+        ...r.requests.map(
+          (q) =>
+            `- ${q.number} ${q.title} (${q.costCenter.code}): ${usd(q.amount.amount)} ${q.recurrence === 'monthly' ? 'a month' : 'once'}; ${q.stepLabel}`,
+        ),
+      ].join('\n');
+      return ok(r, text);
+    },
+  );
+  tool(
+    'get_request',
+    {
+      title: 'Get a spend request',
+      description:
+        "One request with its steps (who may decide each), decisions, reservations and Landledger's evidence (budget, actual, reserved, left now and after, forecast, why this path). A person decides in the Landledger console, or through a relay that names them; this tool never decides.",
+      inputSchema: GetRequestInput,
+    },
+    async (a) => {
+      const d = await requests.detail(a.id, principal);
+      const q = d.request;
+      const text = [
+        `${q.number} ${q.title}: ${q.status}. ${usd(q.amount.amount)} ${q.recurrence === 'monthly' ? 'a month' : 'once'} for ${q.costCenter.code}.`,
+        `Why this path: ${d.evidence.why}`,
+        ...q.steps.map(
+          (s) =>
+            `- Step ${s.position} ${s.label}: ${s.status}${s.decision ? ` by ${s.decision.person.name}` : s.status === 'pending' ? ` (approvers: ${s.approvers.people.map((p) => p.name).join(', ') || s.approvers.groups.join(' or ')})` : ''}`,
+        ),
+        `Budget ${d.evidence.budget ? usd(d.evidence.budget) : 'none'}; left now ${d.evidence.leftNow ? usd(d.evidence.leftNow) : '—'}, after ${d.evidence.leftAfter ? usd(d.evidence.leftAfter) : '—'}.`,
+      ].join('\n');
+      return ok(d, text);
+    },
+  );
+  tool(
+    'create_request',
+    {
+      title: 'Raise a spend request',
+      description:
+        'Raises a spend request for a person to decide. An agent names itself (agent) and its sponsor, the person who answers for it; or name the person asking. Below the policy threshold it is approved by policy at once and reserved; otherwise it waits on the budget owner, Finance or the CFO. Returns the request and its path.',
+      inputSchema: CreateRequestTool,
+    },
+    async (a) => {
+      const requester = a.agent
+        ? a.sponsor
+          ? { kind: 'agent' as const, agent: a.agent, sponsor: a.sponsor }
+          : (() => {
+              throw new ApiError('bad_request', 'An agent names its sponsor: the person who answers for it');
+            })()
+        : a.person
+          ? { kind: 'person' as const, person: a.person }
+          : undefined;
+      const input = CreateRequestInput.parse({
+        kind: a.kind,
+        title: a.title,
+        note: a.note,
+        costCenter: a.costCenter,
+        amount: { amount: a.amount, currency: 'USD' },
+        recurrence: a.recurrence,
+        start: a.start,
+        end: a.end,
+        evidence: a.evidence,
+        origin: a.origin ?? { type: 'mcp' },
+        requester,
+        idempotencyKey: a.idempotencyKey,
+      });
+      const { request: q, created } = await requests.create(input, principal, 'mcp');
+      return ok(
+        { request: q, created },
+        `${created ? 'Raised' : 'Already raised'} ${q.number} ${q.title}: ${q.status}${q.automatic ? ' (approved by policy)' : ''}. ${q.policy?.reason ?? ''}`,
+      );
+    },
+    'requests:write',
+  );
+  tool(
+    'reserve',
+    {
+      title: 'Reserve budget for an approved request',
+      description:
+        "Reserves a month of an approved request's window (approval already reserves its first months), at most what it adds in that month. Idempotent per month.",
+      inputSchema: ReserveTool,
+    },
+    async (a) => {
+      const { reservation, created } = await reservations.reserve(a, principal);
+      return ok(
+        { reservation, created },
+        `${created ? 'Reserved' : 'Already reserved'} ${usd(reservation.amount)} for ${reservation.costCenter} in ${reservation.month} (${reservation.status}).`,
+      );
+    },
+    'reservations:write',
   );
   return server;
 }

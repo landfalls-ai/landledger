@@ -7,6 +7,7 @@ import { type Column, DataTable } from '@/components/ui/data-table';
 import { Pill, Tag } from '@/components/ui/pill';
 import { get, quiet } from '@/lib/api';
 import { toTsv } from '@/lib/copy';
+import { OpenChanges, PoliciesCard, RateCardProposal, RuleSetProposal } from './proposals';
 
 const date = (d: string) =>
   new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', {
@@ -66,13 +67,6 @@ const ccColumns: Column<CostCenter>[] = [
     cell: (c) => (c.origin === 'dev-seed' ? <Tag dashed>dev seed</Tag> : <Tag>{c.origin}</Tag>),
   },
 ];
-
-const TIERS = [
-  ['Automatic', 'under $500'],
-  ['Budget owner', 'to $5,000'],
-  ['Finance', 'to $25,000'],
-  ['CFO', 'above'],
-] as const;
 
 /** Rates and rules (docs/ui.md, `#rules`): the real rate card and cost centers from the API. */
 export function RulesPage() {
@@ -171,9 +165,7 @@ export function RulesPage() {
                 ))}
               </div>
               {current?.note && <p className="mt-2.5 text-[12px] text-t3">{current.note}</p>}
-              <p className="mt-2.5 rounded-[10px] border border-hair bg-sf2 px-3 py-2.5 text-[13px] text-t2">
-                A change is a request, approved by Finance (wave 2).
-              </p>
+              <OpenChanges kind="rate_card_change" />
             </CardBody>
           )}
         </Card>
@@ -255,6 +247,7 @@ export function RulesPage() {
                 )}
                 {ruleSet.approvedBy ? `Approved by ${ruleSet.approvedBy}` : 'Waiting for a controller or the CFO'} ·
                 effective {date(ruleSet.effectiveFrom)}
+                <OpenChanges kind="rule_set_change" />
               </CardBody>
             </>
           ) : (
@@ -264,29 +257,11 @@ export function RulesPage() {
           )}
         </Card>
 
-        <Card
-          title="Policies"
-          sub="Who decides each kind of request. A cost center that is at risk or over adds Finance."
-          action={<Pill>Wave 2</Pill>}
-        >
-          <CardBody>
-            <div className="grid grid-cols-4 gap-1">
-              {TIERS.map(([who, limit]) => (
-                <div
-                  key={who}
-                  className="rounded-lg border border-hair px-1.5 py-[7px] text-center text-[11.5px] leading-tight text-t3"
-                >
-                  <b className="block font-medium text-t2">{who}</b>
-                  {limit}
-                </div>
-              ))}
-            </div>
-            <p className="mt-2.5 text-[13px] text-t2">
-              Per month, for infra and AI budget requests. Decided on 14 Nov 2026; enforced when requests arrive in wave
-              2.
-            </p>
-          </CardBody>
-        </Card>
+        <PoliciesCard />
+        <div className="grid gap-3.5 lg:grid-cols-2 lg:items-start">
+          <RateCardProposal current={current} />
+          <RuleSetProposal ruleSet={ruleSet} />
+        </div>
       </div>
     </div>
   );

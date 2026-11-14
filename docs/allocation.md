@@ -36,8 +36,10 @@ provisional rows (and any record not yet allocated) are allocated on the fly wit
 
 ## Approval
 
-A rule set version is proposed (here by the seed, the system user `seed`: `proposed_by` references `users`) and approved
-by `POST /api/allocation/rule-sets/versions/:id/approve`: a person, controller or CFO, not the proposer; never an API
+A rule set version is proposed (here by the seed, the system user `seed`: `proposed_by` references `users`; since wave 2
+on Rates and rules with a preview of the open month, `POST /api/allocation/rule-sets/proposals`) and approved through
+its `rule_set_change` request ([approvals.md](approvals.md); the old
+`POST /api/allocation/rule-sets/versions/:id/approve` answers 409 with the request): Finance, then the CFO, each a person, controller or CFO, not the proposer; never an API
 key or a system actor (the database refuses an approver who isn't a user of kind `person`, migration 0005). Approval
 rebuilds the open months and is audited. A rebuild is audited under whoever asked: a person, or `system` for ingest,
 the CLI and the local developer (`LANDLEDGER_DEV_AUTH`), which is never recorded as a person. `rsv_main_1`, approved

@@ -11,6 +11,7 @@ import type { Config } from './config.js';
 import type { Sql } from './db.js';
 import { ApiError } from './errors.js';
 import { sha256 } from './ids.js';
+import { rolesFromGroups } from './oidc.js';
 
 /** Who is calling: a person (a console session), an API key, the bootstrap key, or the local developer. */
 export interface Principal {
@@ -24,6 +25,8 @@ export interface Principal {
   scopes: ApiScope[];
   /** The session's id (sha256 of the cookie) when a person signed in. */
   sessionId?: string;
+  /** A person's Landbright subject (`sub`). */
+  subject?: string;
 }
 
 export const SESSION_COOKIE = 'll_session';
@@ -103,23 +106,38 @@ export async function identify(
   }
   if (input.sessionToken) {
     const id = sha256(input.sessionToken);
-    const [row] = await sql<{ user_id: string; name: string; email: string | null; roles: Role[]; groups: string[] }[]>`
+    // Groups are worked out on every request (SCIM's memberships once it set them, else the sign-in claim), so a
+    // group change applies on the next one; an inactive person has no session (SCIM deactivation revokes them too).
+    const [row] = await sql<
+      { user_id: string; name: string; email: string | null; subject: string; active: boolean; groups: string[] }[]
+    >`
       WITH s AS (
         UPDATE sessions SET last_seen_at = now()
         WHERE id = ${id} AND revoked_at IS NULL AND expires_at > now()
         RETURNING user_id)
-      SELECT u.id AS user_id, u.name, u.email, u.roles, u.groups FROM s JOIN users u ON u.id = s.user_id`;
-    if (row)
+      SELECT u.id AS user_id, u.name, u.email, u.subject, u.active AND u.deleted_at IS NULL AS active,
+             landledger_effective_groups(u) AS groups
+      FROM s JOIN users u ON u.id = s.user_id`;
+    if (row) {
+      if (!row.active)
+        throw new ApiError('unauthorized', 'Your Landledger access was turned off', { reason: 'inactive' });
+      const roles = rolesFromGroups(row.groups);
+      if (!roles.length)
+        throw new ApiError('unauthorized', 'You are no longer in a Landledger group in Landbright', {
+          reason: 'no_role',
+        });
       return {
         kind: 'person',
         id: row.user_id,
         name: row.name,
         email: row.email,
-        roles: row.roles,
+        roles,
         groups: row.groups,
-        scopes: scopesFor(row.roles),
+        scopes: scopesFor(roles),
         sessionId: id,
+        subject: row.subject,
       };
+    }
   }
   return config.devAuth ? DEV_PRINCIPAL : null;
 }

@@ -37,4 +37,6 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_AUDIT_ANCHOR_MINUTES` | `60` | How often the audit chain's head is anchored outside the database (a log record and span to Clickland, webhook `audit.anchor`, a row in `audit_anchors`); `0` turns it off. Runs with the background jobs |
 | `LANDLEDGER_COST_METRICS` | on | `off` stops sending `landledger.cost.*` metrics to Clickland |
 | `LANDLEDGER_COST_METRICS_ENDPOINT` | `${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics` | Where the cost metrics are posted (OTLP/HTTP JSON) |
+| `LANDLEDGER_STEP_DEADLINE_HOURS` | `24` | Business hours a pending approval step waits before it escalates (then as long again before the request expires); 1–720 |
+| `LANDLEDGER_BUSINESS_DAYS` | `mon-fri` | The days that count toward a deadline (whole UTC days): a range `mon-fri` or a list `sun,mon,tue,wed,thu` |
 | `LANDLEDGER_INTEGRATION` | unset | Tests: a comma list of real services to test against (`db`, or `all`) |

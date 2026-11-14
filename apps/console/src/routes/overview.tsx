@@ -12,11 +12,38 @@ import { Pill, Tag } from '@/components/ui/pill';
 import { get, quiet } from '@/lib/api';
 import { toTsv } from '@/lib/copy';
 import { dayLabel, monthLabel, num, usd } from '@/lib/format';
+import { amountWords, perLabel, useRequests } from '@/lib/requests';
 
 const share = (part: string, whole: string) => {
   const w = Decimal.parse(whole);
   return w.isZero() ? 0 : Math.round(Number(Decimal.parse(part).times('100').divide(w, 1, 'halfEven').toString()));
 };
+
+/** Needs you: requests waiting on the signed-in person, newest first (docs/ui.md, Overview). */
+function NeedsYou() {
+  const q = useRequests('waiting');
+  const rows = q.data?.requests ?? [];
+  if (rows.length === 0) return null;
+  return (
+    <Card title="Needs you" sub={`${rows.length} waiting on your decision`} testId="needs-you">
+      <ul>
+        {rows.slice(0, 4).map((r) => (
+          <li key={r.id} className="border-t border-hair first:border-t-0">
+            <Link to={`/approvals/${r.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-acdim">
+              <span className="min-w-0 flex-1 text-[14px]">
+                <b className="font-medium">{r.title}</b>
+                <small className="block text-[12px] text-t3">
+                  +{amountWords(r.amount.amount)} {perLabel(r)} · {r.costCenter.code} · {r.stepLabel}
+                </small>
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-t3" />
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
 
 const ccColumns: Column<CostCenterLine>[] = [
   {
@@ -228,7 +255,7 @@ export function OverviewPage() {
           )}
         </Stat>
         <Stat label="Left after reservations" value={usd(o.leftAfterReservations)} testId="stat-left">
-          <span className="figure">{usd(o.reserved)}</span> reserved (requests arrive in wave 2)
+          <span className="figure">{usd(o.reserved)}</span> reserved by approved requests
         </Stat>
       </div>
 
@@ -259,51 +286,54 @@ export function OverviewPage() {
           </CardBody>
         </Card>
 
-        <Card title="Where the figures come from">
-          <ul>
-            <li className="flex gap-3 border-t border-hair px-4 py-3 first:border-t-0">
-              <Scale className="mt-0.5 size-4 shrink-0 text-t3" />
-              <span className="min-w-0 text-[14px]">
-                <b className="font-medium">{a.directShare}% attributed to a cost center</b>
-                <small className="block text-[12px] text-t3">
-                  Shared pool <span className="figure">{usd(a.sharedPool)}</span> (idle capacity, shared services) ·
-                  Unallocated <span className="figure">{usd(a.unallocated)}</span>
-                </small>
-              </span>
-            </li>
-            <li className="flex gap-3 border-t border-hair px-4 py-3">
-              <Gauge className="mt-0.5 size-4 shrink-0 text-t3" />
-              <span className="min-w-0 text-[14px]">
-                <b className="font-medium">
-                  Rate card {o.rateCard.version ? `v${o.rateCard.version}` : ''} {o.rateCard.status}
-                </b>
-                <small className="block text-[12px] text-t3">
-                  {o.rateCard.approvedBy
-                    ? `Approved by ${o.rateCard.approvedBy}`
-                    : 'Waiting for a controller or the CFO to approve it'}
-                </small>
-              </span>
-            </li>
-            {o.runs.map((r) => (
-              <li key={r.source} className="flex gap-3 border-t border-hair px-4 py-3">
-                <Database className="mt-0.5 size-4 shrink-0 text-t3" />
+        <div className="flex min-w-0 flex-col gap-3.5">
+          <NeedsYou />
+          <Card title="Where the figures come from">
+            <ul>
+              <li className="flex gap-3 border-t border-hair px-4 py-3 first:border-t-0">
+                <Scale className="mt-0.5 size-4 shrink-0 text-t3" />
                 <span className="min-w-0 text-[14px]">
-                  <b className="font-medium">{SOURCE[r.source] ?? r.source}</b>
+                  <b className="font-medium">{a.directShare}% attributed to a cost center</b>
                   <small className="block text-[12px] text-t3">
-                    {r.outcome === 'failed' ? 'Last run failed' : `Read ${ago(r.finishedAt)}`} · {dayLabel(r.day)}
-                    {r.warnings.length > 0 && ` · ${r.warnings.length} note${r.warnings.length > 1 ? 's' : ''}`}
+                    Shared pool <span className="figure">{usd(a.sharedPool)}</span> (idle capacity, shared services) ·
+                    Unallocated <span className="figure">{usd(a.unallocated)}</span>
                   </small>
                 </span>
               </li>
-            ))}
-            <li className="border-t border-hair">
-              <Link to="/explore" className="flex items-center gap-3 px-4 py-3 text-[14px] text-t2 hover:text-t1">
-                <span className="flex-1">Explore where it comes from</span>
-                <ChevronRight className="size-4" />
-              </Link>
-            </li>
-          </ul>
-        </Card>
+              <li className="flex gap-3 border-t border-hair px-4 py-3">
+                <Gauge className="mt-0.5 size-4 shrink-0 text-t3" />
+                <span className="min-w-0 text-[14px]">
+                  <b className="font-medium">
+                    Rate card {o.rateCard.version ? `v${o.rateCard.version}` : ''} {o.rateCard.status}
+                  </b>
+                  <small className="block text-[12px] text-t3">
+                    {o.rateCard.approvedBy
+                      ? `Approved by ${o.rateCard.approvedBy}`
+                      : 'Waiting for a controller or the CFO to approve it'}
+                  </small>
+                </span>
+              </li>
+              {o.runs.map((r) => (
+                <li key={r.source} className="flex gap-3 border-t border-hair px-4 py-3">
+                  <Database className="mt-0.5 size-4 shrink-0 text-t3" />
+                  <span className="min-w-0 text-[14px]">
+                    <b className="font-medium">{SOURCE[r.source] ?? r.source}</b>
+                    <small className="block text-[12px] text-t3">
+                      {r.outcome === 'failed' ? 'Last run failed' : `Read ${ago(r.finishedAt)}`} · {dayLabel(r.day)}
+                      {r.warnings.length > 0 && ` · ${r.warnings.length} note${r.warnings.length > 1 ? 's' : ''}`}
+                    </small>
+                  </span>
+                </li>
+              ))}
+              <li className="border-t border-hair">
+                <Link to="/explore" className="flex items-center gap-3 px-4 py-3 text-[14px] text-t2 hover:text-t1">
+                  <span className="flex-1">Explore where it comes from</span>
+                  <ChevronRight className="size-4" />
+                </Link>
+              </li>
+            </ul>
+          </Card>
+        </div>
       </div>
 
       <div className="mt-3.5 flex flex-col gap-3.5">

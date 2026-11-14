@@ -72,6 +72,9 @@ sponsor, a person), but a decision is a person's, from their session or relayed 
 | `GET /api/exceptions?month=\|from=&to=` | `read` | The weekly exceptions report: per cost center and month, actual spend (direct layer) less what approved or applied requests cover, listed when above the automatic threshold; the shared pool and Unallocated apart (`unowned`) |
 | `GET /api/scim/tokens`, `POST /api/scim/tokens` `{ name }`, `DELETE /api/scim/tokens/:id` | `admin`, a person | SCIM bearer tokens `lls_…`, shown once, stored as sha256 (`pnpm scim:token` writes one to `~/.config/land-family/landledger-scim.env`) |
 
+Once a request is approved, its evidence's "now" figures leave out its own reservation (so they read as they did when
+it was decided). `request.step_pending`'s `url` is the console's `/requests/:id`, the same page as `/approvals/:id`.
+
 `GET /api/overview` and `GET /api/budgets` now count reservations: `reserved` per cost center and in total, and
 `leftAfterReservations` = budget − actuals − reservations' remaining.
 

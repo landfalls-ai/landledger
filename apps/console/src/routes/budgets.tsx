@@ -1,8 +1,9 @@
-import type { BudgetLine, BudgetsView } from '@landledger/contracts';
+import type { BudgetLine, BudgetsView, ReservationView } from '@landledger/contracts';
 import { Decimal } from '@landledger/money';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronRight } from 'lucide-react';
 import { Fragment, useState } from 'react';
+import { Link } from 'react-router';
 import { ErrorNote, Lede, StatePill } from '@/components/spend/bits';
 import { Card } from '@/components/ui/card';
 import { CopyButton } from '@/components/ui/copy-button';
@@ -46,11 +47,43 @@ function Detail({ row, view }: { row: BudgetLine; view: BudgetsView }) {
       </div>
       <div>
         <h3 className="mb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-t3">Reservations</h3>
-        <span className="text-t3">
-          Nothing is reserved against this budget. Requests and their reservations arrive in wave 2.
-        </span>
+        <Reservations code={row.code} month={view.month} />
       </div>
     </div>
+  );
+}
+
+/** What approved requests hold against a cost center's month (reserved → consumed or released). */
+function Reservations({ code, month }: { code: string; month: string }) {
+  const q = useQuery({
+    queryKey: ['reservations', code, month],
+    queryFn: () =>
+      get<{ reservations: ReservationView[] }>(
+        `/api/reservations?costCenter=${encodeURIComponent(code)}&month=${month}`,
+      ),
+    retry: quiet,
+  });
+  const rows = q.data?.reservations ?? [];
+  if (q.isLoading) return <span className="text-t3">Loading…</span>;
+  if (rows.length === 0) return <span className="text-t3">Nothing is reserved against this budget.</span>;
+  return (
+    <>
+      {rows.map((r) => (
+        <div key={r.id} className="flex justify-between gap-3 border-t border-hair py-1.5 first:border-t-0">
+          <span className="min-w-0">
+            <Link to={`/approvals/${r.requestId}`} className="text-t1 hover:underline">
+              {r.requestTitle}
+            </Link>
+            <small className="block text-t3">
+              {r.status}
+              {r.status === 'reserved' && r.consumed !== '0.000000' && `, ${usd(r.consumed)} used`}
+              {r.note && ` · ${r.note}`}
+            </small>
+          </span>
+          <span className="figure whitespace-nowrap">{usd(r.status === 'reserved' ? r.remaining : r.amount)}</span>
+        </div>
+      ))}
+    </>
   );
 }
 

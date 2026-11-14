@@ -24,7 +24,8 @@ the longest prefix (dated model ids find their family), as Landflow does.
    be added to a proposal only, and every line records who added it (`rate_lines.added_by`). An API key or the local
    developer gets 403: lines need an author so the approver can be someone else. (The CLI's `ingest ai-lines` is gone
    for the same reason.)
-2. **Approved** by `POST /api/rate-cards/versions/:id/approve`: a **person** signed in with Landbright, a controller or
+2. **Approved** through its `rate_card_change` request (since wave 2, [approvals.md](approvals.md); the old
+   `POST /api/rate-cards/versions/:id/approve` answers 409 with the request): Finance, then the CFO, each a **person** signed in with Landbright, a controller or
    the CFO, who neither proposed the version nor added any of its lines. An API key or an agent gets 403; a version
    with no lines, or one taking effect in a closing or locked month, is refused. Approval ends the version before it on
    the new one's first day and is audited (`rate_card.version_approved`, with approver, roles, lines, who added them,
@@ -49,6 +50,7 @@ append-only `version_notes` row records that the approver was checked against th
 
 ## Open
 
-- The console shows the rate card and the approver but has no Approve button yet: an approver calls the route from
-  their signed-in session. The approval inbox comes with requests in wave 2.
-- Proposing a new version from the console (with a preview of the change) is not built.
+- Built in wave 2: a change is proposed on Rates and rules (`POST /api/rate-cards/proposals`) with a preview of its
+  effect on the open month, and raised as a request that Finance and then the CFO decide in the Approvals inbox; the
+  last approval applies it and reprices the open month from its effective date.
+- A new version copies every line of the one in effect with the changed prices; adding or removing a line is not built.

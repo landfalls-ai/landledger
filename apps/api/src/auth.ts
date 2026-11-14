@@ -6,7 +6,7 @@ import type { Config } from './config.js';
 import type { Sql } from './db.js';
 import { ApiError } from './errors.js';
 import { newId, randomToken, sha256 } from './ids.js';
-import { type Identity, type OidcClient, pkcePair } from './oidc.js';
+import { type Identity, type OidcClient, pkcePair, rolesFromGroups } from './oidc.js';
 import { isSealed, type SecretBox, sessionAad } from './secrets.js';
 import { actorOf, identify, meOf, type Principal, SESSION_COOKIE } from './principal.js';
 
@@ -21,7 +21,7 @@ export function safeReturnTo(value: unknown): string {
 }
 
 /** Why a sign-in came back to the console without a session (`/?signin_error=<code>`). */
-export type SignInError = 'no_role' | 'expired' | 'denied' | 'failed' | 'unavailable';
+export type SignInError = 'no_role' | 'inactive' | 'expired' | 'denied' | 'failed' | 'unavailable';
 
 /**
  * Console sessions: sign-in through Landbright, then a random token in an httpOnly cookie; Postgres keeps its sha256,
@@ -70,51 +70,122 @@ export class Sessions {
     if (input.iss !== undefined && input.iss !== oidc.config.issuer) return { error: 'failed', returnTo: '/' };
     const identity = await oidc.signIn({ code: input.code, verifier: pending.code_verifier, nonce: pending.nonce });
 
-    if (identity.roles.length === 0) {
+    const result = await this.reconcile(identity, input.userAgent);
+    if ('error' in result) {
       await this.audit.append({
         actor: identity.email ?? identity.subject,
         actorKind: 'person',
         action: 'auth.refused',
         subjectType: 'user',
-        subjectId: identity.subject,
-        data: { reason: 'no Landledger group', groups: identity.groups },
+        subjectId: result.userId ?? identity.subject,
+        data: {
+          reason:
+            result.error === 'inactive'
+              ? 'deactivated'
+              : result.error === 'no_role'
+                ? 'no Landledger group'
+                : 'email taken by another subject',
+          groups: identity.groups,
+        },
       });
-      return { error: 'no_role', returnTo: pending.return_to };
+      return { error: result.error, returnTo: pending.return_to };
     }
+    const token = result.token;
+    return { token, returnTo: pending.return_to, identity };
+  }
 
+  /**
+   * Sign-in meets SCIM (docs/identity.md, Clickland's rules): find the person by subject, else by email when SCIM made
+   * them without a subject yet (`scim:` placeholder), else create them just in time. SCIM owns the profile once it has
+   * spoken (`scim_managed`) and the groups once it has set them (`scim_groups_at`); the claim is kept either way. An
+   * inactive person, or one in no Landledger group, gets no session.
+   */
+  async reconcile(
+    identity: Identity,
+    userAgent?: string,
+  ): Promise<{ token: string; userId: string } | { error: 'no_role' | 'inactive' | 'failed'; userId: string | null }> {
     const token = randomToken(32);
     const sessionId = sha256(token);
-    await this.sql.begin(async (tx) => {
-      const [user] = await tx<{ id: string }[]>`
-        INSERT INTO users (id, issuer, subject, email, name, roles, groups)
-        VALUES (${newId('usr')}, ${identity.issuer}, ${identity.subject}, ${identity.email}, ${identity.name},
-                ${identity.roles}, ${identity.groups})
-        ON CONFLICT (issuer, subject) DO UPDATE SET
-          email = EXCLUDED.email, name = EXCLUDED.name, roles = EXCLUDED.roles, groups = EXCLUDED.groups,
-          last_seen_at = now()
-        RETURNING id`;
-      for (const group of identity.groups)
+    const refused = Symbol('refused');
+    let outcome: { error: 'no_role' | 'inactive' | 'failed'; userId: string | null } = {
+      error: 'failed',
+      userId: null,
+    };
+    try {
+      return (await this.sql.begin(async (tx) => {
+        type U = { id: string; scim_managed: boolean; subject: string; deleted_at: Date | null };
+        let [user] = await tx<U[]>`
+          SELECT id, scim_managed, subject, deleted_at FROM users
+          WHERE issuer = ${identity.issuer} AND subject = ${identity.subject} FOR UPDATE`;
+        if (!user && identity.email) {
+          const [byEmail] = await tx<U[]>`
+            SELECT id, scim_managed, subject, deleted_at FROM users
+            WHERE kind = 'person' AND deleted_at IS NULL
+              AND (lower(user_name) = lower(${identity.email}) OR lower(email) = lower(${identity.email}))
+            ORDER BY (subject LIKE 'scim:%') DESC LIMIT 1 FOR UPDATE`;
+          if (byEmail && !byEmail.subject.startsWith('scim:')) {
+            outcome = { error: 'failed', userId: byEmail.id }; // the email belongs to another Landbright subject
+            throw refused;
+          }
+          if (byEmail) {
+            await tx`UPDATE users SET issuer = ${identity.issuer}, subject = ${identity.subject}, updated_at = now()
+                     WHERE id = ${byEmail.id}`;
+            user = byEmail;
+          }
+        }
+        if (user?.deleted_at) {
+          outcome = { error: 'inactive', userId: user.id };
+          throw refused;
+        }
+        if (!user) {
+          [user] = await tx<U[]>`
+            INSERT INTO users (id, issuer, subject, email, name, roles, groups, user_name)
+            VALUES (${newId('usr')}, ${identity.issuer}, ${identity.subject}, ${identity.email}, ${identity.name},
+                    ${identity.roles}, ${identity.groups}, ${identity.email})
+            RETURNING id, scim_managed, subject, deleted_at`;
+        } else if (!user.scim_managed) {
+          await tx`UPDATE users SET email = ${identity.email}, name = ${identity.name}, updated_at = now() WHERE id = ${user.id}`;
+        }
+        const [row] = await tx<{ id: string; active: boolean; groups: string[] }[]>`
+          UPDATE users u SET groups = ${identity.groups}, last_seen_at = now()
+          WHERE u.id = ${user!.id}
+          RETURNING u.id, u.active, landledger_effective_groups(u) AS groups`;
+        if (!row!.active) {
+          outcome = { error: 'inactive', userId: row!.id };
+          throw refused;
+        }
+        const roles = rolesFromGroups(row!.groups);
+        if (!roles.length) {
+          outcome = { error: 'no_role', userId: row!.id };
+          throw refused;
+        }
+        await tx`UPDATE users SET roles = ${roles} WHERE id = ${row!.id}`;
+        for (const group of identity.groups)
+          await tx`
+            INSERT INTO groups (name, role) VALUES (${group}, ${ROLE_BY_GROUP[group] ?? null})
+            ON CONFLICT (name) DO UPDATE SET last_seen_at = now(), role = EXCLUDED.role`;
         await tx`
-          INSERT INTO groups (name, role) VALUES (${group}, ${ROLE_BY_GROUP[group] ?? null})
-          ON CONFLICT (name) DO UPDATE SET last_seen_at = now(), role = EXCLUDED.role`;
-      await tx`
-        INSERT INTO sessions (id, user_id, expires_at, id_token, user_agent)
-        VALUES (${sessionId}, ${user!.id}, now() + make_interval(hours => ${this.config.sessionHours}),
-                ${this.box ? this.box.seal(identity.idToken, sessionAad(sessionId)) : null},
-                ${input.userAgent?.slice(0, 300) ?? null})`;
-      await this.audit.append(
-        {
-          actor: identity.email ?? identity.subject,
-          actorKind: 'person',
-          action: 'auth.signed_in',
-          subjectType: 'user',
-          subjectId: user!.id,
-          data: { roles: identity.roles, groups: identity.groups },
-        },
-        tx,
-      );
-    });
-    return { token, returnTo: pending.return_to, identity };
+          INSERT INTO sessions (id, user_id, expires_at, id_token, user_agent)
+          VALUES (${sessionId}, ${row!.id}, now() + make_interval(hours => ${this.config.sessionHours}),
+                  ${this.box ? this.box.seal(identity.idToken, sessionAad(sessionId)) : null},
+                  ${userAgent?.slice(0, 300) ?? null})`;
+        await this.audit.append(
+          {
+            actor: identity.email ?? identity.subject,
+            actorKind: 'person',
+            action: 'auth.signed_in',
+            subjectType: 'user',
+            subjectId: row!.id,
+            data: { roles, groups: row!.groups },
+          },
+          tx,
+        );
+        return { token, userId: row!.id };
+      })) as { token: string; userId: string };
+    } catch (e) {
+      if (e === refused) return outcome;
+      throw e;
+    }
   }
 
   /** Ends the session here; returns where to send the browser so Landbright ends its session too. */

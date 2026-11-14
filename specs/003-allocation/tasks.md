@@ -24,14 +24,14 @@ Ordered; each task ends with its tests passing. Depends on spec 001 and on spec 
       tests.
 - [x] T009 Rebuild of an open month into a new generation; tests that the old generation stays, that a locked month is
       refused, and that a rebuild with unchanged rules gives identical rows.
-- [ ] T010 Rule set proposal with preview (old against new per cost center for each open month) and approval by a
+- [x] T010 Rule set proposal with preview (old against new per cost center for each open month) and approval by a
       person; effective date in a locked month refused; route tests.
-      *Partly:* approval by a person (controller or CFO, not the proposer) with the rebuild is built; proposing with a preview is open (the dev rule set is proposed by the seed).
+      *Done in wave 2:* proposing with a preview of the open month (`POST /api/allocation/rule-sets/proposals/preview`), raised as a `rule_set_change` request that a person approves; the approval rebuilds the open months.
 - [x] T011 `GET /api/spend`: group by any dimension, filters, `direct` or `spread`, estimated and invoiced parts, the
       unallocated share; route tests.
 - [x] T012 Live check: rules for this machine's namespaces and Landflow's agents, the shared pool on its own row, the
       spread view, a rule change previewed and approved; screenshots at 390 and 1440 px once the console shows it.
-      *Done 2026-11-14* except the previewed rule change (T010): the dev rule set approved by the CFO, the shared pool on its own row, the spread view in Explore.
+      *Done 2026-11-14*; the previewed rule change (T010) came with wave 2's proposals ([approvals.md](../../docs/approvals.md#rate-card-and-rule-set-changes)): the dev rule set approved by the CFO, the shared pool on its own row, the spread view in Explore.
 - [x] T013 Docs: `docs/allocation.md` (rules, first match, the two layers, shares, generations), `docs/reference/` for
       the routes, limitations (label rules wait for Clickland), history.
 

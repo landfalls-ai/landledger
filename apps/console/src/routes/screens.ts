@@ -1,6 +1,6 @@
 /**
- * What each screen will show (docs/ui.md) and the wave that builds it (docs/plan.md). Until then each is a placeholder
- * that says so; Rates and rules already reads the real rate card and cost centers.
+ * What each screen will show (docs/ui.md) and the wave that builds it (docs/plan.md). A screen not built yet is a
+ * placeholder that says so (router.tsx lists the built ones).
  */
 export interface Screen {
   path: string;

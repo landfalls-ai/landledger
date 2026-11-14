@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router';
 import { cn } from '@/lib/cn';
 import { ALL_PAGES, NAV_GROUPS, pageOf } from '@/nav';
-import { APPROVALS_WAITING, Count } from './sidebar';
+import { useWaitingCount } from '@/lib/requests';
+import { Count } from './sidebar';
 import { ThemeToggle } from './theme-toggle';
 import { UserRow } from './user-row';
 
@@ -12,6 +13,7 @@ import { UserRow } from './user-row';
 export function BottomBar({ me }: { me: Me }) {
   const { pathname } = useLocation();
   const [moreOn, setMoreOn] = useState<string | null>(null);
+  const waiting = useWaitingCount();
   const more = moreOn === pathname;
   const bar = ALL_PAGES.filter((p) => p.bar);
   const inRest = pageOf(pathname) && !pageOf(pathname)!.bar;
@@ -96,7 +98,7 @@ export function BottomBar({ me }: { me: Me }) {
               {item.label}
               {item.href === '/approvals' && (
                 <span className="absolute left-[calc(50%+6px)] top-[5px]">
-                  <Count n={APPROVALS_WAITING} />
+                  <Count n={waiting} />
                 </span>
               )}
             </NavLink>

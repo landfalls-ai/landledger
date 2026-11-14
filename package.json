@@ -13,6 +13,7 @@
     "dev:logs": "docker --context orbstack compose -p landledger-infra -f deploy/compose.infra.yml logs -f",
     "db:migrate": "pnpm --filter @landledger/schema build && pnpm --filter @landledger/schema migrate",
     "db:seed": "nx run @landledger/api:seed --outputStyle=stream",
+    "scim:token": "pnpm --filter @landledger/api scim:token",
     "serve": "nx run-many -t serve --outputStyle=stream",
     "build": "nx run-many -t build --outputStyle=static",
     "typecheck": "nx run-many -t typecheck --outputStyle=static",

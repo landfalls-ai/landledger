@@ -63,6 +63,14 @@ Each wave ends with something finance can use, checked live, with screenshots at
 - Flows: approve an infrastructure change; raise or hold an AI budget.
 - Console: Approvals (phone first), Request, Rates and rules (changes as requests), Audit log.
 - **Finance gets:** spend above the threshold carries a named approver; spend that skipped one is listed weekly.
+- **Built 14 Nov 2026** ([approvals.md](approvals.md), [identity.md](identity.md)): requests, policies, decisions by
+  people only (session or relay) with evidence snapshots, deadlines and escalation in business hours, reservations
+  in budget left, rate card and rule set proposals with a preview, the exceptions report, webhooks, the auditor role,
+  SCIM 2.0, MCP `list_requests`, `get_request`, `create_request`, `reserve`, and the console's Approvals, Request,
+  Rates and rules and Audit log. Live: R-1, +$1,840 a month on ENG-PLATFORM, approved by the budget owner and then
+  Finance in a visible Chrome; the requester refused. Not yet: the Landflow plugin's flows (built in Landflow,
+  `clickland-integration`), Slack and email approvals through it, AI budgets written to Landflow's caps, a console
+  form to raise a request.
 
 ### Wave 3 · Plan and reconcile
 
