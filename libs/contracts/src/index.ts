@@ -292,7 +292,7 @@ export type CostRecord = Record<string, string | Record<string, unknown> | null>
 export const RecordsQuery = z.object({
   month: Month.optional(),
   basis: z.enum(['estimated', 'invoiced']).optional(),
-  source: z.enum(['landflow', 'clickland', 'invoice', 'manual']).optional(),
+  source: z.enum(['landflow', 'clickland', 'invoice', 'manual', 'dev-anomaly']).optional(),
   sourceKey: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(1000).default(100),
   /** The `next` of the page before. */
@@ -346,7 +346,8 @@ export type AuditVerify = z.infer<typeof AuditVerify>;
  * Review of wave 2: `request.needs_confirmation`: a key named a person as requester or sponsor, and that person
  * confirms it from their own session before it enters the policy; `decision.relayed`: a decision came through a relay
  * channel, sent naming the person so they hear of it; `report.exceptions`: the weekly exceptions report was stored,
- * with its sha256. `cost.anomaly` is planned (wave 3) and never sent yet.
+ * with its sha256. Wave 3: `cost.anomaly` (a cost jumped against its robust baseline), `approval.anomaly`,
+ * `contract.renewal_due`, `access_review.due`.
  */
 export const WebhookEvent = z.enum([
   'ping',
@@ -362,6 +363,12 @@ export const WebhookEvent = z.enum([
   'request.needs_confirmation',
   'decision.relayed',
   'report.exceptions',
+  /** Wave 3: an approval pattern that looks like a control being worked around (spec 007). */
+  'approval.anomaly',
+  /** Wave 3: a contract entered its notice window, once per contract and renewal date (spec 009). */
+  'contract.renewal_due',
+  /** Wave 3: a quarter's access review is due (spec 011). */
+  'access_review.due',
 ]);
 export type WebhookEvent = z.infer<typeof WebhookEvent>;
 
@@ -390,3 +397,4 @@ export interface WebhookView {
 export * from './requests.js';
 export * from './sources.js';
 export * from './spend.js';
+export * from './wave3.js';

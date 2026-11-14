@@ -16,6 +16,7 @@
  * (the key or person that raised it) and its origin's `verified`; relays carry the raw Slack interaction.
  */
 import { z } from 'zod';
+import { type AgentEconomics, ContractTerms, type SeatEvidence, SeatTerms, type SeatView } from './wave3.js';
 
 const Day = z.iso.date();
 const Month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'a month, YYYY-MM');
@@ -37,6 +38,8 @@ export const RequestKind = z.enum([
   'rule_set_change',
   'policy_change',
   'other',
+  /** Wave 3 (spec 009): a contract, for its total contract value and term; it reserves seats, not money. */
+  'contract',
 ]);
 export type RequestKind = z.infer<typeof RequestKind>;
 
@@ -48,6 +51,7 @@ export const REQUEST_KIND_LABEL: Readonly<Record<RequestKind, string>> = {
   rule_set_change: 'Rule-set change',
   policy_change: 'Policy change',
   other: 'Other',
+  contract: 'Contract',
 };
 
 /** Kinds whose change Landledger applies itself when the last step approves (the others are applied by Landflow). */
@@ -209,8 +213,20 @@ export const CreateRequestInput = z
      * same key with a different body is a 409.
      */
     idempotencyKey: z.string().min(1).max(200).optional(),
+    /** Kind `contract` only (spec 009): the contract's TCV and term; the amount is the TCV, once. */
+    contract: ContractTerms.optional(),
+    /** Kind `tool_or_seat` only (spec 010): the contract it takes a seat from; amount = seats × seat price a month. */
+    seat: SeatTerms.optional(),
   })
-  .refine((r) => !r.end || !r.start || r.end >= r.start, { message: 'end is on or after start', path: ['end'] });
+  .refine((r) => !r.end || !r.start || r.end >= r.start, { message: 'end is on or after start', path: ['end'] })
+  .refine((r) => (r.kind === 'contract') === !!r.contract, {
+    message: 'A contract request carries `contract` (vendor, product, tcv, termMonths, start), and only it does',
+    path: ['contract'],
+  })
+  .refine((r) => !r.seat || r.kind === 'tool_or_seat', {
+    message: '`seat` is for a tool_or_seat request',
+    path: ['seat'],
+  });
 export type CreateRequestInput = z.input<typeof CreateRequestInput>;
 
 // Steps, decisions, reservations ---------------------------------------------------------------------------------------
@@ -343,6 +359,10 @@ export interface RequestView {
     reason: string;
   } | null;
   change: RequestChange | null;
+  /** Kind `contract`: its terms (spec 009). */
+  contract: z.output<typeof ContractTerms> | null;
+  /** Kind `tool_or_seat` with a contract: the seat it reserves (spec 010). */
+  seat: SeatView | null;
   /** Approved by policy below the threshold: no person decided. */
   automatic: boolean;
   policy: { id: string; version: number; reason: string } | null;
@@ -458,6 +478,17 @@ export interface LedgerEvidence {
   automaticThisMonth: { costCenter: Amount; agent: Amount | null };
   /** A rate card change: the version's lines, frozen once its request exists, and their sha256. */
   rateCardChange: { versionId: string; lines: number; linesSha256: string } | null;
+  /**
+   * Wave 3 (spec 006): the month (or first full month) has no budget for the cost center, in words: such a request is
+   * never automatic and goes to Finance. Null when there is a budget.
+   */
+  budgetMissing?: string | null;
+  /** Wave 3 (spec 006): approved monthly requests beyond their reservations, counted in `forecastNow`. */
+  committed?: Amount;
+  /** Wave 3 (spec 008): an AI budget's agent this month, and what the request buys at its cost per outcome. */
+  agentEconomics?: AgentEconomics | null;
+  /** Wave 3 (spec 010): a seat request's contract and its seats. */
+  seat?: SeatEvidence | null;
 }
 
 export interface RequestDetail {

@@ -184,3 +184,26 @@ describe('FOCUS tolerance (T006)', () => {
     expect(withinFocusTolerance(diff, rows.length)).toBe(true);
   });
 });
+
+describe('square root (wave 3: forecast bands)', () => {
+  it('is the largest value at its scale whose square is at most the input', () => {
+    fc.assert(
+      fc.property(decimal(10n ** 30n), fc.integer({ min: 0, max: 12 }), (d, scale) => {
+        const r = d.sqrt(scale);
+        expect(r.scale).toBe(scale);
+        expect(r.times(r).compare(d)).toBeLessThanOrEqual(0);
+        const next = r.plus(Decimal.of(1n, scale));
+        expect(next.times(next).compare(d)).toBe(1);
+      }),
+      RUNS,
+    );
+  });
+
+  it('is exact on perfect squares and refuses negatives', () => {
+    expect(Decimal.parse('2.25').sqrt(2).toString()).toBe('1.50');
+    expect(Decimal.parse('144').sqrt(0).toString()).toBe('12');
+    expect(Decimal.parse('2').sqrt(6).toString()).toBe('1.414213');
+    expect(Decimal.ZERO.sqrt(3).toString()).toBe('0.000');
+    expect(() => Decimal.parse('-1').sqrt(2)).toThrow(RangeError);
+  });
+});

@@ -21,8 +21,10 @@ import type { z } from 'zod';
 import type {
   ActorKind,
   AppliedInput,
+  ContractTerms,
   CreateRequestInput,
   DecisionInput,
+  SeatTerms,
   SlackRelayInput,
 } from '@landledger/contracts';
 import {
@@ -114,6 +116,10 @@ export interface RequestRow {
   applied_at: Date | null;
   closed_by: string | null;
   close_note: Record<string, unknown> | null;
+  /** Kind `contract` (0012): its terms. */
+  contract: z.output<typeof ContractTerms> | null;
+  /** A seat request's terms (0012). */
+  seat: z.output<typeof SeatTerms> | null;
 }
 
 interface StepRow {
@@ -1573,6 +1579,8 @@ export class Requests {
             }
           : null,
       change: r.change,
+      contract: r.contract,
+      seat: null,
       automatic: r.automatic,
       policy: r.policy_id ? { id: r.policy_id, version: p?.version ?? 0, reason: r.policy_reason ?? '' } : null,
       createdAt: r.created_at.toISOString(),

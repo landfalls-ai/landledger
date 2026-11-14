@@ -41,5 +41,5 @@ export type ServiceCategory = (typeof SERVICE_CATEGORIES)[number];
 export const BASES = ['estimated', 'invoiced'] as const;
 export type Basis = (typeof BASES)[number];
 
-export const SOURCES = ['landflow', 'clickland', 'invoice', 'manual'] as const;
+export const SOURCES = ['landflow', 'clickland', 'invoice', 'manual', 'dev-anomaly'] as const;
 export type Source = (typeof SOURCES)[number];

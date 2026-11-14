@@ -15,7 +15,7 @@ export type Amount = string;
 
 export interface IngestRun {
   id: string;
-  source: 'landflow' | 'clickland' | 'invoice' | 'manual';
+  source: 'landflow' | 'clickland' | 'invoice' | 'manual' | 'dev-anomaly';
   kind: 'hourly' | 'daily' | 'backfill' | 'manual';
   day: string;
   rateCardVersionId: string | null;
@@ -198,6 +198,8 @@ export interface CostCenterLine {
   forecast: Amount | null;
   /** Wave 2: approved requests' reservations. Zero until then. */
   reserved: Amount;
+  /** Wave 3 (spec 006): approved monthly requests beyond their reservations, in the forecast and the state. */
+  committed?: Amount;
   state: BudgetState;
 }
 
@@ -214,9 +216,22 @@ export interface Overview {
      * forecast, no range, no state); `past`: a past month, actuals only.
      */
     status: 'ok' | 'insufficient' | 'past';
+    /** P50 plus what is committed beyond reservations (spec 006). */
     amount: Amount | null;
+    /** P10 and P90 (with the commitments), the band from how much the days vary (spec 006). */
     low: Amount | null;
     high: Amount | null;
+    /** Spec 006: the band, without commitments; null without enough data. */
+    p10?: Amount | null;
+    p50?: Amount | null;
+    p90?: Amount | null;
+    /** In words: how the band was taken (σ per source, days left). */
+    band?: string | null;
+    /** Approved monthly requests beyond their reserved months, for the rest of this month. */
+    committed?: Amount;
+    commitments?: { requestId: string; number: string; title: string; costCenter: string; amount: Amount }[];
+    /** Each source's driver: its consumed quantity per day (by unit) and cost per day over the run-rate window. */
+    drivers?: { source: string; unit: string; perDay: string; costPerDay: Amount }[];
     /** How the run rate was taken, in words. */
     basis: string;
     /** Cost per day at the run rate (low, mid, high). */

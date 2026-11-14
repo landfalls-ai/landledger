@@ -114,6 +114,19 @@ export class Decimal {
     return q.normalize();
   }
 
+  /**
+   * The square root to `scale` digits, rounded toward zero (the largest value whose square is ≤ this one): exact
+   * integer arithmetic, used for a forecast band's standard deviation. A negative value is an error.
+   */
+  sqrt(scale: number): Decimal {
+    if (this.coefficient < 0n) throw new RangeError(`No square root of ${this.toString()}`);
+    if (!Number.isInteger(scale) || scale < 0) throw new RangeError(`A scale is a whole number ≥ 0, got ${scale}`);
+    // √(c / 10^s) × 10^k = √(c × 10^(2k − s)): work at k' ≥ s / 2 so the power is whole, then drop digits.
+    const k = Math.max(scale, Math.ceil(this.scale / 2));
+    const root = isqrt(this.coefficient * pow10(2 * k - this.scale));
+    return Decimal.of(root, k).rescale(scale, 'towardZero');
+  }
+
   negate(): Decimal {
     return Decimal.of(-this.coefficient, this.scale);
   }
@@ -179,4 +192,17 @@ export class Decimal {
   private up(scale: number): bigint {
     return this.coefficient * pow10(scale - this.scale);
   }
+}
+
+/** ⌊√n⌋ for n ≥ 0, by Newton's method on bigints. */
+function isqrt(n: bigint): bigint {
+  if (n < 2n) return n;
+  // Start above the root (2^⌈bits/2⌉), so Newton's steps fall to it.
+  let x = 1n << BigInt(Math.ceil(n.toString(2).length / 2));
+  for (;;) {
+    const y = (x + n / x) >> 1n;
+    if (y >= x) break;
+    x = y;
+  }
+  return x;
 }
