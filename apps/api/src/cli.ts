@@ -4,7 +4,6 @@
  *   run [--source landflow|clickland|all] [--day YYYY-MM-DD]   one run per source (default: all, today)
  *   backfill --source landflow|clickland --from YYYY-MM-DD      every day from --from to today
  *   tick                                                        what the hourly job does
- *   ai-lines [--version rcv_internal_1]                         add Landflow's AI prices to a proposed rate card version
  *   allocate [--month YYYY-MM]                                  allocate records entered since the last generation
  *   metrics                                                     send today's and yesterday's cost metrics once
  *
@@ -65,15 +64,13 @@ try {
     case 'tick':
       for (const r of await ingest.tick()) show(r);
       break;
-    case 'ai-lines': {
-      if (!services.landflow) throw new Error('Landflow is not configured');
-      const n = await services.rateCards.importAiLines(values.version!, await services.landflow.prices(), 'cli');
-      console.log(`${n} AI rate lines added to ${values.version}`);
-      break;
-    }
+    case 'ai-lines':
+      // Lines have an author, and their author can't approve them: a signed-in person adds them, in the console or
+      // with POST /api/rate-cards/versions/:id/ai-lines.
+      throw new Error('AI lines are added by a signed-in person: POST /api/rate-cards/versions/:id/ai-lines');
     case 'allocate': {
       const month = values.month ?? today.slice(0, 7);
-      console.log(await services.allocation.allocatePending(month, 'cli'));
+      console.log(await services.allocation.allocatePending(month, { actor: 'cli', actorKind: 'system' }));
       break;
     }
     case 'metrics': {
@@ -84,7 +81,7 @@ try {
       break;
     }
     default:
-      console.log('ingest run | backfill --from DAY | tick | ai-lines | allocate | metrics (see src/cli.ts)');
+      console.log('ingest run | backfill --from DAY | tick | allocate | metrics (see src/cli.ts)');
       process.exitCode = 2;
   }
 } catch (e) {

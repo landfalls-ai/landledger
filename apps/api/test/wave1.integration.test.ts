@@ -8,6 +8,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { createSql, type Sql } from '../src/db.js';
 import { RATE_CARD_V1, seed } from '../src/seed.js';
+import { DEV_PRINCIPAL } from '../src/principal.js';
+import { linesHash } from '../src/ratecards.js';
 import { createServices, type Services } from '../src/services.js';
 import { call, DANA, fakeSources, KEY, TAL, testConfig, YOAV } from './fakes.js';
 
@@ -44,22 +46,48 @@ describe.skipIf(!integrationEnabled('db'))('wave 1 against Postgres', () => {
     expect(run.error).toMatch(/No approved rate card/);
   });
 
-  it('approves a rate card only by a finance person who did not propose it', async () => {
-    expect(await services.rateCards.importAiLines(RATE_CARD_V1, await services.landflow!.prices(), 'test')).toBe(6); // four meters of the model, two of local Ollama
+  it('approves a rate card only by a finance person who neither proposed it nor added a line', async () => {
+    const prices = await services.landflow!.prices();
+    // Lines have an author: a signed-in person. Not a key, not the local developer.
+    await expect(services.rateCards.importAiLines(RATE_CARD_V1, prices, KEY)).rejects.toThrow(/signed in/);
+    await expect(services.rateCards.importAiLines(RATE_CARD_V1, prices, DEV_PRINCIPAL)).rejects.toThrow(/signed in/);
+    expect(await services.rateCards.importAiLines(RATE_CARD_V1, prices, DANA)).toBe(6); // four meters of the model, two of local Ollama
+    const authors = await sql`SELECT DISTINCT added_by FROM rate_lines WHERE version_id = ${RATE_CARD_V1} ORDER BY 1`;
+    expect(authors.map((a) => a.added_by)).toEqual(['seed', 'usr_dana']);
+    const [proposer] =
+      await sql`SELECT u.kind FROM rate_card_versions v JOIN users u ON u.id = v.proposed_by WHERE v.id = ${RATE_CARD_V1}`;
+    expect(proposer!.kind).toBe('system'); // the seed proposes; it is a user, and never a person
     await expect(services.rateCards.approve(RATE_CARD_V1, KEY)).rejects.toThrow(/API key never does/);
     await expect(services.rateCards.approve(RATE_CARD_V1, TAL)).rejects.toThrow(/controller or the CFO/);
-    // The database refuses requester = approver, whatever the API says.
+    // Dana added the AI lines, so she can't approve them.
+    await expect(services.rateCards.approve(RATE_CARD_V1, DANA)).rejects.toThrow(/added lines/);
+    // The database refuses the same, whatever the API says: an author, the proposer, or a system actor.
     await expect(
-      sql`UPDATE rate_card_versions SET approved_by = 'usr_yoav', approved_at = now(), proposed_by = 'usr_yoav' WHERE id = ${RATE_CARD_V1}`,
+      sql`UPDATE rate_card_versions SET approved_by = 'usr_dana', approved_at = now() WHERE id = ${RATE_CARD_V1}`,
+    ).rejects.toThrow(/added lines/);
+    await expect(
+      sql`UPDATE rate_card_versions SET approved_by = 'seed', approved_at = now() WHERE id = ${RATE_CARD_V1}`,
+    ).rejects.toThrow(/proposed|system actor/);
+    await expect(
+      sql`UPDATE rate_card_versions SET approved_by = 'cli', approved_at = now() WHERE id = ${RATE_CARD_V1}`,
+    ).rejects.toThrow(/system actor/);
+    await expect(
+      sql`UPDATE rate_card_versions SET proposed_by = 'nobody' WHERE id = ${RATE_CARD_V1}`,
     ).rejects.toThrow();
     const ok = await services.rateCards.approve(RATE_CARD_V1, YOAV);
     expect(ok.approvedBy).toBe('yoav.bendavid@landbright.test');
     await expect(services.rateCards.approve(RATE_CARD_V1, DANA)).rejects.toThrow(/already approved/);
     const [audit] = await sql`SELECT actor, data FROM audit_log WHERE action = 'rate_card.version_approved'`;
     expect(audit!.actor).toBe('yoav.bendavid@landbright.test');
+    // The entry carries a hash of exactly the lines approved.
+    const lines = await sql`SELECT * FROM rate_lines WHERE version_id = ${RATE_CARD_V1}`;
+    expect(audit!.data.linesSha256).toBe(linesHash(lines as never));
+    expect(audit!.data.linesAddedBy).toEqual(['seed', 'usr_dana']);
+    const [imported] = await sql`SELECT actor, actor_kind FROM audit_log WHERE action = 'rate_card.lines_imported'`;
+    expect(imported).toMatchObject({ actor: 'dana.shalev@landbright.test', actor_kind: 'person' });
     // Lines of an approved version never change.
     await expect(
-      services.rateCards.importAiLines(RATE_CARD_V1, await services.landflow!.prices(), 'test'),
+      services.rateCards.importAiLines(RATE_CARD_V1, await services.landflow!.prices(), DANA),
     ).rejects.toThrow(/approved/);
   });
 
@@ -138,7 +166,9 @@ describe.skipIf(!integrationEnabled('db'))('wave 1 against Postgres', () => {
     expect(spread.total.total).toBe(spend.total.total);
     expect(spread.groups.some((g) => g.key === 'SHARED-POOL')).toBe(false);
     // A rebuild is a new generation; a closing month takes none.
-    expect((await services.allocation.rebuild('2026-11', 'test', 'usr_dana')).number).toBe(3);
+    expect(
+      (await services.allocation.rebuild('2026-11', 'test', { actor: DANA.email!, actorKind: 'person' })).number,
+    ).toBe(3);
   });
 
   it('imports budgets from a CSV, versioned, and says where each cost center stands', async () => {

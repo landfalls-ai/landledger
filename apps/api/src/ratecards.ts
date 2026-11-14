@@ -1,15 +1,19 @@
 /**
- * Rate card approval and the AI lines (spec 002): a version is proposed (by the seed, a script or a person) and approved
- * by a signed-in controller or CFO who didn't propose it; never by an API key or an agent (docs/plan.md principle 1).
- * Approval is audited and effective-dated: it closes the version before it on the new one's first day.
+ * Rate card approval and the AI lines (spec 002): a version is proposed (by the seed or a person, a user either way) and
+ * approved by a signed-in controller or CFO who neither proposed it nor added any of its lines; never by an API key, a
+ * system actor or an agent (docs/plan.md principle 1; the database holds the same rules, migration 0005). Approval is
+ * audited with a hash of the lines approved, and effective-dated: it closes the version before it on the new one's first
+ * day.
  */
 import type { LandflowPriceTable } from '@landledger/contracts';
 import { Decimal, Rate } from '@landledger/money';
 import type { PriceLine, PricedVersion } from '@landledger/pricing';
 import { RateBook } from '@landledger/pricing';
 import type { AuditLog } from './audit.js';
+import { canonicalJson } from './canonical.js';
 import { day, type Sql, type Tx } from './db.js';
 import { ApiError, notFound } from './errors.js';
+import { sha256 } from './ids.js';
 import { actorOf, type Principal } from './principal.js';
 
 type VersionRow = {
@@ -37,7 +41,28 @@ type LineRow = {
   unit_price: string;
   currency: string;
   details: Record<string, unknown> | null;
+  added_by: string;
+  position: number;
 };
+
+/** What an approval approves, hashed into its audit entry: every line's identity, price and author, in order. */
+export function linesHash(lines: readonly LineRow[]): string {
+  return sha256(
+    canonicalJson(
+      [...lines]
+        .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))
+        .map((l) => ({
+          id: l.id,
+          skuPriceId: l.sku_price_id,
+          pricingUnit: l.pricing_unit,
+          unitPrice: Decimal.parse(l.unit_price).toString(),
+          currency: l.currency.trim(),
+          details: l.details,
+          addedBy: l.added_by,
+        })),
+    ),
+  );
+}
 
 export const lineOf = (l: LineRow): PriceLine => ({
   id: l.id,
@@ -136,9 +161,15 @@ export class RateCards {
 
   /**
    * Adds AI lines from Landflow's price table to a **proposed** version (the database refuses lines on an approved
-   * one). Lines it already has are left alone; returns the number added.
+   * one), as the signed-in person who asked: they are the lines' author, so someone else approves. Lines it already
+   * has are left alone; returns the number added.
    */
-  async importAiLines(versionId: string, table: LandflowPriceTable, by: string): Promise<number> {
+  async importAiLines(versionId: string, table: LandflowPriceTable, by: Principal): Promise<number> {
+    if (by.kind !== 'person')
+      throw new ApiError(
+        'forbidden',
+        "A person signed in with Landbright adds lines to a rate card, so the approver can be someone else; an API key or the local developer doesn't",
+      );
     return this.sql.begin(async (tx) => {
       const [v] = await tx<VersionRow[]>`SELECT * FROM rate_card_versions WHERE id = ${versionId} FOR UPDATE`;
       if (!v) throw notFound('Rate card version');
@@ -160,18 +191,17 @@ export class RateCards {
           Rate.of(l.price, 'USD', '1000000 Tokens');
           const row = await tx`
             INSERT INTO rate_lines (id, version_id, sku_id, sku_price_id, sku_meter, label, provider, model, pricing_unit,
-                                    unit_price, currency, details, position)
+                                    unit_price, currency, details, position, added_by)
             VALUES (${`rl_${versionId.replace(/^rcv_/, '')}_${l.skuPriceId.replace(/[^\w.-]+/g, '_')}`}, ${versionId},
                     ${l.sku}, ${l.skuPriceId}, ${l.meter}, ${l.label}, ${l.provider}, ${l.model}, '1000000 Tokens',
-                    ${l.price}::numeric, 'USD', ${tx.json(l.details as never)}, ${position++})
+                    ${l.price}::numeric, 'USD', ${tx.json(l.details as never)}, ${position++}, ${by.id})
             ON CONFLICT (version_id, sku_price_id) DO NOTHING RETURNING id`;
           if (row.length) added.push(l.skuPriceId);
         }
       if (added.length)
         await this.audit.append(
           {
-            actor: by,
-            actorKind: 'system',
+            ...actorOf(by),
             action: 'rate_card.lines_imported',
             subjectType: 'rate_card_version',
             subjectId: versionId,
@@ -199,13 +229,12 @@ export class RateCards {
       const [v] = await tx<VersionRow[]>`SELECT * FROM rate_card_versions WHERE id = ${versionId} FOR UPDATE`;
       if (!v) throw notFound('Rate card version');
       if (v.approved_at) throw new ApiError('conflict', `Version ${v.version} is already approved`);
-      if (v.proposed_by === by.id || v.proposed_by === by.email)
+      if (v.proposed_by === by.id)
         throw new ApiError('forbidden', 'The person who proposed a rate card version cannot approve it');
-      const [lines] =
-        (await tx`SELECT count(*)::int AS n FROM rate_lines WHERE version_id = ${versionId}`) as unknown as [
-          { n: number },
-        ];
-      if (!lines.n) throw new ApiError('bad_request', 'A version with no lines is not approved');
+      const lines = await tx<LineRow[]>`SELECT * FROM rate_lines WHERE version_id = ${versionId}`;
+      if (!lines.length) throw new ApiError('bad_request', 'A version with no lines is not approved');
+      if (lines.some((l) => l.added_by === by.id))
+        throw new ApiError('forbidden', 'A person who added lines to a rate card version cannot approve it');
       const from = day(v.effective_from);
       const [locked] = await tx`
         SELECT month FROM periods WHERE status <> 'open' AND month >= date_trunc('month', ${from}::date) LIMIT 1`;
@@ -230,7 +259,9 @@ export class RateCards {
             proposedBy: v.proposed_by,
             approvedBy: by.email ?? by.id,
             roles: by.roles,
-            lines: lines.n,
+            lines: lines.length,
+            linesAddedBy: [...new Set(lines.map((l) => l.added_by))].sort(),
+            linesSha256: linesHash(lines),
             ended: ended.map((e) => ({ id: e.id, effectiveTo: from })),
           },
         },

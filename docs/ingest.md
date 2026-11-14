@@ -41,7 +41,6 @@ data and corrections are picked up about once a day). By hand:
 pnpm --filter @landledger/api ingest run [--source landflow|clickland] [--day YYYY-MM-DD]
 pnpm --filter @landledger/api ingest backfill --source landflow --from 2026-10-31
 pnpm --filter @landledger/api ingest tick
-pnpm --filter @landledger/api ingest ai-lines [--version rcv_internal_1]   # Landflow's price table into a proposal
 pnpm --filter @landledger/api ingest allocate [--month 2026-11]
 pnpm --filter @landledger/api ingest metrics                               # cost metrics to Clickland once
 ```

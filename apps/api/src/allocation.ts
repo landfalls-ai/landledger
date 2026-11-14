@@ -17,12 +17,17 @@ import {
   type ShareRule,
   validateRuleSet,
 } from '@landledger/allocation';
+import type { ActorKind } from '@landledger/contracts';
 import { Money } from '@landledger/money';
 import type { AuditLog } from './audit.js';
 import { day as dayOf, type Sql, type Tx } from './db.js';
 import { ApiError, notFound } from './errors.js';
 import { newId } from './ids.js';
 import { actorOf, type Principal } from './principal.js';
+
+/** Who builds a generation, as the audit log names them (`actorOf` for a principal). */
+export type Actor = { actor: string; actorKind: ActorKind };
+export const SYSTEM_INGEST: Actor = { actor: 'ingest', actorKind: 'system' };
 
 export const RULE_SET_ID = 'rs_main';
 export const RULE_SET_V1 = 'rsv_main_1';
@@ -325,7 +330,7 @@ export class Allocation {
       const [v] = await tx<VersionRow[]>`SELECT * FROM allocation_rule_set_versions WHERE id = ${versionId} FOR UPDATE`;
       if (!v) throw notFound('Rule set version');
       if (v.approved_at) throw new ApiError('conflict', `Version ${v.version} is already approved`);
-      if (v.proposed_by === by.id || v.proposed_by === by.email)
+      if (v.proposed_by === by.id)
         throw new ApiError('forbidden', 'The person who proposed a rule set version cannot approve it');
       const from = dayOf(v.effective_from);
       await tx`
@@ -354,13 +359,13 @@ export class Allocation {
     const rebuilt = await this.rebuildOpen(
       approved.effectiveFrom.slice(0, 7),
       `rule set v${approved.version} approved`,
-      actorOf(by).actor,
+      actorOf(by),
     );
     return { version: approved, rebuilt };
   }
 
   /** Open months from `fromMonth` that have records: a new generation each. */
-  async rebuildOpen(fromMonth: string, reason: string, by: string) {
+  async rebuildOpen(fromMonth: string, reason: string, by: Actor) {
     const months = await this.sql<{ month: Date }[]>`
       SELECT DISTINCT date_trunc('month', billing_period_start AT TIME ZONE 'UTC')::date AS month FROM cost_records
       WHERE billing_period_start >= ${`${fromMonth}-01T00:00:00Z`}::timestamptz ORDER BY 1`;
@@ -375,7 +380,7 @@ export class Allocation {
   }
 
   /** A new generation for an open month: every entry of the month allocated under the rules in effect. */
-  async rebuild(month: string, reason: string, by: string) {
+  async rebuild(month: string, reason: string, by: Actor) {
     return this.sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext(${`allocation:${month}`}))`;
       const [p] = await tx<{ status: string }[]>`SELECT status FROM periods WHERE month = ${`${month}-01`}`;
@@ -392,13 +397,12 @@ export class Allocation {
       const versionIds = book.versions.map((v) => v.id);
       await tx`
         INSERT INTO allocation_generations (id, month, number, reason, rule_set_version_ids, created_by)
-        VALUES (${id}, ${`${month}-01`}, ${next}, ${reason}, ${versionIds}, ${by})`;
+        VALUES (${id}, ${`${month}-01`}, ${next}, ${reason}, ${versionIds}, ${by.actor})`;
       const rows = this.direct(book, records);
       await this.insert(tx, id, month, records, rows);
       await this.audit.append(
         {
-          actor: by,
-          actorKind: by === 'schedule' || by === 'ingest' ? 'system' : 'person',
+          ...by,
           action: 'allocation.generation_built',
           subjectType: 'allocation_generation',
           subjectId: id,
@@ -414,7 +418,7 @@ export class Allocation {
    * Records entered since the month's newest generation join it, under its rules. A month with no generation, or whose
    * newest generation predates the rules now in effect, is rebuilt instead. Called after every ingest run.
    */
-  async allocatePending(month: string, by = 'ingest') {
+  async allocatePending(month: string, by: Actor = SYSTEM_INGEST) {
     const [p] = await this.sql<{ status: string }[]>`SELECT status FROM periods WHERE month = ${`${month}-01`}`;
     if (p && p.status !== 'open') return null;
     const book = await this.book();

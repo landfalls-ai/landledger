@@ -20,7 +20,7 @@ import { registerAuthRoutes } from './auth.js';
 import { ApiError } from './errors.js';
 import { toCsv, toXlsx, type Sheet } from './export.js';
 import { createMcpServer } from './mcp.js';
-import { identify, type Principal, requireScope, SESSION_COOKIE } from './principal.js';
+import { actorOf, identify, type Principal, requireScope, SESSION_COOKIE } from './principal.js';
 import type { Services } from './services.js';
 
 import { VERSION } from './version.js';
@@ -213,7 +213,7 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
     const added = await rateCards.importAiLines(
       parse(VersionId, r.params).id,
       await services.landflow.prices(),
-      r.principal.email ?? r.principal.name,
+      r.principal,
     );
     return reply.status(201).send({ added });
   });
@@ -229,9 +229,7 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
     if (r.principal.kind !== 'person' && r.principal.kind !== 'dev')
       throw new ApiError('forbidden', 'A person rebuilds allocations; an API key never does');
     const month = parse(MonthParam, r.params).month;
-    return reply
-      .status(201)
-      .send(await allocation.rebuild(month, 'rebuilt by hand', r.principal.email ?? r.principal.name));
+    return reply.status(201).send(await allocation.rebuild(month, 'rebuilt by hand', actorOf(r.principal)));
   });
 
   // Budgets (spec 003) -------------------------------------------------------------------------------------------------

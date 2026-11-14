@@ -29,12 +29,7 @@ describe.skipIf(!integrationEnabled('db'))('0001 against Postgres', () => {
   const insert = (...records: CostRecord[]) => sql`INSERT INTO cost_records ${sql(records.map(toRow))}`;
 
   it('applies once, then has nothing to do, and refuses an edited migration', async () => {
-    expect(await migrate(db.url)).toEqual([
-      '0001_core.sql',
-      '0002_approvals_and_ingest.sql',
-      '0003_allocation.sql',
-      '0004_budgets.sql',
-    ]);
+    expect(await migrate(db.url)).toEqual(loadMigrations().map((m) => m.name));
     expect(await migrate(db.url)).toEqual([]);
     const edited = loadMigrations().map((m) => ({ ...m, checksum: 'x' }));
     await expect(migrate(db.url, () => {}, edited)).rejects.toThrow(/changed after it was applied/);
@@ -255,13 +250,21 @@ describe.skipIf(!integrationEnabled('db'))('0001 against Postgres', () => {
   it('keeps rate card proposals until a person approves them; approved versions never overlap or change', async () => {
     await sql`INSERT INTO rate_cards (id, name, currency, owner) VALUES ('rc_t', 'T', 'USD', 'Finance')`;
     await sql`INSERT INTO rate_card_versions (id, rate_card_id, version, effective_from, proposed_by) VALUES ('v1', 'rc_t', 1, '2026-11-01', 'seed')`;
-    await sql`INSERT INTO rate_lines (id, version_id, sku_id, sku_price_id, sku_meter, label, pricing_unit, unit_price, currency)
-              VALUES ('l1', 'v1', 'landledger:k8s:cpu', 'landledger:k8s:cpu', 'Allocated Cores', 'CPU', 'Core-Hours', '0.034', 'USD')`;
-    await sql`INSERT INTO rate_card_versions (id, rate_card_id, version, effective_from, proposed_by) VALUES ('v1b', 'rc_t', 2, '2026-11-01', 'agent')`; // proposals may overlap
+    await sql`INSERT INTO rate_lines (id, version_id, sku_id, sku_price_id, sku_meter, label, pricing_unit, unit_price, currency, added_by)
+              VALUES ('l1', 'v1', 'landledger:k8s:cpu', 'landledger:k8s:cpu', 'Allocated Cores', 'CPU', 'Core-Hours', '0.034', 'USD', 'seed')`;
+    await refused(
+      sql`INSERT INTO rate_card_versions (id, rate_card_id, version, effective_from, proposed_by) VALUES ('v1x', 'rc_t', 3, '2026-11-01', 'agent')`,
+      /foreign key/,
+    ); // a proposer is a user (a person or a named system actor), not free text
+    await sql`INSERT INTO rate_card_versions (id, rate_card_id, version, effective_from, proposed_by) VALUES ('v1b', 'rc_t', 2, '2026-11-01', 'seed')`; // proposals may overlap
+    await refused(
+      sql`UPDATE rate_card_versions SET approved_by = 'seed', approved_at = now() WHERE id = 'v1'`,
+      /system actor|proposed/,
+    );
     await refused(sql`UPDATE rate_card_versions SET note = 'x' WHERE id = 'v1'`, /only gets approved/);
     await refused(
       sql`UPDATE rate_card_versions SET approved_by = 'key_x', approved_at = now() WHERE id = 'v1'`,
-      /foreign key/,
+      /a user of kind person/,
     );
     await sql`UPDATE rate_card_versions SET approved_by = 'usr_ctrl', approved_at = now() WHERE id = 'v1'`;
     await refused(
@@ -269,8 +272,8 @@ describe.skipIf(!integrationEnabled('db'))('0001 against Postgres', () => {
       /exclusion constraint/,
     );
     await refused(
-      sql`INSERT INTO rate_lines (id, version_id, sku_id, sku_price_id, sku_meter, label, pricing_unit, unit_price, currency)
-              VALUES ('l2', 'v1', 's', 's2', 'm', 'x', 'GB', '1', 'USD')`,
+      sql`INSERT INTO rate_lines (id, version_id, sku_id, sku_price_id, sku_meter, label, pricing_unit, unit_price, currency, added_by)
+              VALUES ('l2', 'v1', 's', 's2', 'm', 'x', 'GB', '1', 'USD', 'seed')`,
       /approved: its lines never change/,
     );
     await refused(sql`UPDATE rate_lines SET unit_price = '1'`, /append-only/);
@@ -319,5 +322,47 @@ describe.skipIf(!integrationEnabled('db'))('0001 against Postgres', () => {
       sql`INSERT INTO api_keys (id, name, prefix, hash, scopes, created_by) VALUES ('k2', 'x', 'll_', 'h2', ${[]}::text[], 't')`,
       /check constraint/,
     );
+  });
+});
+
+/** Migration 0005 on a database that already had an approval: the approval stands, attributed, with a note. */
+describe.skipIf(!integrationEnabled('db'))('0005 on a database with history', () => {
+  let db: TestDatabase;
+  let sql: postgres.Sql;
+  beforeAll(async () => {
+    db = await createTestDatabase({ migrate: false });
+    sql = postgres(db.url, { onnotice: () => {}, max: 2 });
+  });
+  afterAll(async () => {
+    await sql?.end();
+    await db?.drop();
+  });
+
+  it('keeps an approved version approved, attributes its lines and notes what the check then covered', async () => {
+    const all = loadMigrations();
+    await migrate(db.url, () => {}, all.slice(0, 4));
+    await sql`INSERT INTO users (id, issuer, subject, name, roles) VALUES ('usr_ctrl', 'iss', 'sub', 'Yoav', ${['controller']})`;
+    await sql`INSERT INTO rate_cards (id, name, currency, owner) VALUES ('rc_internal', 'Internal', 'USD', 'Finance')`;
+    await sql`INSERT INTO rate_card_versions (id, rate_card_id, version, effective_from, proposed_by)
+              VALUES ('rcv_internal_1', 'rc_internal', 1, '2026-11-01', 'seed')`;
+    await sql`INSERT INTO rate_lines (id, version_id, sku_id, sku_price_id, sku_meter, label, pricing_unit, unit_price, currency)
+              VALUES ('l_cpu', 'rcv_internal_1', 'landledger:k8s:cpu', 'landledger:k8s:cpu', 'Allocated Cores', 'CPU', 'Core-Hours', '0.034', 'USD')`;
+    await sql`INSERT INTO rate_lines (id, version_id, sku_id, sku_price_id, sku_meter, label, provider, model, pricing_unit, unit_price, currency)
+              VALUES ('l_ai', 'rcv_internal_1', 'anthropic:m', 'anthropic:m:input', 'Input Tokens', 'm input', 'anthropic', 'm', '1000000 Tokens', '3', 'USD')`;
+    await sql`UPDATE rate_card_versions SET approved_by = 'usr_ctrl', approved_at = now() WHERE id = 'rcv_internal_1'`;
+    await migrate(db.url, () => {}, all);
+    const [v] = await sql`SELECT approved_by FROM rate_card_versions WHERE id = 'rcv_internal_1'`;
+    expect(v!.approved_by).toBe('usr_ctrl');
+    const lines = await sql`SELECT id, added_by FROM rate_lines ORDER BY id`;
+    expect(lines.map((l) => [l.id, l.added_by])).toEqual([
+      ['l_ai', 'cli'],
+      ['l_cpu', 'seed'],
+    ]);
+    const notes = await sql`SELECT subject_id, note, added_by FROM version_notes`;
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({ subject_id: 'rcv_internal_1', added_by: 'seed' });
+    expect(notes[0]!.note).toMatch(/the system seed.*not against who added the lines/);
+    await expect(sql`UPDATE version_notes SET note = 'x'`).rejects.toThrow(/append-only/);
+    await expect(sql`UPDATE rate_lines SET added_by = 'usr_ctrl'`).rejects.toThrow(/append-only/);
   });
 });

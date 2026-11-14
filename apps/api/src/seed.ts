@@ -13,7 +13,8 @@
  *
  * - DEVELOPMENT SEED DATA: November 2026's budgets from `seed/budgets-2026-11.dev.csv` (budget v1, origin `dev-seed`).
  *
- * Every row it adds is in the audit log, by actor `seed`.
+ * Every row it adds is in the audit log, by actor `seed`: the system user of that name (migration 0005), so its
+ * proposals have a proposer that is never a person and never approves.
  */
 import { Rate } from '@landledger/money';
 import { loadWorkspaceEnv, postgresUrlFromEnv } from '@landledger/schema';
@@ -128,9 +129,9 @@ export async function seed(sql: Sql, log: (line: string) => void = () => {}): Pr
         Rate.of(l.price, 'USD', l.unit); // exact, non-negative, a FOCUS unit, or this throws
         await tx`
           INSERT INTO rate_lines (id, version_id, sku_id, sku_price_id, sku_meter, label, pricing_unit, unit_price,
-                                  currency, details, position)
+                                  currency, details, position, added_by)
           VALUES (${`rl_internal_1_${l.key}`}, ${RATE_CARD_V1}, ${l.sku}, ${l.sku}, ${l.meter}, ${l.label}, ${l.unit},
-                  ${l.price}::numeric, 'USD', ${'details' in l ? tx.json(l.details) : null}, ${position++})`;
+                  ${l.price}::numeric, 'USD', ${'details' in l ? tx.json(l.details) : null}, ${position++}, 'seed')`;
       }
       await audit.append(
         {

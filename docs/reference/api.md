@@ -27,8 +27,8 @@ auditor `read`. `admin` includes every scope.
 | `GET /api/keys`, `POST /api/keys`, `DELETE /api/keys/:id` | `admin` | API keys `ll_…`: shown once at creation, stored as sha256, scopes `read`, `requests:write`, `reservations:write`, `decisions:relay`, `ingest`, `admin` |
 | `GET /api/ingest/runs?source=&limit=` | `read` | Ingest runs, newest first: source, kind, day, provisional, counts (read, new, corrected, unchanged), warnings, error, the window observed ([ingest.md](../ingest.md)) |
 | `POST /api/ingest/run` `{ source?: landflow\|clickland\|all, day? }` | `ingest` | Runs a day now (today goes to the provisional table); 201 with the runs; 503 when no source is configured |
-| `POST /api/rate-cards/versions/:id/ai-lines` | `admin` | Adds the AI lines from Landflow's price table to a proposed version; 409 on an approved one; `{ added }` |
-| `POST /api/rate-cards/versions/:id/approve` | `admin`, a person (controller or CFO) who did not propose it | Approves and ends the version before it; refused with no lines or in a closing or locked month; an API key gets 403 ([rate-cards.md](../rate-cards.md)) |
+| `POST /api/rate-cards/versions/:id/ai-lines` | `admin`, a signed-in person | Adds the AI lines from Landflow's price table to a proposed version, as their author (who then can't approve it); 409 on an approved one; an API key or the local developer gets 403; `{ added }` |
+| `POST /api/rate-cards/versions/:id/approve` | `admin`, a person (controller or CFO) who neither proposed it nor added a line | Approves and ends the version before it; refused with no lines or in a closing or locked month; an API key gets 403 ([rate-cards.md](../rate-cards.md)) |
 | `GET /api/allocation/rule-sets` | `read` | Rule set versions with their rules, share rules, status, proposer and approver |
 | `POST /api/allocation/rule-sets/versions/:id/approve` | `admin`, a person (controller or CFO) who did not propose it | Approves and rebuilds every open month into a new generation ([allocation.md](../allocation.md)) |
 | `POST /api/allocation/rebuild/:month` | `admin`, a person | A new allocation generation for an open month; 409 for a closing or locked one |

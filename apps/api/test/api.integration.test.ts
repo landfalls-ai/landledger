@@ -1,6 +1,7 @@
 import { CostRecord } from '@landledger/contracts';
 import { correct, ulid } from '@landledger/focus';
 import { clusterRow } from '@landledger/focus/testing';
+import { loadMigrations } from '@landledger/schema';
 import { createTestDatabase, integrationEnabled, type TestDatabase } from '@landledger/schema/testing';
 import type { FastifyInstance } from 'fastify';
 import postgres from 'postgres';
@@ -101,7 +102,7 @@ describe.skipIf(!integrationEnabled('db'))('the API against Postgres', () => {
   it('answers health with the migrations applied', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ status: 'ok', postgres: 'ok', migrations: 4 });
+    expect(res.json()).toMatchObject({ status: 'ok', postgres: 'ok', migrations: loadMigrations().length });
   });
 
   it('asks a stranger to sign in, and says sign-in is available', async () => {

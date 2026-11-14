@@ -46,7 +46,8 @@ export function actorOf(p: Principal): { actor: string; actorKind: ActorKind } {
     case 'bootstrap':
       return { actor: 'bootstrap key', actorKind: 'key' };
     case 'dev':
-      return { actor: 'local developer', actorKind: 'person' };
+      // Not a signed-in person: LANDLEDGER_DEV_AUTH on loopback, so the audit log never counts it as one.
+      return { actor: 'local developer', actorKind: 'system' };
   }
 }
 
