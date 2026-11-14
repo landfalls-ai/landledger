@@ -1,5 +1,6 @@
 import { Decimal, type DecimalInput } from './decimal.js';
 import type { Money } from './money.js';
+import { halfAwayFromZero } from './rounding.js';
 
 const formatters = new Map<string, Intl.NumberFormat>();
 
@@ -30,23 +31,20 @@ function group(plain: string): string {
 export interface FormatOptions {
   /** `$1,234.56` (default) or `USD 1,234.56`. */
   display?: 'symbol' | 'code';
-  /** Show no minor units (`$1,235`, rounded half-even): for headline figures. Default false. */
+  /** No minor digits (`$1,235`): for headline figures. Default false. */
   whole?: boolean;
+  /** Digits after the point instead of the currency's minor unit, e.g. 4 to show `$0.0031`. */
+  digits?: number;
 }
 
 /**
- * For people: en-US grouping and the currency's symbol, every minor digit (`$1,234.50`, `-$12.00`, `¥1,200`).
- * Exact: the digits come from the integer minor units, never a float (Intl formats a decimal string exactly).
+ * For people: en-US grouping and the currency's symbol, rounded half away from zero to the minor unit (`$1,234.50`,
+ * `-$12.00`, `¥1,200`), or to `digits`. Exact: Intl formats the decimal string, never a float.
  */
 export function formatMoney(money: Money, options: FormatOptions = {}): string {
-  const digits = options.whole ? 0 : money.currencyInfo.exponent;
-  const value = money.toDecimal().toFixed(digits, 'half-even');
+  const digits = options.whole ? 0 : (options.digits ?? money.currencyInfo.exponent);
+  const value = money.toDecimal().toFixed(digits, halfAwayFromZero);
   return formatter(money.currency, digits, options.display ?? 'symbol').format(value as `${number}`);
-}
-
-/** For a CSV or a spreadsheet: plain major units, `.` as the point, no grouping (`-1234.50`). Same as `toCsv()`. */
-export function formatMoneyCsv(money: Money): string {
-  return money.toCsv();
 }
 
 /**
@@ -55,5 +53,5 @@ export function formatMoneyCsv(money: Money): string {
  */
 export function formatDecimal(value: DecimalInput, minDigits = 0): string {
   const d = Decimal.from(value);
-  return group(d.scale < minDigits ? d.rescale(minDigits).toString() : d.toString());
+  return group(d.scale < minDigits ? d.rescale(minDigits, 'towardZero').toString() : d.toString());
 }

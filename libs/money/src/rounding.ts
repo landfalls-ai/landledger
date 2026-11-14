@@ -1,31 +1,28 @@
 /**
- * How a value that falls between two representable ones is rounded. Landledger's default is `half-even` (banker's
- * rounding): a tie goes to the even neighbour, so rounding many values carries no upward bias.
+ * How a value between two representable ones is rounded. Landledger names two modes, each with one job (spec 001):
  *
- * - `half-even`: to the nearest; a tie to the even neighbour (2.5 → 2, 3.5 → 4, −2.5 → −2).
- * - `half-up`: to the nearest; a tie away from zero (2.5 → 3, −2.5 → −3). Commercial rounding.
- * - `half-down`: to the nearest; a tie toward zero (2.5 → 2, −2.5 → −2).
- * - `up`: away from zero (2.1 → 3, −2.1 → −3).
- * - `down`: toward zero, truncation (2.9 → 2, −2.9 → −2).
- * - `ceiling`: toward +∞ (2.1 → 3, −2.9 → −2).
- * - `floor`: toward −∞ (2.9 → 2, −2.1 → −3).
+ * - `halfEven` (banker's rounding) when a computed amount (price × quantity, an FX conversion) becomes micro-units:
+ *   a tie goes to the even neighbour, so millions of rounded rows carry no upward bias (2.5 → 2, 3.5 → 4, −2.5 → −2).
+ * - `halfAwayFromZero` when an amount is posted or shown at the currency's minor unit: what finance means by rounding,
+ *   what Excel's `ROUND` and invoices do (2.5 → 3, −2.5 → −3).
+ *
+ * The others are for the few places that need them by definition: `towardZero` (truncation), `floor`, `ceiling`.
  */
-export type RoundingMode = 'half-even' | 'half-up' | 'half-down' | 'up' | 'down' | 'ceiling' | 'floor';
+export type RoundingMode = 'halfEven' | 'halfAwayFromZero' | 'towardZero' | 'floor' | 'ceiling';
 
-export const DEFAULT_ROUNDING: RoundingMode = 'half-even';
+export const halfEven = 'halfEven' satisfies RoundingMode;
+export const halfAwayFromZero = 'halfAwayFromZero' satisfies RoundingMode;
 
 export const ROUNDING_MODES: readonly RoundingMode[] = [
-  'half-even',
-  'half-up',
-  'half-down',
-  'up',
-  'down',
-  'ceiling',
+  'halfEven',
+  'halfAwayFromZero',
+  'towardZero',
   'floor',
+  'ceiling',
 ];
 
 /** `n / d` rounded to an integer by `mode`. Exact: bigints only. */
-export function divRound(n: bigint, d: bigint, mode: RoundingMode = DEFAULT_ROUNDING): bigint {
+export function divRound(n: bigint, d: bigint, mode: RoundingMode): bigint {
   if (d === 0n) throw new RangeError('Division by zero');
   if (d < 0n) {
     n = -n;
@@ -36,22 +33,22 @@ export function divRound(n: bigint, d: bigint, mode: RoundingMode = DEFAULT_ROUN
   if (r === 0n) return q;
   const sign = n < 0n ? -1n : 1n;
   switch (mode) {
-    case 'down':
+    case 'towardZero':
       return q;
-    case 'up':
-      return q + sign;
     case 'floor':
       return sign < 0n ? q - 1n : q;
     case 'ceiling':
       return sign > 0n ? q + 1n : q;
-    default: {
+    case 'halfAwayFromZero':
+    case 'halfEven': {
       const twice = 2n * (r < 0n ? -r : r);
       if (twice < d) return q;
       if (twice > d) return q + sign;
-      if (mode === 'half-up') return q + sign;
-      if (mode === 'half-down') return q;
+      if (mode === 'halfAwayFromZero') return q + sign;
       return q % 2n === 0n ? q : q + sign;
     }
+    default:
+      throw new RangeError(`Unknown rounding mode: ${String(mode)}`);
   }
 }
 

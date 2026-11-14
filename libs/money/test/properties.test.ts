@@ -1,203 +1,186 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { allocate, Decimal, divRound, fxRate, convert, Money, Rate, ROUNDING_MODES } from '../src/index.js';
+import { Decimal, divRound, Money, Quantity, Rate, ROUNDING_MODES, split, withinFocusTolerance } from '../src/index.js';
 
-/**
- * Money by property: whatever the amounts, weights and rates, sums never drift and allocations always total.
- * docs/plan.md, "How we check it".
- */
+/** Money by property (spec 001, T005 and T006): whatever the amounts and weights, sums never drift. */
 
 const RUNS = { numRuns: 500 };
 
-/** Minor units from small to far beyond 2^53. */
-const minor = fc.oneof(fc.bigInt({ min: -10_000n, max: 10_000n }), fc.bigInt({ min: -(10n ** 24n), max: 10n ** 24n }));
-const code = fc.constantFrom('USD', 'EUR', 'JPY', 'KWD', 'ILS');
-const money = fc.tuple(minor, code).map(([m, c]) => Money.ofMinor(m, c));
+/** Micro-units from tiny to near the bigint bound / 2^20 (so sums of a few hundred never overflow). */
+const micros = fc.oneof(fc.bigInt({ min: -10_000n, max: 10_000n }), fc.bigInt({ min: -(2n ** 43n), max: 2n ** 43n }));
+const code = fc.constantFrom('USD', 'EUR', 'JPY', 'BHD', 'ILS');
+const money = fc.tuple(micros, code).map(([m, c]) => Money.ofMicros(m, c));
 /** A non-negative decimal with up to 6 digits after the point (a weight, a quantity, a rate). */
 const decimal = (max = 10n ** 12n) =>
   fc.tuple(fc.bigInt({ min: 0n, max }), fc.integer({ min: 0, max: 6 })).map(([c, s]) => Decimal.of(c, s));
 const weights = fc.array(decimal(), { minLength: 1, maxLength: 12 }).filter((ws) => ws.some((w) => !w.isZero()));
-const mode = fc.constantFrom(...ROUNDING_MODES);
 
 describe('sums never drift', () => {
-  it('a sum of Money equals the sum of its minor units, in any order', () => {
+  it('a sum is the sum of its micro-units, in any order', () => {
     fc.assert(
-      fc.property(fc.array(minor, { maxLength: 60 }), (units) => {
-        const amounts = units.map((u) => Money.ofMinor(u, 'USD'));
+      fc.property(fc.array(micros, { maxLength: 60 }), fc.integer(), (units, seed) => {
+        const amounts = units.map((u) => Money.ofMicros(u, 'USD'));
         const expected = units.reduce((a, b) => a + b, 0n);
-        expect(Money.sum(amounts, 'USD').minor).toBe(expected);
-        expect(Money.sum([...amounts].reverse(), 'USD').minor).toBe(expected);
+        const shuffled = [...amounts].sort(() => ((seed = (seed * 1103515245 + 12345) | 0) & 1 ? 1 : -1));
+        expect(Money.sum(amounts, 'USD').micros).toBe(expected);
+        expect(Money.sum(shuffled, 'USD').micros).toBe(expected);
       }),
       RUNS,
     );
   });
 
-  it('adding then subtracting gives back the start', () => {
+  it('a + b − b = a', () => {
     fc.assert(
-      fc.property(minor, minor, (a, b) => {
-        const x = Money.ofMinor(a, 'USD');
-        const y = Money.ofMinor(b, 'USD');
-        expect(x.plus(y).minus(y).equals(x)).toBe(true);
+      fc.property(micros, micros, (a, b) => {
+        const x = Money.ofMicros(a, 'USD');
+        expect(x.plus(Money.ofMicros(b, 'USD')).minus(Money.ofMicros(b, 'USD')).equals(x)).toBe(true);
       }),
       RUNS,
     );
   });
 
-  it('ten thousand cents are a hundred dollars (where floats drift)', () => {
-    const cents = Array.from({ length: 10_000 }, () => Money.parse('0.01', 'USD'));
-    expect(Money.sum(cents).toCsv()).toBe('100.00');
+  it('a million $0.000001 rows are exactly a dollar (where floats drift)', () => {
+    const micro = Money.parse('0.000001', 'USD');
+    let total = Money.zero('USD');
+    for (let i = 0; i < 1_000_000; i++) total = total.plus(micro);
+    expect(total.toString()).toBe('USD 1.000000');
   });
 
-  it('CSV and JSON round-trip exactly', () => {
+  it('JSON round-trips exactly', () => {
     fc.assert(
       fc.property(money, (m) => {
-        expect(Money.parse(m.toCsv(), m.currency).equals(m)).toBe(true);
         expect(Money.fromJSON(JSON.parse(JSON.stringify(m))).equals(m)).toBe(true);
-      }),
-      RUNS,
-    );
-  });
-
-  it('a Decimal round-trips through its string', () => {
-    fc.assert(
-      fc.property(fc.bigInt({ min: -(10n ** 30n), max: 10n ** 30n }), fc.integer({ min: 0, max: 20 }), (c, s) => {
-        const d = Decimal.of(c, s);
-        const back = Decimal.parse(d.toString());
-        expect(back.coefficient).toBe(c);
-        expect(back.scale).toBe(s);
-      }),
-      RUNS,
-    );
-  });
-
-  it('decimal addition is exact (associative and commutative)', () => {
-    fc.assert(
-      fc.property(decimal(), decimal(), decimal(), (a, b, c) => {
-        expect(
-          a
-            .plus(b)
-            .plus(c)
-            .equals(a.plus(b.plus(c))),
-        ).toBe(true);
-        expect(a.plus(b).equals(b.plus(a))).toBe(true);
-        expect(a.plus(b).minus(b).equals(a)).toBe(true);
+        expect(Money.parse(m.toDecimal().toString(), m.currency).equals(m)).toBe(true);
       }),
       RUNS,
     );
   });
 });
 
-describe('allocations always total', () => {
-  it('the parts sum to the whole, for any amount and weights', () => {
+describe('split (T005)', () => {
+  it('parts sum exactly to the whole, for any weights', () => {
     fc.assert(
-      fc.property(money, weights, (total, ws) => {
-        const parts = allocate(total, ws);
+      fc.property(money, weights, (m, ws) => {
+        const parts = split(m, ws);
         expect(parts).toHaveLength(ws.length);
-        expect(Money.sum(parts, total.currency).equals(total)).toBe(true);
+        expect(Money.sum(parts, m.currency).equals(m)).toBe(true);
       }),
       RUNS,
     );
   });
 
-  it('each part is within one minor unit of its exact share, with the sign of the whole', () => {
+  it('is deterministic, gives zero weights nothing, and a single weight everything', () => {
     fc.assert(
-      fc.property(money, weights, (total, ws) => {
-        const parts = allocate(total, ws);
+      fc.property(money, weights, (m, ws) => {
+        expect(split(m, ws).map((p) => p.micros)).toEqual(split(m, ws).map((p) => p.micros));
+        split(m, ws).forEach((p, i) => {
+          if (ws[i]!.isZero()) expect(p.isZero()).toBe(true);
+        });
+        expect(split(m, [ws.find((w) => !w.isZero())!])[0]!.equals(m)).toBe(true);
+      }),
+      RUNS,
+    );
+  });
+
+  it('each part is within one micro-unit of its exact share, and has the amount’s sign', () => {
+    fc.assert(
+      fc.property(money, weights, (m, ws) => {
         const scale = Math.max(...ws.map((w) => w.scale));
-        const w = ws.map((d) => d.rescale(scale).coefficient);
-        const sumW = w.reduce((a, b) => a + b, 0n);
-        parts.forEach((p, i) => {
-          // |p × W − T × w_i| < W, i.e. |p − T·w_i/W| < 1 unit.
-          const diff = p.minor * sumW - total.minor * w[i]!;
-          expect(diff < 0n ? -diff : diff).toBeLessThan(sumW);
-          if (w[i] === 0n) expect(p.isZero()).toBe(true);
-          if (total.minor > 0n) expect(p.isNegative()).toBe(false);
-          if (total.minor < 0n) expect(p.isPositive()).toBe(false);
+        const cs = ws.map((w) => w.rescale(scale, 'towardZero').coefficient);
+        const sum = cs.reduce((a, b) => a + b, 0n);
+        split(m, ws).forEach((p, i) => {
+          const exactFloor = divRound(m.micros * cs[i]!, sum, 'towardZero');
+          const d = p.micros - exactFloor;
+          expect(d === 0n || d === (m.micros < 0n ? -1n : 1n)).toBe(true);
+          if (!p.isZero()) expect(p.sign()).toBe(m.sign());
         });
       }),
       RUNS,
     );
   });
 
-  it('is deterministic, and scaling every weight changes nothing', () => {
+  it('a negative amount splits as the negation of its absolute value', () => {
     fc.assert(
-      fc.property(money, weights, fc.integer({ min: 1, max: 1000 }), (total, ws, k) => {
-        const a = allocate(total, ws).map((p) => p.minor);
-        const b = allocate(
-          total,
-          ws.map((w) => w.times(k)),
-        ).map((p) => p.minor);
-        expect(b).toEqual(a);
-        expect(allocate(total, ws).map((p) => p.minor)).toEqual(a);
+      fc.property(money, weights, (m, ws) => {
+        expect(split(m.negate(), ws).map((p) => p.micros)).toEqual(split(m, ws).map((p) => -p.micros));
       }),
       RUNS,
-    );
-  });
-
-  it('allocating then allocating each part again still totals (nested splits)', () => {
-    fc.assert(
-      fc.property(money, weights, weights, (total, outer, inner) => {
-        const leaves = allocate(total, outer).flatMap((part) => allocate(part, inner));
-        expect(Money.sum(leaves, total.currency).equals(total)).toBe(true);
-      }),
-      { numRuns: 200 },
     );
   });
 });
 
-describe('pricing and rounding', () => {
-  it('quantity × rate rounds once: within half a unit (nearest modes) or one unit (directed modes)', () => {
+describe('rounding', () => {
+  it('every mode lands on a neighbour of the exact value', () => {
     fc.assert(
-      fc.property(decimal(10n ** 9n), decimal(10n ** 6n), mode, (q, r, m) => {
-        const rate = Rate.of(r, 'USD');
-        const cost = rate.cost(q, m);
-        // exact cost in cents = q × r × 100; error = cost − exact, scaled to the exact value's own scale.
-        const exact = rate.exactCost(q).times(100);
-        const err = Decimal.of(cost.minor).minus(exact).abs();
-        expect(err.compare(m.startsWith('half') ? '0.5' : '1')).toBeLessThanOrEqual(m.startsWith('half') ? 0 : -1);
+      fc.property(
+        fc.bigInt(),
+        fc.bigInt({ min: 1n, max: 10n ** 9n }),
+        fc.constantFrom(...ROUNDING_MODES),
+        (n, d, mode) => {
+          const q = divRound(n, d, mode);
+          expect(q * d <= n + d && q * d >= n - d).toBe(true);
+        },
+      ),
+      RUNS,
+    );
+  });
+
+  it('half-even and half away from zero are symmetric around zero', () => {
+    fc.assert(
+      fc.property(fc.bigInt(), fc.bigInt({ min: 1n, max: 10n ** 9n }), (n, d) => {
+        expect(divRound(-n, d, 'halfEven')).toBe(-divRound(n, d, 'halfEven'));
+        expect(divRound(-n, d, 'halfAwayFromZero')).toBe(-divRound(n, d, 'halfAwayFromZero'));
       }),
       RUNS,
     );
   });
 
-  it('half-even sends a tie to the even neighbour', () => {
+  it('a product is within half a micro-unit of the exact value', () => {
     fc.assert(
-      fc.property(fc.bigInt({ min: -(10n ** 12n), max: 10n ** 12n }), (k) => {
-        // (2k + 1) / 2 is always a tie between k and k + 1 (or k and k − 1 when negative).
-        const r = divRound(2n * k + 1n, 2n, 'half-even');
-        expect(r % 2n).toBe(0n);
-        const d = 2n * r - (2n * k + 1n);
-        expect(d === 1n || d === -1n).toBe(true);
+      fc.property(decimal(10n ** 6n), decimal(10n ** 6n), (price, qty) => {
+        const exact = price.times(qty);
+        const m = Money.fromProduct(Rate.of(price, 'USD', 'Core-Hours'), Quantity.of(qty, 'Core-Hours'));
+        const diff = m.toDecimal().minus(exact).abs();
+        expect(diff.compare('0.0000005')).toBeLessThanOrEqual(0);
       }),
       RUNS,
     );
   });
+});
 
-  it('pricing records one by one drifts from pricing the total by at most half a cent per record', () => {
+describe('FOCUS tolerance (T006)', () => {
+  /** Rows as computed (micro-units, any sign); compare Σ round(row) with round(Σ row), both at the minor unit. */
+  const rowsArb = (maxLength: number) =>
+    fc.array(fc.bigInt({ min: -(10n ** 10n), max: 10n ** 10n }), { minLength: 1, maxLength });
+
+  it('rounding each row then summing stays within MAX(100 × subunit, √rows × 0.5 × subunit)', () => {
     fc.assert(
-      fc.property(fc.array(decimal(10n ** 7n), { minLength: 1, maxLength: 40 }), decimal(10n ** 5n), (qs, r) => {
-        const rate = Rate.of(r, 'USD');
-        const each = Money.sum(
-          qs.map((q) => rate.cost(q)),
-          'USD',
+      fc.property(rowsArb(200), code, (rows, c) => {
+        const ms = rows.map((r) => Money.ofMicros(r, c));
+        const sumOfPosted = Money.sum(
+          ms.map((m) => m.posted()),
+          c,
         );
-        const whole = rate.cost(qs.reduce((a, b) => a.plus(b), Decimal.ZERO));
-        const gap = each.minus(whole).abs().minor;
-        // Each record's rounding is at most ½ cent; the total's is at most ½; so the gap is ≤ (n + 1) / 2 cents.
-        expect(gap * 2n).toBeLessThanOrEqual(BigInt(qs.length + 1));
+        const postedSum = Money.sum(ms, c).posted();
+        expect(withinFocusTolerance(sumOfPosted.minus(postedSum), rows.length)).toBe(true);
       }),
       RUNS,
     );
   });
 
-  it('an FX rate of one changes no amount', () => {
-    fc.assert(
-      fc.property(minor, (m) => {
-        const eur = Money.ofMinor(m, 'EUR');
-        const one = fxRate({ base: 'EUR', quote: 'USD', rate: '1', date: '2026-11-01', source: 't' });
-        expect(convert(eur, one).minor).toBe(m);
-      }),
-      RUNS,
-    );
+  // Past 200 rows the √rows term is a statistical bound (each row's rounding error is uniform, the sum a random walk),
+  // so this is one fixed-seed day rather than a property. Landledger itself sums micro-units and rounds once.
+  it('holds for a day of 100,000 AI rows under a cent each (fixed seed)', () => {
+    let seed = 20261114;
+    const next = () => {
+      // mulberry32: integer-only, so the sequence is the same everywhere.
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return (t ^ (t >>> 14)) >>> 0;
+    };
+    const rows = Array.from({ length: 100_000 }, () => Money.ofMicros(BigInt(next() % 50_000), 'USD'));
+    const diff = Money.sum(rows.map((r) => r.posted())).minus(Money.sum(rows).posted());
+    expect(withinFocusTolerance(diff, rows.length)).toBe(true);
   });
 });

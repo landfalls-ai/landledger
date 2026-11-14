@@ -1,18 +1,24 @@
 import { currency } from './currency.js';
 import { Decimal, type DecimalInput } from './decimal.js';
 import { Money } from './money.js';
-import { DEFAULT_ROUNDING, type RoundingMode } from './rounding.js';
+import { divRound, halfEven } from './rounding.js';
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
-/** One unit of `base` is worth `rate` units of `quote` on `date` (a calendar day, `YYYY-MM-DD`), per `source`. */
+/**
+ * One unit of `base` is worth `rate` units of `quote` on `date` (a UTC day, `YYYY-MM-DD`). `id` names the recorded rate
+ * (a row of `fx_rates`), so a converted figure can say which rate it used.
+ */
 export interface FxRate {
+  id: string;
   base: string;
   quote: string;
   rate: Decimal;
   date: string;
-  source: string;
 }
+
+/** Finds the rate for a pair on a day: the latest recorded rate for the latest date on or before it. */
+export type FxLookup = (base: string, quote: string, date: string) => FxRate | undefined;
 
 export class FxRateMissingError extends Error {
   constructor(base: string, quote: string, date: string) {
@@ -21,35 +27,43 @@ export class FxRateMissingError extends Error {
   }
 }
 
-export function fxRate(input: {
-  base: string;
-  quote: string;
-  rate: DecimalInput;
-  date: string;
-  source: string;
-}): FxRate {
+export function fxRate(input: { id: string; base: string; quote: string; rate: DecimalInput; date: string }): FxRate {
   currency(input.base);
   currency(input.quote);
+  if (input.base === input.quote) throw new RangeError('An FX rate converts between two currencies');
   if (!DAY.test(input.date))
     throw new SyntaxError(`An FX rate's date is YYYY-MM-DD, got ${JSON.stringify(input.date)}`);
   const rate = Decimal.from(input.rate);
   if (rate.sign() <= 0) throw new RangeError('An FX rate is positive');
-  return { base: input.base, quote: input.quote, rate, date: input.date, source: input.source };
+  return { id: input.id, base: input.base, quote: input.quote, rate, date: input.date };
+}
+
+export interface Converted {
+  amount: Money;
+  /** The recorded rate used; null when no conversion was needed (USD → USD). */
+  rateId: string | null;
 }
 
 /**
- * Converts money with a dated rate, rounding once to the quote currency's minor unit (half-even unless told
- * otherwise). The rate's base must be the money's currency: an inverse is never derived silently, because it would
- * need a division and its own rounding; record the rate in the direction it is used.
+ * Converts `amount` to `to` at the rate for `date`: the latest recorded rate for the latest date on or before it,
+ * rounded half-even to the micro-unit. Refuses when there is none; never derives an inverse silently (that would need
+ * a division and its own rounding: record the rate in the direction it is used). The same currency needs no rate.
  */
-export function convert(money: Money, rate: FxRate, mode: RoundingMode = DEFAULT_ROUNDING): Money {
-  if (money.currency !== rate.base) throw new RangeError(`The rate converts ${rate.base}, not ${money.currency}`);
-  return Money.fromDecimal(money.toDecimal().times(rate.rate), rate.quote, mode);
+export function convert(amount: Money, to: string, date: string, lookup: FxLookup): Converted {
+  currency(to);
+  if (!DAY.test(date)) throw new SyntaxError(`A date is YYYY-MM-DD, got ${JSON.stringify(date)}`);
+  if (amount.currency === to) return { amount, rateId: null };
+  const rate = lookup(amount.currency, to, date);
+  if (!rate) throw new FxRateMissingError(amount.currency, to, date);
+  if (rate.base !== amount.currency || rate.quote !== to || rate.date > date)
+    throw new RangeError(`Rate ${rate.id} doesn't convert ${amount.currency}→${to} on ${date}`);
+  const micros = divRound(amount.micros * rate.rate.coefficient, 10n ** BigInt(rate.rate.scale), halfEven);
+  return { amount: Money.ofMicros(micros, to), rateId: rate.id };
 }
 
 /**
- * The FX rates Landledger holds, and which applies on a day: the latest one dated on or before it, for that pair.
- * Converting a currency to itself needs no rate.
+ * Recorded FX rates in memory, in the order they were recorded (as `fx_rates` is append-only, a later row for the same
+ * pair and date supersedes an earlier one). `lookup` is an `FxLookup` for `convert`.
  */
 export class FxTable {
   private readonly byPair = new Map<string, FxRate[]>();
@@ -62,22 +76,17 @@ export class FxTable {
     const key = `${rate.base}/${rate.quote}`;
     const list = this.byPair.get(key) ?? [];
     list.push(rate);
-    list.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     this.byPair.set(key, list);
   }
 
-  rateOn(base: string, quote: string, date: string): FxRate {
-    if (!DAY.test(date)) throw new SyntaxError(`A date is YYYY-MM-DD, got ${JSON.stringify(date)}`);
-    if (base === quote) return fxRate({ base, quote, rate: 1, date, source: 'identity' });
-    const list = this.byPair.get(`${base}/${quote}`) ?? [];
+  readonly lookup: FxLookup = (base, quote, date) => {
     let found: FxRate | undefined;
-    for (const r of list) if (r.date <= date) found = r;
-    if (!found) throw new FxRateMissingError(base, quote, date);
+    for (const r of this.byPair.get(`${base}/${quote}`) ?? [])
+      if (r.date <= date && (!found || r.date >= found.date)) found = r;
     return found;
-  }
+  };
 
-  convert(money: Money, quote: string, date: string, mode: RoundingMode = DEFAULT_ROUNDING): Money {
-    if (money.currency === quote) return money;
-    return convert(money, this.rateOn(money.currency, quote, date), mode);
+  convert(amount: Money, to: string, date: string): Converted {
+    return convert(amount, to, date, this.lookup);
   }
 }

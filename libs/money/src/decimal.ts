@@ -1,17 +1,22 @@
-import { DEFAULT_ROUNDING, divRound, pow10, type RoundingMode } from './rounding.js';
+import { divRound, pow10, type RoundingMode } from './rounding.js';
 
-/** What a Decimal can be made from. A JavaScript number only when it is a safe integer: a float is refused. */
-export type DecimalInput = Decimal | string | bigint | number;
+/**
+ * What a Decimal is made from: a decimal string (`"0.034"`, as JSON and Postgres `numeric` carry it), a bigint, or a
+ * Decimal. A JavaScript `number` is not accepted, so passing one is a type error; JSON numbers are parsed from their
+ * text by the caller, never through a float.
+ */
+export type DecimalInput = Decimal | string | bigint;
 
-const PATTERN = /^([+-])?(\d+)(?:\.(\d+))?$/;
-/** Generous for rates and quantities; refuses input that would make bigint arithmetic absurdly slow. */
+/** Digits after the point a parsed decimal may carry (spec 001: scale up to 18). Products may carry more. */
+export const MAX_SCALE = 18;
+const PATTERN = /^(-)?(\d+)(?:\.(\d+))?$/;
+/** Refuses input that would make bigint arithmetic absurdly slow. */
 const MAX_DIGITS = 60;
 
 /**
- * An exact decimal: an integer coefficient and a scale (the value is `coefficient / 10^scale`). Immutable. Used for
- * rates, quantities and FX rates; money itself is `Money` (integer minor units). No floating point anywhere.
- *
- * Postgres `numeric` values arrive as strings, so `Decimal.from(row.price)` is exact.
+ * An exact decimal: an integer coefficient and a scale (`coefficient / 10^scale`). Immutable. Used for rates,
+ * quantities and FX rates; money itself is `Money` (integer micro-units). No floating point anywhere: only `divide`
+ * can be inexact, and it asks for a scale and a rounding mode.
  */
 export class Decimal {
   private constructor(
@@ -25,16 +30,22 @@ export class Decimal {
   static readonly ONE = new Decimal(1n, 0);
 
   static of(coefficient: bigint, scale = 0): Decimal {
+    if (typeof coefficient !== 'bigint') throw new TypeError('A decimal coefficient is a bigint');
     if (!Number.isInteger(scale) || scale < 0)
       throw new RangeError(`A decimal's scale is a whole number ≥ 0, got ${scale}`);
     return new Decimal(coefficient, scale);
   }
 
-  /** Parses `"12"`, `"-0.034"`, `"+1.50"`; keeps the scale written (`"1.50"` has scale 2). No exponents, no commas. */
+  /**
+   * Parses plain decimal notation: `"12"`, `"-0.034"`, `"1.50"` (the scale written is kept). Refused: exponents
+   * (`"1e-3"`), `NaN`, `Infinity`, an empty string, a `+` sign, commas, more than 18 digits after the point.
+   */
   static parse(text: string): Decimal {
-    const m = PATTERN.exec(text.trim());
-    if (!m) throw new SyntaxError(`Not a decimal number: ${JSON.stringify(text)}`);
+    if (typeof text !== 'string') throw new TypeError(`Not a decimal string: ${String(text)}`);
+    const m = PATTERN.exec(text);
+    if (!m) throw new SyntaxError(`Not a plain decimal number: ${JSON.stringify(text)}`);
     const [, sign, whole, frac = ''] = m;
+    if (frac.length > MAX_SCALE) throw new RangeError(`More than ${MAX_SCALE} digits after the point: ${text}`);
     if (whole!.length + frac.length > MAX_DIGITS) throw new RangeError(`Too many digits: ${text.length}`);
     const coefficient = BigInt(whole! + frac);
     return new Decimal(sign === '-' ? -coefficient : coefficient, frac.length);
@@ -44,28 +55,27 @@ export class Decimal {
     if (value instanceof Decimal) return value;
     if (typeof value === 'string') return Decimal.parse(value);
     if (typeof value === 'bigint') return new Decimal(value, 0);
-    if (typeof value === 'number') {
-      if (!Number.isSafeInteger(value))
-        throw new TypeError(`Floats are not money: pass ${value} as a string (e.g. "${value}")`);
-      return new Decimal(BigInt(value), 0);
-    }
-    throw new TypeError(`Not a decimal: ${String(value)}`);
+    throw new TypeError(
+      typeof value === 'number'
+        ? `Numbers are not exact: pass ${String(value)} as a decimal string`
+        : `Not a decimal: ${String(value)}`,
+    );
   }
 
   /** This value with `scale` digits after the point, rounded by `mode` when that drops digits. */
-  rescale(scale: number, mode: RoundingMode = DEFAULT_ROUNDING): Decimal {
+  rescale(scale: number, mode: RoundingMode): Decimal {
     if (scale === this.scale) return this;
     if (scale > this.scale) return Decimal.of(this.coefficient * pow10(scale - this.scale), scale);
     return Decimal.of(divRound(this.coefficient, pow10(this.scale - scale), mode), scale);
   }
 
-  /** At most `scale` digits after the point, rounded by `mode`; a value with fewer digits is returned as it is. */
-  round(scale: number, mode: RoundingMode = DEFAULT_ROUNDING): Decimal {
+  /** At most `scale` digits after the point, rounded by `mode`; fewer digits are kept as they are. */
+  round(scale: number, mode: RoundingMode): Decimal {
     return scale >= this.scale ? this : this.rescale(scale, mode);
   }
 
-  /** The integer `this × 10^shift`, rounded by `mode`: e.g. dollars → cents with `shift = 2`. */
-  shiftToInteger(shift: number, mode: RoundingMode = DEFAULT_ROUNDING): bigint {
+  /** The integer `this × 10^shift`, rounded by `mode`: e.g. dollars → micro-dollars with `shift = 6`. */
+  shiftToInteger(shift: number, mode: RoundingMode): bigint {
     if (shift >= this.scale) return this.coefficient * pow10(shift - this.scale);
     return divRound(this.coefficient, pow10(this.scale - shift), mode);
   }
@@ -73,7 +83,7 @@ export class Decimal {
   plus(other: DecimalInput): Decimal {
     const o = Decimal.from(other);
     const scale = Math.max(this.scale, o.scale);
-    return Decimal.of(this.rescale(scale).coefficient + o.rescale(scale).coefficient, scale);
+    return Decimal.of(this.up(scale) + o.up(scale), scale);
   }
 
   minus(other: DecimalInput): Decimal {
@@ -86,14 +96,22 @@ export class Decimal {
     return Decimal.of(this.coefficient * o.coefficient, this.scale + o.scale);
   }
 
-  /** `this / divisor` to `scale` digits, rounded by `mode` (the only inexact operation, so it asks how to round). */
-  dividedBy(divisor: DecimalInput, scale: number, mode: RoundingMode = DEFAULT_ROUNDING): Decimal {
+  /** `this / divisor` to `scale` digits, rounded by `mode`: the only inexact operation, so it asks how to round. */
+  divide(divisor: DecimalInput, scale: number, mode: RoundingMode): Decimal {
     const d = Decimal.from(divisor);
     if (d.isZero()) throw new RangeError('Division by zero');
     // (a / 10^sa) / (b / 10^sb) = (a × 10^sb) / (b × 10^sa); then × 10^scale.
     const n = this.coefficient * pow10(d.scale + scale);
     const den = d.coefficient * pow10(this.scale);
     return Decimal.of(divRound(n, den, mode), scale);
+  }
+
+  /** `this / divisor` when it is exact at some scale up to `MAX_SCALE`; otherwise an error. */
+  divideExactly(divisor: DecimalInput): Decimal {
+    const d = Decimal.from(divisor);
+    const q = this.divide(d, MAX_SCALE, 'towardZero');
+    if (!q.times(d).equals(this)) throw new RangeError(`${this.toString()} / ${d.toString()} is not exact`);
+    return q.normalize();
   }
 
   negate(): Decimal {
@@ -119,8 +137,8 @@ export class Decimal {
   compare(other: DecimalInput): -1 | 0 | 1 {
     const o = Decimal.from(other);
     const scale = Math.max(this.scale, o.scale);
-    const a = this.rescale(scale).coefficient;
-    const b = o.rescale(scale).coefficient;
+    const a = this.up(scale);
+    const b = o.up(scale);
     return a === b ? 0 : a < b ? -1 : 1;
   }
 
@@ -138,7 +156,7 @@ export class Decimal {
     return Decimal.of(coefficient, scale);
   }
 
-  /** Plain notation with exactly `scale` digits after the point: `"-0.0340"`. */
+  /** FOCUS numeric format: plain notation, `-` only, exactly `scale` digits after the point (`"-0.0340"`). */
   toString(): string {
     const negative = this.coefficient < 0n;
     const digits = (negative ? -this.coefficient : this.coefficient).toString().padStart(this.scale + 1, '0');
@@ -148,12 +166,17 @@ export class Decimal {
   }
 
   /** `toString()` rounded or padded to `scale` digits. */
-  toFixed(scale: number, mode: RoundingMode = DEFAULT_ROUNDING): string {
+  toFixed(scale: number, mode: RoundingMode): string {
     return this.rescale(scale, mode).toString();
   }
 
   /** JSON carries decimals as strings, so nothing on the way turns them into floats. */
   toJSON(): string {
     return this.toString();
+  }
+
+  /** The coefficient at a larger or equal scale (exact). */
+  private up(scale: number): bigint {
+    return this.coefficient * pow10(scale - this.scale);
   }
 }

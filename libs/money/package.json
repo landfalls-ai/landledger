@@ -2,7 +2,7 @@
   "name": "@landledger/money",
   "version": "0.1.0",
   "private": true,
-  "description": "Exact money for Landledger: Money (integer minor units + ISO 4217 code), Decimal and Rate (exact decimals, no floats), rounding modes, largest-remainder allocation, dated FX and formatting.",
+  "description": "Exact money for Landledger (spec 001): Money as bigint micro-units with an ISO 4217 code, Decimal, Rate and Quantity (exact, no floats), halfEven and halfAwayFromZero, largest-remainder splits, dated FX and formatting.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
