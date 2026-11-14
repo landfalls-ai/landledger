@@ -104,25 +104,66 @@ export class AuditLog {
     return { entries: rows.map(toEntry), total: Number(total) };
   }
 
-  /** Walks the whole chain in order: each seq follows the last, each prev_hash is the last hash, each hash recomputes. */
+  /** The newest anchor: the head last sent outside the database. */
+  async lastAnchor(): Promise<{ seq: number; hash: string; at: string } | null> {
+    const [a] = await this.sql<{ seq: string; hash: string; anchored_at: Date }[]>`
+      SELECT seq, hash, anchored_at FROM audit_anchors ORDER BY seq DESC, id DESC LIMIT 1`;
+    return a ? { seq: Number(a.seq), hash: a.hash, at: a.anchored_at.toISOString() } : null;
+  }
+
+  /**
+   * Walks the whole chain in order: each seq follows the last, each prev_hash is the last hash, each hash recomputes.
+   * Then compares it with the last anchor: a chain that ends before the anchored entry was cut off, and the anchored
+   * entry must still carry the anchored hash.
+   */
   async verify(batch = 1000): Promise<AuditVerify> {
+    const anchor = await this.lastAnchor();
+    const walked = await this.walk(batch, anchor?.seq ?? null);
+    if (!walked.ok || !anchor) return { ...walked.result, anchor, truncated: false };
+    if (walked.result.checked < anchor.seq)
+      return {
+        ...walked.result,
+        ok: false,
+        brokenAt: walked.result.checked + 1,
+        reason: `the log ends at entry ${walked.result.checked}, but entry ${anchor.seq} was anchored at ${anchor.at}: entries were cut off the end`,
+        anchor,
+        truncated: true,
+      };
+    if (walked.anchoredHash !== anchor.hash)
+      return {
+        ...walked.result,
+        ok: false,
+        brokenAt: anchor.seq,
+        reason: `entry ${anchor.seq} doesn't carry the hash anchored at ${anchor.at}`,
+        anchor,
+        truncated: false,
+      };
+    return { ...walked.result, anchor, truncated: false };
+  }
+
+  private async walk(
+    batch: number,
+    anchorSeq: number | null,
+  ): Promise<{ ok: boolean; result: Omit<AuditVerify, 'anchor' | 'truncated'>; anchoredHash: string | null }> {
     let prev = GENESIS;
     let expected = 1;
     let checked = 0;
+    let anchoredHash: string | null = null;
     for (;;) {
       const rows = await this.sql<Row[]>`
         SELECT * FROM audit_log WHERE seq >= ${expected} ORDER BY seq LIMIT ${batch}`;
       if (rows.length === 0) break;
       for (const r of rows) {
         const seq = Number(r.seq);
-        const fail = (reason: string): AuditVerify => ({
+        const fail = (reason: string) => ({
           ok: false,
-          checked,
-          head: checked ? prev : null,
-          brokenAt: seq,
-          reason,
+          anchoredHash,
+          result: { ok: false, checked, head: checked ? prev : null, brokenAt: seq, reason },
         });
-        if (seq !== expected) return { ...fail(`entry ${expected} is missing`), brokenAt: expected };
+        if (seq !== expected) {
+          const f = fail(`entry ${expected} is missing`);
+          return { ...f, result: { ...f.result, brokenAt: expected } };
+        }
         if (r.prev_hash !== prev) return fail(`entry ${seq} doesn't carry the hash of entry ${seq - 1}`);
         let recomputed: string;
         try {
@@ -132,10 +173,15 @@ export class AuditLog {
         }
         if (recomputed !== r.hash) return fail(`entry ${seq} was changed after it was written`);
         prev = r.hash;
+        if (seq === anchorSeq) anchoredHash = r.hash;
         expected = seq + 1;
         checked++;
       }
     }
-    return { ok: true, checked, head: checked ? prev : null, brokenAt: null, reason: null };
+    return {
+      ok: true,
+      anchoredHash,
+      result: { ok: true, checked, head: checked ? prev : null, brokenAt: null, reason: null },
+    };
   }
 }

@@ -8,6 +8,7 @@ import { aiInputRow } from '@landledger/focus/testing';
 import { Decimal, Money } from '@landledger/money';
 import { createTestDatabase, integrationEnabled, type TestDatabase } from '@landledger/schema/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { anchorAudit } from '../src/anchors.js';
 import { createSql, type Sql } from '../src/db.js';
 import { RATE_CARD_V1, seed } from '../src/seed.js';
 import { createServices, type Services } from '../src/services.js';
@@ -302,5 +303,50 @@ describe.skipIf(!integrationEnabled('db'))("wave 1's review against Postgres", (
         provisional: 'true',
       }),
     ).rejects.toThrow(/is in EUR/);
+  });
+
+  it('anchors the audit head outside the database, and verify finds a log cut off at the end', async () => {
+    const hook = await services.webhooks.create(
+      { url: 'http://127.0.0.1:9/anchor', events: ['audit.anchor'], description: 'anchor sink' },
+      YOAV,
+    );
+    const logged: object[] = [];
+    const log = { info: (d: object) => logged.push(d), warn() {}, error() {} };
+    const first = await anchorAudit(sql, services.webhooks, log);
+    expect(first).toMatchObject({ deliveries: 1 });
+    expect(await anchorAudit(sql, services.webhooks, log)).toBeNull(); // nothing new since
+    expect(logged[0]).toMatchObject({ 'audit.seq': first!.seq, 'audit.hash': first!.hash });
+    const [out] = await sql`SELECT event_type, payload FROM outbox WHERE webhook_id = ${hook.id}`;
+    expect(out).toMatchObject({
+      event_type: 'audit.anchor',
+      payload: { data: { seq: first!.seq, hash: first!.hash } },
+    });
+    expect(await services.audit.verify()).toMatchObject({ ok: true, truncated: false, anchor: { seq: first!.seq } });
+
+    // Two more entries, anchored; then whoever owns the table cuts the last two off. The chain alone still verifies.
+    await services.audit.append({
+      actor: 'test',
+      actorKind: 'system',
+      action: 'test.one',
+      subjectType: 't',
+      subjectId: '1',
+    });
+    await services.audit.append({
+      actor: 'test',
+      actorKind: 'system',
+      action: 'test.two',
+      subjectType: 't',
+      subjectId: '2',
+    });
+    const second = await anchorAudit(sql, services.webhooks, log);
+    expect(second!.seq).toBe(first!.seq + 2);
+    await sql.begin(async (tx) => {
+      await tx`ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only`;
+      await tx`DELETE FROM audit_log WHERE seq > ${first!.seq}`;
+      await tx`ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only`;
+    });
+    const v = await services.audit.verify();
+    expect(v).toMatchObject({ ok: false, truncated: true, checked: first!.seq, brokenAt: first!.seq + 1 });
+    expect(v.reason).toMatch(new RegExp(`ends at entry ${first!.seq}, but entry ${second!.seq} was anchored`));
   });
 });

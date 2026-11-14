@@ -1,3 +1,4 @@
+import { anchorAudit } from './anchors.js';
 import { AuditLog } from './audit.js';
 import { Sessions } from './auth.js';
 import type { Config } from './config.js';
@@ -117,6 +118,12 @@ export function startBackgroundJobs(services: Services, log: (msg: string, err?:
   loop('webhook dispatcher', 2_000, () => services.webhooks.dispatchDue());
   loop('session cleanup', 3_600_000, async () => (await services.sessions.cleanup(), 0));
   const { config } = services;
+  if (config.auditAnchorMinutes > 0) {
+    // The audit chain's head, out to Clickland and webhooks (anchors.ts); the first a minute after start.
+    const anchor = () => anchorAudit(services.sql, services.webhooks, services.log).then(() => 0);
+    loop('audit anchor', config.auditAnchorMinutes * 60_000, anchor);
+    timers.add(setTimeout(() => void anchor().catch((e) => log('audit anchor failed', e)), 60_000));
+  }
   if (config.ingestJobs && services.ingest.sources().length) {
     // Ingest: every hour, today's provisional figures and the recent complete days (runner.ts tick); first after 20 s.
     loop('ingest', 3_600_000, async () => (await services.ingest.tick(), 0));

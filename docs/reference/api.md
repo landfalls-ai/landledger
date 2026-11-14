@@ -23,7 +23,7 @@ auditor `read`. `admin` includes every scope.
 | `POST /api/periods/:month/lock` `{ override?: { reason } }` | `admin`, a person (controller or CFO; the override: a controller) | `closing → locked`, final; earlier months must be locked first; an API key gets 403. 409 with `details.problems` unless the month is whole: ended, a complete run for every source-day since the source's first data, no provisional rows, every record allocated. A controller's override with a reason locks anyway, audited (`period.locked` with `checks: overridden`, the problems and the reason) |
 | `GET /api/records` | `read` | Cost records under FOCUS names, amounts as decimal strings. `?month=YYYY-MM&basis=&source=&sourceKey=&limit=1..1000&after=<next>`; `{ records, next }` |
 | `GET /api/audit?limit=&before=` | `read` | The audit log, newest first, with each entry's hash and the one before |
-| `GET /api/audit/verify` | `read` | Walks the hash chain: `{ ok, checked, head, brokenAt, reason }` |
+| `GET /api/audit/verify` | `read` | Walks the hash chain and compares it with the last anchor: `{ ok, checked, head, brokenAt, reason, anchor: { seq, hash, at } \| null, truncated }`; `truncated` when the log ends before the anchored entry |
 | `GET /api/keys`, `POST /api/keys`, `DELETE /api/keys/:id` | `admin` | API keys `ll_…`: shown once at creation, stored as sha256, scopes `read`, `requests:write`, `reservations:write`, `decisions:relay`, `ingest`, `admin` |
 | `GET /api/ingest/runs?source=&limit=` | `read` | Ingest runs, newest first: source, kind, day, provisional, counts (read, new, corrected, unchanged), warnings, error, the window observed ([ingest.md](../ingest.md)) |
 | `POST /api/ingest/run` `{ source?: landflow\|clickland\|all, day?, force?, reason? }` | `ingest` (`force`: a person) | Runs a day now (today goes to the provisional table); 201 with the runs; 503 when no source is configured. A run whose source answers with nothing for a day the ledger has entries for fails unless `force` with a `reason` (audited `ingest.forced`) |
@@ -41,5 +41,7 @@ auditor `read`. `admin` includes every scope.
 | `GET /api/webhooks`, `POST /api/webhooks`, `DELETE /api/webhooks/:id` | `admin` | Webhook subscriptions (Standard Webhooks signatures) |
 | `GET /api/webhooks/:id/deliveries`, `POST /api/webhooks/:id/ping` | `admin` | The outbox for one webhook; queue a `ping` |
 
-Webhook events: `ping`, `period.closing` (sent when a month starts closing), and, from later waves,
+Webhook events: `ping`, `period.closing` (sent when a month starts closing), `audit.anchor` (the audit chain's head,
+`{ seq, hash, at }`, every `LANDLEDGER_AUDIT_ANCHOR_MINUTES`: keep them to prove later that no entry was cut off), and,
+from later waves,
 `request.step_pending`, `request.decided`, `budget.at_risk`, `cost.anomaly`.

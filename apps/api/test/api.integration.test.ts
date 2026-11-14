@@ -31,6 +31,7 @@ const config = (over: Partial<Config> = {}): Config => ({
   costMetricsEndpoint: null,
   ingestJobs: false,
   dockerSharesCluster: null,
+  auditAnchorMinutes: 0,
   ...over,
 });
 

@@ -298,6 +298,10 @@ export const AuditVerify = z.object({
   /** The first entry whose hash doesn't match, and why. */
   brokenAt: z.number().int().nullable(),
   reason: z.string().nullable(),
+  /** The newest head sent outside the database (to Clickland and webhooks), if any. */
+  anchor: z.object({ seq: z.number().int(), hash: z.string(), at: z.string() }).nullable(),
+  /** Entries up to the anchor are missing: the end of the log was cut off. */
+  truncated: z.boolean(),
 });
 export type AuditVerify = z.infer<typeof AuditVerify>;
 
@@ -311,6 +315,8 @@ export const WebhookEvent = z.enum([
   'budget.at_risk',
   'cost.anomaly',
   'period.closing',
+  /** The audit chain's head (seq and hash), on a schedule: keep it to detect a cut-off log. */
+  'audit.anchor',
 ]);
 export type WebhookEvent = z.infer<typeof WebhookEvent>;
 

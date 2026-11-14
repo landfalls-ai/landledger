@@ -45,6 +45,8 @@ export interface Config {
    * taken out of that node's idle, so the day adds up to capacity × rate once. Null when Docker has its own host.
    */
   dockerSharesCluster: string | null;
+  /** How often the audit chain's head is anchored outside the database (minutes; 0 turns it off). */
+  auditAnchorMinutes: number;
 }
 
 const expandHome = (path: string) => (path.startsWith('~/') ? `${homedir()}${path.slice(1)}` : path);
@@ -131,5 +133,11 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
       (env.LANDLEDGER_DOCKER_SHARES_CLUSTER ?? 'orbstack') === 'none'
         ? null
         : (env.LANDLEDGER_DOCKER_SHARES_CLUSTER ?? 'orbstack') || null,
+    auditAnchorMinutes: (() => {
+      const n = Number(env.LANDLEDGER_AUDIT_ANCHOR_MINUTES ?? '60');
+      if (!Number.isInteger(n) || n < 0)
+        throw new Error('LANDLEDGER_AUDIT_ANCHOR_MINUTES is a whole number of minutes');
+      return n;
+    })(),
   };
 }

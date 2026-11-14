@@ -61,6 +61,7 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 | `cost_center_codes` | every cost center code, plus `SHARED-POOL` and `UNALLOCATED` | append only; allocations and budgets reference it |
 | `periods` | each month: open, closing, locked; who closed and locked it | one step forward at a time, by a person; locked is final and refuses inserts; a month locks only when whole (ended, every source-day complete, no provisional rows, every record allocated) unless a controller overrides with a reason |
 | `audit_log` | every change above, each entry carrying the hash of the one before | append only |
+| `audit_anchors` | the chain's head (seq, hash) each time it was sent outside the database, and where | append only |
 | `outbox` | webhook deliveries (Standard Webhooks, the Clickland pattern) | retried, then kept |
 
 ## Jobs
@@ -175,7 +176,12 @@ and never decides.
 - Requester ≠ approver, enforced in the API, not only in the console.
 - Rate cards, rules and policies change only through approved requests, effective-dated.
 - Periods lock; corrections post forward.
-- The audit log is hash-chained (`sha256(previous_hash ‖ entry)`); `GET /api/audit/verify` walks it.
+- The audit log is hash-chained (`sha256(previous_hash ‖ entry)`); `GET /api/audit/verify` walks it. A chain proves
+  no entry changed, not that the newest weren't cut off, so its head is **anchored** outside the database every hour
+  (`apps/api/src/anchors.ts`): an OpenTelemetry log record and span with `audit.seq` and `audit.hash` to Clickland,
+  and webhook `audit.anchor`, recorded in `audit_anchors`. Verify compares the chain with the last anchor and reports
+  `truncated` when the log ends before it; a copy kept by Clickland or a webhook receiver catches a cut that took the
+  local anchors too.
 - API keys `ll_…` with scopes (`read`, `requests:write`, `reservations:write`, `decisions:relay`, `ingest`, `admin`),
   shown once, stored hashed.
 - Webhooks signed with Standard Webhooks (as Clickland's).

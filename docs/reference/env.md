@@ -31,6 +31,7 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_DOCKER_SHARES_CLUSTER` | `orbstack` | The Kubernetes cluster whose node the Docker engine shares (OrbStack runs both on one machine): Docker's usage comes out of that node's idle, so a day adds up to capacity × rate once. `none` when Docker runs on a host of its own |
 | `LANDLEDGER_CLICKLAND_CONSOLE_URL` | `http://localhost:4711` | Where Explore's *Open in Clickland* links go |
 | `LANDLEDGER_INGEST` | on | `off` stops the hourly ingest tick |
+| `LANDLEDGER_AUDIT_ANCHOR_MINUTES` | `60` | How often the audit chain's head is anchored outside the database (a log record and span to Clickland, webhook `audit.anchor`, a row in `audit_anchors`); `0` turns it off. Runs with the background jobs |
 | `LANDLEDGER_COST_METRICS` | on | `off` stops sending `landledger.cost.*` metrics to Clickland |
 | `LANDLEDGER_COST_METRICS_ENDPOINT` | `${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics` | Where the cost metrics are posted (OTLP/HTTP JSON) |
 | `LANDLEDGER_INTEGRATION` | unset | Tests: a comma list of real services to test against (`db`, or `all`) |
