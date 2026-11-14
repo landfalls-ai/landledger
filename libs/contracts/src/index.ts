@@ -3,6 +3,7 @@
  * and what the console reads. Money travels as `{ amountMinor: "123456", currency: "USD" }` and decimals as strings,
  * so nothing on the way becomes a float.
  */
+import { COLUMNS, type FocusColumn } from '@landledger/focus';
 import { z } from 'zod';
 
 // Errors ------------------------------------------------------------------------------------------------------------
@@ -26,11 +27,15 @@ export type ApiErrorBody = z.infer<typeof ApiErrorBody>;
 // Values ------------------------------------------------------------------------------------------------------------
 
 export const CurrencyCode = z.string().regex(/^[A-Z]{3}$/, 'an ISO 4217 code');
+/** FOCUS numeric format: plain decimal, `-` only, never a JSON number (spec 001). */
 export const DecimalString = z.string().regex(/^-?\d+(\.\d+)?$/, 'a decimal number as a string');
-export const MinorUnits = z.string().regex(/^-?\d+$/, 'integer minor units as a string');
+/** An amount in major units, exact to the micro-unit: at most six decimals (`"-0.003100"`). */
+export const AmountString = z.string().regex(/^-?\d+(\.\d{1,6})?$/, 'an amount as a decimal string, ≤ 6 decimals');
 export const Day = z.iso.date();
+export const Month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'a month, YYYY-MM');
 
-export const MoneyJson = z.object({ amountMinor: MinorUnits, currency: CurrencyCode });
+/** Money on the wire (libs/money `Money.toJSON`): the amount as a decimal string and its ISO 4217 code. */
+export const MoneyJson = z.object({ amount: AmountString, currency: CurrencyCode });
 export type MoneyJson = z.infer<typeof MoneyJson>;
 
 // Who ---------------------------------------------------------------------------------------------------------------
@@ -146,26 +151,38 @@ export type Team = z.infer<typeof Team>;
 export const Product = z.object({ ...versioned });
 export type Product = z.infer<typeof Product>;
 
-// Rate cards --------------------------------------------------------------------------------------------------------
+// Rate cards (spec 002's shape) --------------------------------------------------------------------------------------
 
 export const RateLine = z.object({
-  key: z.string(),
+  id: z.string(),
+  skuId: z.string(),
+  skuPriceId: z.string(),
+  skuMeter: z.string(),
   label: z.string(),
-  unit: z.string(),
-  price: DecimalString,
+  provider: z.string().nullable(),
+  model: z.string().nullable(),
+  /** FOCUS Unit Format: `Core-Hours`, `GiB-Hours`, `GB-Months`, `GB`, `1000000 Tokens`. */
+  pricingUnit: z.string(),
+  unitPrice: DecimalString,
   currency: CurrencyCode,
+  details: z.record(z.string(), z.unknown()).nullable(),
 });
 export type RateLine = z.infer<typeof RateLine>;
 
 export const RateCardVersion = z.object({
   id: z.string(),
   version: z.number().int(),
+  /** A proposal until a person approves it. */
+  status: z.enum(['proposed', 'approved']),
   effectiveFrom: Day,
   effectiveTo: Day.nullable(),
+  hoursPerMonth: DecimalString,
   note: z.string(),
+  proposedBy: z.string(),
+  proposedAt: z.string(),
   approvedBy: z.string().nullable(),
-  createdAt: z.string(),
-  rates: z.array(RateLine),
+  approvedAt: z.string().nullable(),
+  lines: z.array(RateLine),
 });
 export type RateCardVersion = z.infer<typeof RateCardVersion>;
 
@@ -174,13 +191,13 @@ export const RateCard = z.object({
   name: z.string(),
   currency: CurrencyCode,
   owner: z.string(),
-  /** In effect today, if any. */
+  /** The approved version in effect today, if any. */
   current: RateCardVersion.nullable(),
   versions: z.array(RateCardVersion),
 });
 export type RateCard = z.infer<typeof RateCard>;
 
-// Allocation rules --------------------------------------------------------------------------------------------------
+// P&L classes (allocation itself is spec 003) ------------------------------------------------------------------------
 
 export const PlClass = z.enum(['cost_of_revenue', 'rnd', 'sm', 'ga']);
 export type PlClass = z.infer<typeof PlClass>;
@@ -191,21 +208,69 @@ export const PL_CLASS_LABEL: Readonly<Record<PlClass, string>> = {
   ga: 'G&A',
 };
 
-export const AllocationRule = z.object({
-  id: z.string(),
-  position: z.number().int(),
-  version: z.number().int(),
-  /** Every key must match: namespace, label, service, agent, workflow, provider (wave 1 settles the grammar). */
-  selector: z.record(z.string(), z.string()),
-  costCenterCode: z.string().nullable(),
-  teamCode: z.string().nullable(),
-  productCode: z.string().nullable(),
-  plClass: PlClass,
-  capitalisable: z.boolean(),
-  effectiveFrom: Day,
-  effectiveTo: Day.nullable(),
+// Periods, FX and cost records (spec 001) ---------------------------------------------------------------------------
+
+export const PeriodStatus = z.enum(['open', 'closing', 'locked']);
+export type PeriodStatus = z.infer<typeof PeriodStatus>;
+
+/** A month of the ledger: open → closing → locked, by a person; locked is final. */
+export const Period = z.object({
+  month: Month,
+  status: PeriodStatus,
+  openedAt: z.string(),
+  closingBy: z.string().nullable(),
+  closingAt: z.string().nullable(),
+  lockedBy: z.string().nullable(),
+  lockedAt: z.string().nullable(),
 });
-export type AllocationRule = z.infer<typeof AllocationRule>;
+export type Period = z.infer<typeof Period>;
+
+export const FxRate = z.object({
+  id: z.string(),
+  base: CurrencyCode,
+  quote: CurrencyCode,
+  date: Day,
+  rate: DecimalString,
+  source: z.string(),
+  recordedBy: z.string(),
+  recordedAt: z.string(),
+});
+export type FxRate = z.infer<typeof FxRate>;
+
+const wireColumn = (c: FocusColumn): z.ZodType => {
+  const base =
+    c.storage === 'micros'
+      ? AmountString
+      : c.type === 'Decimal'
+        ? DecimalString
+        : c.type === 'JSON'
+          ? z.record(z.string(), z.unknown())
+          : c.type === 'DateTime'
+            ? z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/, 'a UTC date/time')
+            : z.string();
+  return c.nullable ? base.nullable() : base;
+};
+
+/**
+ * A cost record on the wire (libs/focus `toWire`): FOCUS names, amounts and decimals as strings, never JSON numbers.
+ * Built from libs/focus's catalogue, so the two never drift.
+ */
+export const CostRecord = z.strictObject(Object.fromEntries(COLUMNS.map((c) => [c.name, wireColumn(c)])));
+export type CostRecord = Record<string, string | Record<string, unknown> | null>;
+
+export const RecordsQuery = z.object({
+  month: Month.optional(),
+  basis: z.enum(['estimated', 'invoiced']).optional(),
+  source: z.enum(['landflow', 'clickland', 'invoice', 'manual']).optional(),
+  sourceKey: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(1000).default(100),
+  /** The `next` of the page before. */
+  after: z.string().regex(/^\d+$/).optional(),
+});
+export type RecordsQuery = z.infer<typeof RecordsQuery>;
+
+export const RecordsPage = z.object({ records: z.array(CostRecord), next: z.string().nullable() });
+export type RecordsPage = { records: CostRecord[]; next: string | null };
 
 // Audit -------------------------------------------------------------------------------------------------------------
 

@@ -18,10 +18,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@landledger/focus": "workspace:*",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "@landledger/money": "workspace:*"
   }
 }
