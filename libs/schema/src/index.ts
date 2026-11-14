@@ -7,8 +7,15 @@ import postgres from 'postgres';
 /** Where the SQL files live: `migrations/` next to `dist/` (and next to `src/` in tests). */
 export const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
-/** The local development database (deploy/compose.infra.yml; the password is the development one in .env.example). */
-export const DEFAULT_PG_URL = 'postgres://landledger:landledger-dev@127.0.0.1:25532/landledger';
+/**
+ * The local development database (deploy/compose.infra.yml; the passwords are the development ones in .env.example).
+ * The API connects as `landledger_app` (migration 0008: inserts and reads, no updates of the ledger); migrations run
+ * as the owner.
+ */
+export const DEFAULT_PG_URL = 'postgres://landledger_app:landledger-app-dev@127.0.0.1:25532/landledger';
+export const DEFAULT_OWNER_PG_URL = 'postgres://landledger:landledger-dev@127.0.0.1:25532/landledger';
+export const APP_ROLE = 'landledger_app';
+export const DEFAULT_APP_PG_PASSWORD = 'landledger-app-dev';
 
 /**
  * Loads the env files into process.env without overriding what is already set, so every process reads the same
@@ -36,8 +43,25 @@ export function loadWorkspaceEnv(from: string = process.cwd()): void {
   }
 }
 
+/** The app's connection (LANDLEDGER_PG_URL): `landledger_app`. */
 export function postgresUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string {
   return env.LANDLEDGER_PG_URL ?? DEFAULT_PG_URL;
+}
+
+/** The owner's connection (LANDLEDGER_OWNER_PG_URL), for migrations and tests that create databases. */
+export function ownerUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string {
+  return env.LANDLEDGER_OWNER_PG_URL ?? DEFAULT_OWNER_PG_URL;
+}
+
+/** Gives the app role LOGIN and its password (roles are per server, so this is not a migration). */
+export async function setAppPassword(ownerUrl: string, password: string): Promise<void> {
+  const sql = postgres(ownerUrl, { onnotice: () => {}, max: 1 });
+  try {
+    // ALTER ROLE takes no bind parameters: the password is quoted as a literal.
+    await sql.unsafe(`ALTER ROLE ${APP_ROLE} LOGIN PASSWORD '${password.replace(/'/g, "''")}'`);
+  } finally {
+    await sql.end();
+  }
 }
 
 export interface Migration {

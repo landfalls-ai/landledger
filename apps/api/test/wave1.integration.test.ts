@@ -27,8 +27,8 @@ describe.skipIf(!integrationEnabled('db'))('wave 1 against Postgres', () => {
 
   beforeAll(async () => {
     db = await createTestDatabase();
-    sql = createSql(db.url);
-    services = createServices({ ...config, postgresUrl: db.url }, sql, fetchImpl, undefined, () => now);
+    sql = createSql(db.appUrl);
+    services = createServices({ ...config, postgresUrl: db.appUrl }, sql, fetchImpl, undefined, () => now);
     app = await buildApp(services);
     expect(await seed(sql)).toBe(11);
     for (const p of [YOAV, DANA, TAL])

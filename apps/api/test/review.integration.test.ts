@@ -25,9 +25,9 @@ describe.skipIf(!integrationEnabled('db'))("wave 1's review against Postgres", (
 
   beforeAll(async () => {
     db = await createTestDatabase();
-    sql = createSql(db.url);
+    sql = createSql(db.appUrl);
     services = createServices(
-      testConfig({ postgresUrl: db.url, dockerSharesCluster: 'orbstack' }),
+      testConfig({ postgresUrl: db.appUrl, dockerSharesCluster: 'orbstack' }),
       sql,
       sources.fetchImpl,
       undefined,
@@ -229,7 +229,7 @@ describe.skipIf(!integrationEnabled('db'))("wave 1's review against Postgres", (
       sql`INSERT INTO invoice_estimate_links (estimated_source_key, invoiced_record_id, month, linked_by)
           VALUES ('clickland:2026-11-16:orbstack:idle:memory', ${invoice.x_RecordId}, '2026-10-01', 'usr_yoav')`,
     ).rejects.toThrow(/its own billing month/);
-    await expect(sql`DELETE FROM invoice_estimate_links`).rejects.toThrow(/append-only/);
+    await expect(sql`DELETE FROM invoice_estimate_links`).rejects.toThrow(/permission denied|append-only/);
   });
 
   it('refuses budgets for a locked month, and allocations to a code that is no cost center', async () => {
@@ -341,11 +341,19 @@ describe.skipIf(!integrationEnabled('db'))("wave 1's review against Postgres", (
     });
     const second = await anchorAudit(sql, services.webhooks, log);
     expect(second!.seq).toBe(first!.seq + 2);
-    await sql.begin(async (tx) => {
-      await tx`ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only`;
-      await tx`DELETE FROM audit_log WHERE seq > ${first!.seq}`;
-      await tx`ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only`;
-    });
+    // The app role can't: no DELETE, and only the owner can disable the trigger.
+    await expect(sql`DELETE FROM audit_log WHERE seq > ${first!.seq}`).rejects.toThrow(/permission denied/);
+    await expect(sql`ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only`).rejects.toThrow(/must be owner/);
+    const owner = createSql(db.url);
+    try {
+      await owner.begin(async (tx) => {
+        await tx`ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only`;
+        await tx`DELETE FROM audit_log WHERE seq > ${first!.seq}`;
+        await tx`ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only`;
+      });
+    } finally {
+      await owner.end();
+    }
     const v = await services.audit.verify();
     expect(v).toMatchObject({ ok: false, truncated: true, checked: first!.seq, brokenAt: first!.seq + 1 });
     expect(v.reason).toMatch(new RegExp(`ends at entry ${first!.seq}, but entry ${second!.seq} was anchored`));

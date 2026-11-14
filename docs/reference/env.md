@@ -7,8 +7,10 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 
 | Variable | Default | What |
 |---|---|---|
-| `LANDLEDGER_PG_PASSWORD` | `landledger-dev` | The dev Postgres password (`deploy/compose.infra.yml`) |
-| `LANDLEDGER_PG_URL` | `postgres://landledger:landledger-dev@127.0.0.1:25532/landledger` | The database |
+| `LANDLEDGER_PG_PASSWORD` | `landledger-dev` | The dev Postgres owner's password (`deploy/compose.infra.yml`) |
+| `LANDLEDGER_OWNER_PG_URL` | `postgres://landledger:landledger-dev@127.0.0.1:25532/landledger` | The owner: migrations, and the integration tests that create databases |
+| `LANDLEDGER_APP_PG_PASSWORD` | `landledger-app-dev` | The app role's password, set by `pnpm db:migrate` (and by `deploy/postgres-init/` on a fresh volume) |
+| `LANDLEDGER_PG_URL` | `postgres://landledger_app:landledger-app-dev@127.0.0.1:25532/landledger` | The database as the API, the seed and the CLI use it: `landledger_app`, never the owner |
 | `LANDLEDGER_API_HOST`, `LANDLEDGER_API_PORT` | `127.0.0.1`, `4810` | Where the API listens |
 | `LANDLEDGER_CONSOLE_PORT`, `LANDLEDGER_CONSOLE_URL` | `4811`, `http://localhost:4811` | The console (CORS origin, sign-in redirects) |
 | `LANDLEDGER_OIDC_ISSUER` | `http://localhost:4402/oidc` | Landbright |

@@ -60,7 +60,7 @@ describe.skipIf(!integrationEnabled('db'))('the API against Postgres', () => {
 
   beforeAll(async () => {
     db = await createTestDatabase();
-    sql = createSql(db.url);
+    sql = createSql(db.appUrl);
     fake = await fakeLandbright();
     // Landbright is the fake; webhook receivers are recorded.
     const fetchImpl: typeof fetch = async (input, init) => {

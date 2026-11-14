@@ -10,7 +10,7 @@ Needs Node 24+, pnpm 10 and OrbStack.
 ```bash
 pnpm install
 pnpm dev:up        # Postgres 18 on 127.0.0.1:25532 (project landledger-infra), waits until healthy
-pnpm db:migrate    # applies libs/schema/migrations in one transaction
+pnpm db:migrate    # as the owner: applies libs/schema/migrations in one transaction, then gives landledger_app its password
 pnpm db:seed       # rate card v1 (a proposal) and the development cost centers; idempotent
 pnpm serve         # the API on :4810 and the console on :4811, both watching
 ```
@@ -26,6 +26,16 @@ Test people at Landbright (all `@landbright.test`): Finance CFO `dana.shalev`; F
 Landbright groups map to roles (`libs/contracts` `ROLE_BY_GROUP`); a group that maps to nothing (`Everyone`) is ignored,
 and someone with no mapped group is turned away (`?signin_error=no_role`).
 
+**Two database roles.** `landledger` owns the schema and runs migrations (`LANDLEDGER_OWNER_PG_URL`); the API, the
+seed and the ingest CLI connect as `landledger_app` (`LANDLEDGER_PG_URL`), which migration 0008 grants INSERT and SELECT
+on the ledger, audit, allocation and version tables, UPDATE only on the columns a workflow moves forward (approval,
+period status, a run's finish, a session's revocation) and DELETE only on working state (sessions, sign-ins in flight,
+provisional usage). It can't disable a trigger or truncate a table: only the owner can. `cost_records_enter` runs as
+the owner (`SECURITY DEFINER`) to keep `cost_record_keys`. A fresh volume creates the role from
+`deploy/postgres-init/`; on an older one migration 0008 creates it and `db:migrate` sets its password
+(`LANDLEDGER_APP_PG_PASSWORD`, development: `landledger-app-dev`). A new table grants the app in its own migration; a
+test fails on any table that doesn't.
+
 `pnpm dev:down` stops Postgres (the volume stays); `pnpm dev:logs` follows it. To start the database over:
 `docker --context orbstack compose -p landledger-infra -f deploy/compose.infra.yml down -v`, then `dev:up`,
 `db:migrate`, `db:seed`.
@@ -34,7 +44,7 @@ and someone with no mapped group is turned away (`?signin_error=no_role`).
 
 | Port | What |
 |---|---|
-| 25532 | Postgres (`landledger` / `landledger-dev`) |
+| 25532 | Postgres (owner `landledger` / `landledger-dev`; the API as `landledger_app` / `landledger-app-dev`) |
 | 4810 | The API (`apps/api`) |
 | 4811 | The console (`apps/console`, Vite; proxies `/api` to 4810) |
 | 4402 | Landbright (sign-in), a sibling project |

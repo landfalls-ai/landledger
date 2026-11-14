@@ -366,3 +366,60 @@ describe.skipIf(!integrationEnabled('db'))('0005 on a database with history', ()
     await expect(sql`UPDATE rate_lines SET added_by = 'usr_ctrl'`).rejects.toThrow(/append-only/);
   });
 });
+
+/** Migration 0008: what the app role may and may not do. */
+describe.skipIf(!integrationEnabled('db'))('the app role against Postgres', () => {
+  let db: TestDatabase;
+  let owner: postgres.Sql;
+  let app: postgres.Sql;
+  beforeAll(async () => {
+    db = await createTestDatabase();
+    owner = postgres(db.url, { onnotice: () => {}, max: 1 });
+    app = postgres(db.appUrl, { onnotice: () => {}, max: 1 });
+  });
+  afterAll(async () => {
+    await app?.end();
+    await owner?.end();
+    await db?.drop();
+  });
+
+  it('is granted on every table, and owns none', async () => {
+    const tables = await owner<{ name: string; owner: string; app: boolean }[]>`
+      SELECT c.relname AS name, pg_get_userbyid(c.relowner) AS owner,
+             has_table_privilege('landledger_app', c.oid, 'SELECT') AS app
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relispartition`;
+    expect(tables.length).toBeGreaterThan(20);
+    expect(tables.filter((t) => !t.app).map((t) => t.name)).toEqual([]);
+    expect(tables.filter((t) => t.owner === 'landledger_app')).toEqual([]);
+    const [{ superuser }] = await app`SELECT rolsuper AS superuser FROM pg_roles WHERE rolname = current_user`;
+    expect(superuser).toBe(false);
+  });
+
+  it('inserts and reads the ledger, and can neither change it nor switch its guards off', async () => {
+    for (const table of ['cost_records', 'audit_log', 'allocations', 'rate_lines', 'budgets', 'cost_record_keys'])
+      for (const privilege of ['UPDATE', 'DELETE', 'TRUNCATE']) {
+        const [{ ok }] = await app`SELECT has_table_privilege(current_user, ${table}, ${privilege}) AS ok`;
+        expect(ok, `${privilege} ${table}`).toBe(false);
+      }
+    await owner`INSERT INTO ingest_runs (id, source, kind, day, started_by) VALUES ('run_1', 'manual', 'manual', '2026-11-13', 'test')`;
+    // Entering a record writes cost_record_keys and opens the month through the owner's trigger.
+    const record = aiInputRow({
+      x_RecordId: '01KAPPAAAAAAAAAAAAAAAAAAAA',
+      x_IngestRunId: 'run_1',
+      x_RateCardVersion: null,
+    });
+    await app`INSERT INTO cost_records ${app(toRow(record))}`;
+    const [{ n }] = await app`SELECT count(*)::int AS n FROM cost_record_keys`;
+    expect(n).toBe(1);
+    await expect(app`UPDATE cost_records SET effective_cost_micros = 0`).rejects.toThrow(/permission denied/);
+    await expect(app`DELETE FROM audit_log`).rejects.toThrow(/permission denied/);
+    await expect(app`TRUNCATE cost_records`).rejects.toThrow(/permission denied/);
+    await expect(app`ALTER TABLE cost_records DISABLE TRIGGER cost_records_append_only`).rejects.toThrow(
+      /must be owner/,
+    );
+    await expect(app`DROP TRIGGER audit_log_append_only ON audit_log`).rejects.toThrow(/must be owner/);
+    await expect(app`UPDATE rate_card_versions SET proposed_by = 'x'`).rejects.toThrow(/permission denied/);
+    await expect(app`UPDATE cost_record_keys SET source_revision = 9`).rejects.toThrow(/permission denied/);
+  });
+});
