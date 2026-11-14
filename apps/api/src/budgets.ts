@@ -7,7 +7,7 @@ import { SHARED_POOL } from '@landledger/allocation';
 import type { BudgetImportView } from '@landledger/contracts';
 import { Decimal, Money, REPORTING_CURRENCY } from '@landledger/money';
 import type { AuditLog } from './audit.js';
-import { type Sql, type Tx } from './db.js';
+import { day, type Sql, type Tx } from './db.js';
 import { ApiError } from './errors.js';
 import { newId, sha256 } from './ids.js';
 import { actorOf, type Principal } from './principal.js';
@@ -131,6 +131,14 @@ export class Budgets {
         throw new ApiError('bad_request', `The budget file has ${problems.length} problem(s); nothing was imported`, {
           problems,
         });
+      const months = [...new Set(rows.map((r) => `${r.month}-01`))];
+      const locked = await tx<{ month: Date }[]>`
+        SELECT month FROM periods WHERE status = 'locked' AND month IN ${tx(months)} ORDER BY month`;
+      if (locked.length)
+        throw new ApiError(
+          'conflict',
+          `A locked month's budget is final: ${locked.map((l) => day(l.month).slice(0, 7)).join(', ')} ${locked.length === 1 ? 'is' : 'are'} locked; nothing was imported`,
+        );
       const checksum = sha256(input.csv);
       const [{ next }] = (await tx`SELECT coalesce(max(version), 0) + 1 AS next FROM budget_imports`) as unknown as [
         { next: number },

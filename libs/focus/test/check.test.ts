@@ -35,6 +35,14 @@ describe('check (T008)', () => {
     expect(rules(aiInputRow({ ListCost: 7.2 as unknown as Money }))).toContain('money');
   });
 
+  it('keeps an amount in another currency beside its conversion: amount, currency and rate together', () => {
+    const eur = { x_OriginalCost: Decimal.parse('6.65'), x_OriginalCurrency: 'EUR', x_FxRateId: 'fx_eur_usd_1113' };
+    expect(check(aiInputRow(eur))).toEqual([]);
+    expect(rules(aiInputRow({ ...eur, x_FxRateId: null }))).toContain('original-currency');
+    expect(rules(aiInputRow({ ...eur, x_OriginalCurrency: 'USD' }))).toContain('original-currency');
+    expect(rules(aiInputRow({ ...eur, x_OriginalCurrency: 'eur' }))).toContain('currency');
+  });
+
   it('wants units in FOCUS Unit Format, set with their quantity', () => {
     expect(rules(aiInputRow({ PricingUnit: '1M tokens' }))).toContain('unit-format');
     expect(rules(aiInputRow({ ConsumedUnit: null }))).toContain('quantity-unit');

@@ -40,6 +40,7 @@ describe('the column catalogue (T007)', () => {
       'PricingQuantity',
       'ConsumedQuantity',
       'x_SourceCost',
+      'x_OriginalCost',
     ]);
   });
 });

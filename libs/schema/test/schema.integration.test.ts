@@ -223,7 +223,7 @@ describe.skipIf(!integrationEnabled('db'))('0001 against Postgres', () => {
       x_Basis: 'estimated',
       x_IngestRunId: 'run_1',
     });
-    expect(Object.keys(row!)).toHaveLength(56);
+    expect(Object.keys(row!)).toHaveLength(59); // 45 FOCUS columns and 14 x_ columns (three of them for another currency, 0006)
     const [rev] =
       await sql`SELECT "EffectiveCost", "PricingQuantity" FROM cost_records_focus WHERE "x_SourceKey" = 'k:fix' AND "x_CorrectionOfId" IS NOT NULL`;
     expect(rev).toEqual({ EffectiveCost: '-7.200000', PricingQuantity: '-2.4' });

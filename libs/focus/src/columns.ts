@@ -101,6 +101,11 @@ export const CUSTOM_COLUMNS: readonly FocusColumn[] = [
   c('x_WorkflowId', 'String', 'Custom', true, 'workflow_id', 'text'),
   c('x_AgentId', 'String', 'Custom', true, 'agent_id', 'text'),
   c('x_ActorId', 'String', 'Custom', true, 'actor_id', 'text'),
+  // A charge in another currency: its amount as the source gave it, and the dated rate it was converted to
+  // BillingCurrency at (migration 0006). All three or none.
+  c('x_OriginalCost', 'Decimal', 'Custom', true, 'original_cost', 'numeric', true),
+  c('x_OriginalCurrency', 'String', 'Custom', true, 'original_currency', 'text'),
+  c('x_FxRateId', 'String', 'Custom', true, 'fx_rate_id', 'text'),
 ];
 
 /** Every column a record carries, FOCUS first: the `cost_records_focus` view's column list, in order. */

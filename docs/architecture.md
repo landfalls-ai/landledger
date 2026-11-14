@@ -42,7 +42,7 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 
 | Table | Holds | Changes |
 |---|---|---|
-| `cost_records` | one row per resource, charge and day in 45 FOCUS 1.4 columns ([research/focus.md](research/focus.md) §3; amounts as bigint micro-units, partitioned by billing month), plus `x_RecordId`, `x_Basis` (`estimated` or `invoiced`), `x_Source`, `x_SourceKey`, `x_SourceCost`, `x_RateCardVersion`, `x_IngestRunId`, `x_CorrectionOfId`, `x_WorkflowId`, `x_AgentId`, `x_ActorId`; `cost_records_focus` shows them under FOCUS names | append only; a correction is a reversal (additive columns negated, `x_CorrectionOfId` set) and a re-entry; `ChargeClass = Correction` only for a locked month, booked in the open month with the original charge day ([money.md](money.md)) |
+| `cost_records` | one row per resource, charge and day in 45 FOCUS 1.4 columns ([research/focus.md](research/focus.md) §3; amounts as bigint micro-units, partitioned by billing month), plus `x_RecordId`, `x_Basis` (`estimated` or `invoiced`), `x_Source`, `x_SourceKey`, `x_SourceCost`, `x_RateCardVersion`, `x_IngestRunId`, `x_CorrectionOfId`, `x_WorkflowId`, `x_AgentId`, `x_ActorId`, and for a charge in another currency `x_OriginalCost`, `x_OriginalCurrency`, `x_FxRateId`; `cost_records_focus` shows them under FOCUS names | append only; a correction is a reversal (additive columns negated, `x_CorrectionOfId` set) and a re-entry; `ChargeClass = Correction` only for a locked month, booked in the open month with the original charge day ([money.md](money.md)) |
 | `ingest_runs`, `provisional_usage` | each ingest run (source, day, counts, warnings, outcome); today's figures so far, same row shape | a run is finished once; provisional rows are replaced every hour and never summed with records |
 | `allocations` | each record's split to cost center, team, product, P&L class, capitalisable flag, with the rule and its version | rebuilt for open periods only |
 | `cost_centers`, `teams`, `products` | the dimensions, with owners (Landbright identities) | versioned |
@@ -57,6 +57,8 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 | `reservations` | budget reserved by an approved request until real cost arrives | reserved → consumed or released |
 | `contracts` | vendor, product, cost center, value, seats, term, renewal and notice dates | versioned |
 | `invoices`, `reconciliations` | provider invoices and how estimated usage matched them | append only |
+| `invoice_estimate_links` | an invoice line and the estimates it replaces, by the estimate's source key | append only; reads never add a linked estimate to its invoice ([money.md](money.md#estimated-and-invoiced)) |
+| `cost_center_codes` | every cost center code, plus `SHARED-POOL` and `UNALLOCATED` | append only; allocations and budgets reference it |
 | `periods` | each month: open, closing, locked; who closed and locked it | one step forward at a time, by a person; locked is final and refuses inserts; a month locks only when whole (ended, every source-day complete, no provisional rows, every record allocated) unless a controller overrides with a reason |
 | `audit_log` | every change above, each entry carrying the hash of the one before | append only |
 | `outbox` | webhook deliveries (Standard Webhooks, the Clickland pattern) | retried, then kept |

@@ -45,6 +45,7 @@ export function reverse(
     PricingQuantity: original.PricingQuantity?.negate() ?? null,
     ConsumedQuantity: original.ConsumedQuantity?.negate() ?? null,
     x_SourceCost: original.x_SourceCost?.negate() ?? null,
+    x_OriginalCost: original.x_OriginalCost?.negate() ?? null,
     x_RecordId: (ctx.newId ?? ulid)(),
     x_IngestRunId: ctx.ingestRunId,
     x_CorrectionOfId: original.x_RecordId,

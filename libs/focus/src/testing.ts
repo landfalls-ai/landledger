@@ -63,6 +63,9 @@ export function aiInputRow(over: Partial<CostRecord> = {}): CostRecord {
     x_WorkflowId: 'wf_triage',
     x_AgentId: null,
     x_ActorId: null,
+    x_OriginalCost: null,
+    x_OriginalCurrency: null,
+    x_FxRateId: null,
     ...over,
   };
 }

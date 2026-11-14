@@ -41,7 +41,9 @@ without a library.
 A CSV with the header `cost_center,month,amount,currency` (USD, YYYY-MM, non-negative, at most 6 decimals, a cost
 center or `SHARED-POOL`, no duplicates). Every problem is reported and a bad file imports nothing. Each import is a
 version, audited `budget.imported`; the newest import per cost center is the month's budget. Importing is for a
-controller or the CFO (`admin`).
+controller or the CFO (`admin`). A file that names a **locked** month is refused whole (its budget is final; the
+database refuses it too), and every code must be in `cost_center_codes` (the cost centers, `SHARED-POOL` and
+`UNALLOCATED`; allocations name a code from there as well, migration 0006).
 
 The screen: budget, actual, reserved, available, forecast, variance and state per cost center (a table on desktop,
 cards on a phone); a row opens to its owner, source and months.

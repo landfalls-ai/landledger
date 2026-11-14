@@ -82,6 +82,11 @@ export interface CostRecord {
   x_WorkflowId: string | null;
   x_AgentId: string | null;
   x_ActorId: string | null;
+  /** The amount in the source's currency when it isn't BillingCurrency (EffectiveCost is its conversion). */
+  x_OriginalCost: Decimal | null;
+  x_OriginalCurrency: string | null;
+  /** The `fx_rates` row the conversion used. */
+  x_FxRateId: string | null;
 }
 
 /** A row of `cost_records` as postgres.js reads and writes it: bigint and numeric as strings, times as Date or text. */

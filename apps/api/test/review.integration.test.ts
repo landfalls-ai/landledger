@@ -3,6 +3,9 @@
  * day unasked, a retroactive rate card reaches every day, the hours after midnight while yesterday is provisional,
  * locks only of whole months (and the audited override), and a late record in a closing month.
  */
+import { correct, ulid } from '@landledger/focus';
+import { aiInputRow } from '@landledger/focus/testing';
+import { Decimal, Money } from '@landledger/money';
 import { createTestDatabase, integrationEnabled, type TestDatabase } from '@landledger/schema/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSql, type Sql } from '../src/db.js';
@@ -182,5 +185,122 @@ describe.skipIf(!integrationEnabled('db'))("wave 1's review against Postgres", (
           AND a.generation_id = (SELECT id FROM allocation_generations WHERE month = '2026-11-01' ORDER BY number DESC LIMIT 1))`;
     expect(n).toBe(0);
     expect((await services.periods.lockProblems('2026-11')).some((p) => /no stored allocation/.test(p))).toBe(false);
+  });
+
+  it('never adds an estimate to the invoice line that replaces it', async () => {
+    const charged = {
+      from: '2026-11-16',
+      to: '2026-11-16',
+      by: 'category',
+      layer: 'direct',
+      provisional: 'true',
+    } as const;
+    const before = Money.parse((await services.spend.spend(charged)).total.total, 'USD');
+    const idleKey = 'clickland:2026-11-16:orbstack:idle:cpu';
+    const [idle] = await sql`
+      SELECT effective_cost_micros::text AS c FROM cost_records r JOIN cost_record_keys k USING (record_id)
+      WHERE r.source_key = ${idleKey} AND NOT k.is_reversal
+        AND NOT EXISTS (SELECT 1 FROM cost_record_keys x WHERE x.correction_of_id = k.record_id)`;
+    const [run] = await sql`SELECT id FROM ingest_runs WHERE source = 'clickland' LIMIT 1`;
+    // The cluster's invoice for 16 November: USD 7.20, invoiced (the estimate stays in the ledger).
+    const invoice = aiInputRow({
+      x_RecordId: ulid(),
+      x_IngestRunId: run!.id,
+      x_Basis: 'invoiced',
+      x_Source: 'invoice',
+      x_SourceKey: 'invoice:2026-11:orbstack:cpu',
+      x_RateCardVersion: null,
+      x_SourceCost: null,
+      BilledCost: Money.parse('7.2', 'USD'),
+      ChargePeriodStart: '2026-11-16T00:00:00Z',
+      ChargePeriodEnd: '2026-11-17T00:00:00Z',
+    });
+    await services.records.append([invoice]);
+    const both = Money.parse((await services.spend.spend(charged)).total.total, 'USD');
+    expect(both.minus(before).toString()).toBe('USD 7.200000'); // unlinked: both count
+    await sql`INSERT INTO invoice_estimate_links (estimated_source_key, invoiced_record_id, month, linked_by)
+              VALUES (${idleKey}, ${invoice.x_RecordId}, '2026-11-01', 'usr_yoav')`;
+    const linked = Money.parse((await services.spend.spend(charged)).total.total, 'USD');
+    // The estimate it replaces drops out: never estimated and invoiced for the same charge.
+    expect(linked.toString()).toBe(both.minus(Money.ofMicros(idle!.c, 'USD')).toString());
+    await expect(
+      sql`INSERT INTO invoice_estimate_links (estimated_source_key, invoiced_record_id, month, linked_by)
+          VALUES ('clickland:2026-11-16:orbstack:idle:memory', ${invoice.x_RecordId}, '2026-10-01', 'usr_yoav')`,
+    ).rejects.toThrow(/its own billing month/);
+    await expect(sql`DELETE FROM invoice_estimate_links`).rejects.toThrow(/append-only/);
+  });
+
+  it('refuses budgets for a locked month, and allocations to a code that is no cost center', async () => {
+    await expect(
+      services.budgets.import(
+        { csv: 'cost_center,month,amount,currency\nENG-PLATFORM,2026-10,5,USD\n', note: 'late' },
+        YOAV,
+      ),
+    ).rejects.toThrow(/2026-10 is locked; nothing was imported/);
+    const [imp] = await sql`SELECT id FROM budget_imports LIMIT 1`;
+    await expect(
+      sql`INSERT INTO budgets (import_id, cost_center_code, month, amount_micros, currency)
+          VALUES (${imp!.id}, 'ENG-PLATFORM', '2026-10-01', 1, 'USD')`,
+    ).rejects.toThrow(/locked: its budget is final/);
+    const [gen] =
+      await sql`SELECT id FROM allocation_generations WHERE month = '2026-11-01' ORDER BY number DESC LIMIT 1`;
+    await expect(
+      sql`INSERT INTO allocations (month, generation_id, record_id, billing_period_start, charge_day, basis, cost_center, amount_micros, currency)
+          VALUES ('2026-11-01', ${gen!.id}, 'r_x', '2026-11-01T00:00:00Z', '2026-11-16', 'estimated', 'NOPE', 1, 'USD')`,
+    ).rejects.toThrow(/foreign key/);
+  });
+
+  it('keeps a charge in another currency beside its conversion; reads refuse an unconverted one', async () => {
+    await sql`INSERT INTO fx_rates (id, base, quote, rate_date, rate, source, recorded_by)
+              VALUES ('fx_eur_usd_1116', 'EUR', 'USD', '2026-11-16', 1.0827, 'ECB reference rate (test)', 'test')`;
+    const [run] = await sql`SELECT id FROM ingest_runs WHERE source = 'clickland' LIMIT 1`;
+    const converted = aiInputRow({
+      x_RecordId: ulid(),
+      x_IngestRunId: run!.id,
+      x_Source: 'manual',
+      x_SourceKey: 'manual:2026-11-16:eur-service',
+      x_OriginalCost: Decimal.parse('6.650000'),
+      x_OriginalCurrency: 'EUR',
+      x_FxRateId: 'fx_eur_usd_1116',
+      ChargePeriodStart: '2026-11-16T00:00:00Z',
+      ChargePeriodEnd: '2026-11-17T00:00:00Z',
+    });
+    await services.records.append([converted]);
+    const [row] =
+      await sql`SELECT original_cost::text, original_currency, fx_rate_id FROM cost_records WHERE record_id = ${converted.x_RecordId}`;
+    expect(row).toMatchObject({ original_cost: '6.650000', original_currency: 'EUR', fx_rate_id: 'fx_eur_usd_1116' });
+    // A reversal negates the original amount too; one that doesn't is refused.
+    const state = { isLocked: (m: string) => m <= '2026-10', openMonth: '2026-11' };
+    const [reversal] = correct(converted, null, state, { ingestRunId: run!.id });
+    await expect(
+      services.records.append([{ ...reversal!, x_RecordId: ulid(), x_OriginalCost: Decimal.parse('6.65') }]),
+    ).rejects.toThrow(/negates every amount/);
+    await services.records.append([reversal!]);
+    // A record whose amounts are themselves in EUR never reaches a USD sum: the read refuses it.
+    const eur = (a: string) => Money.parse(a, 'EUR');
+    await services.records.append([
+      aiInputRow({
+        x_RecordId: ulid(),
+        x_IngestRunId: run!.id,
+        x_Source: 'manual',
+        x_SourceKey: 'manual:2026-11-16:eur-unconverted',
+        BillingCurrency: 'EUR',
+        BilledCost: eur('0'),
+        EffectiveCost: eur('7.2'),
+        ListCost: eur('7.2'),
+        ContractedCost: eur('7.2'),
+        ChargePeriodStart: '2026-11-16T00:00:00Z',
+        ChargePeriodEnd: '2026-11-17T00:00:00Z',
+      }),
+    ]);
+    await expect(
+      services.spend.spend({
+        from: '2026-11-16',
+        to: '2026-11-16',
+        by: 'category',
+        layer: 'direct',
+        provisional: 'true',
+      }),
+    ).rejects.toThrow(/is in EUR/);
   });
 });

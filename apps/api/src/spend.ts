@@ -386,7 +386,12 @@ export class Spend {
         SELECT a.* FROM allocations a JOIN allocation_generations g ON g.id = a.generation_id
         WHERE a.month = (r.billing_period_start AT TIME ZONE 'UTC')::date AND a.record_id = r.record_id
         ORDER BY g.number DESC LIMIT 1) a ON TRUE
-      WHERE ${where}`;
+      WHERE ${where}
+        -- An estimate an invoice line replaces is never added to it (invoice_estimate_links, migration 0006).
+        AND NOT (r.basis = 'estimated' AND EXISTS (
+          SELECT 1 FROM invoice_estimate_links l JOIN cost_record_keys k ON k.record_id = l.invoiced_record_id
+          WHERE l.estimated_source_key = r.source_key
+            AND NOT EXISTS (SELECT 1 FROM cost_record_keys x WHERE x.correction_of_id = k.record_id)))`;
     // Provisional rows are booked in the month they are charged in, so both selections read them by charge day.
     const prov = provisional
       ? await s<Row[]>`

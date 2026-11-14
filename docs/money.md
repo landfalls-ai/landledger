@@ -47,6 +47,22 @@ latest date on or before `date`, rounds half-even to the micro-unit and returns 
 refuses when there is none and never derives an inverse. USD → USD needs no rate. `fx_rates` is append-only: a later
 rate for the same pair and date supersedes an earlier one.
 
+A charge in another currency is converted when it is entered, and keeps where it came from: `x_OriginalCost`,
+`x_OriginalCurrency` and `x_FxRateId` (columns `original_cost`, `original_currency`, `fx_rate_id` → `fx_rates`,
+migration 0006) hold the source's amount, its currency and the rate used, all three or none, never the billing
+currency itself; a reversal negates `x_OriginalCost` too. The ledger's amounts stay in USD. A record whose amounts are
+themselves in another currency never reaches a sum: reads refuse it by name (`reportingAmount`), and `Money.sum`
+throws `CurrencyMismatchError` on mixed currencies, so a conversion is always explicit and dated.
+
+## Estimated and invoiced
+
+Every figure is labelled `estimated` or `invoiced`, and the two are never added for the same charge. When an invoice
+line arrives it is entered as an `invoiced` record and linked to the estimates it replaces (`invoice_estimate_links`:
+the estimate's source key, the invoice record, the billing month, who linked them; append-only, refused for a locked
+month or across months). Every read leaves out an estimated record whose source key is linked to a live invoiced
+record, so the charge counts once, at the invoiced figure; the estimate stays in the ledger as it was. Linking by
+source key keeps a corrected estimate linked. (Wave 1 has no invoices yet; the table and the read rule are in place.)
+
 ## Records and corrections
 
 Every `cost_records` row is a FOCUS 1.4 record (`libs/focus`): `x_Basis` says `estimated` (usage × rate card,
@@ -56,7 +72,8 @@ rule a record breaks; the database repeats the rules it can.
 
 Nothing is edited. A correction is FOCUS's ledger style:
 
-- a **reversal**: every additive column (the four costs, `PricingQuantity`, `ConsumedQuantity`, `x_SourceCost`) negated,
+- a **reversal**: every additive column (the four costs, `PricingQuantity`, `ConsumedQuantity`, `x_SourceCost`,
+  `x_OriginalCost`) negated,
   every other column equal, `x_CorrectionOfId` = the original's `x_RecordId`;
 - and, when the figure changed, a **re-entry** with the corrected values and the same `x_SourceKey`.
 

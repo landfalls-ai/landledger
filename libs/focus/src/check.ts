@@ -102,6 +102,25 @@ export function check(record: CostRecord): Violation[] {
   product('ListCost', 'ListUnitPrice');
   product('ContractedCost', 'ContractedUnitPrice');
 
+  // Another currency: the original amount, its currency and the rate, all or none; never the billing currency itself
+  const original = [record.x_OriginalCost, record.x_OriginalCurrency, record.x_FxRateId];
+  if (original.some((v) => v !== null && v !== undefined) && original.some((v) => v === null || v === undefined))
+    add(
+      'x_OriginalCurrency',
+      'original-currency',
+      'x_OriginalCost, x_OriginalCurrency and x_FxRateId go together: an amount converted at a dated rate',
+    );
+  else if (record.x_OriginalCurrency != null) {
+    if (!isCurrencyCode(record.x_OriginalCurrency))
+      add('x_OriginalCurrency', 'currency', `x_OriginalCurrency is an ISO 4217 code; got ${record.x_OriginalCurrency}`);
+    else if (record.x_OriginalCurrency === record.BillingCurrency)
+      add(
+        'x_OriginalCurrency',
+        'original-currency',
+        'x_OriginalCurrency is set only when it differs from BillingCurrency',
+      );
+  }
+
   // Estimated against invoiced (docs/research/focus.md §2)
   if (record.x_Basis === 'estimated') {
     if (!record.BilledCost.isZero())
