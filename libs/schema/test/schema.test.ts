@@ -17,15 +17,16 @@ describe('the shipped migrations', () => {
     const sql = migrations.map((m) => m.sql).join('\n');
     for (const table of [
       'cost_records',
-      'allocations',
+      'cost_record_keys',
+      'provisional_usage',
+      'ingest_runs',
       'cost_centers',
       'teams',
       'products',
       'rate_cards',
       'rate_card_versions',
-      'allocation_rules',
+      'rate_lines',
       'fx_rates',
-      'budgets',
       'periods',
       'audit_log',
       'api_keys',
@@ -37,13 +38,25 @@ describe('the shipped migrations', () => {
       expect(sql, table).toMatch(new RegExp(`CREATE TABLE ${table} \\(`));
   });
 
-  it('keep money in bigint minor units and never use floats', () => {
+  it('keep money in bigint micro-units and never use floats', () => {
     const sql = migrations
       .map((m) => m.sql)
       .join('\n')
       .replace(/--.*$/gm, '');
     expect(sql).not.toMatch(/\b(real|double precision|float\d?|money)\b/i);
-    for (const col of sql.match(/\b\w+_minor\s+\w+/g) ?? []) expect(col).toMatch(/bigint$/);
+    expect(sql).not.toMatch(/_minor\b/);
+    const amounts = sql.match(/^ +\w+_micros +\w+/gm) ?? [];
+    expect(amounts.length).toBeGreaterThanOrEqual(4);
+    for (const col of amounts) expect(col).toMatch(/bigint$/);
+  });
+
+  it('name every FOCUS column libs/focus maps, in the table and the view', async () => {
+    const { COLUMNS } = await import('@landledger/focus');
+    const sql = migrations.map((m) => m.sql).join('\n');
+    for (const c of COLUMNS) {
+      expect(sql, c.column).toMatch(new RegExp(`\\n  ${c.column}\\s+(text|bigint|numeric|timestamptz|jsonb|char)`));
+      expect(sql, c.name).toMatch(new RegExp(`AS "${c.name}"`));
+    }
   });
 });
 
