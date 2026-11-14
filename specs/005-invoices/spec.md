@@ -1,6 +1,6 @@
 # Feature 005: Invoices and reconciliation (wave 3, "Plan and reconcile")
 
-**Status**: specified 2026-11-15 · **Plan**: [plan.md](plan.md) · **Tasks**: [tasks.md](tasks.md) · **Contract**:
+**Status**: built 2026-11-15 · **Plan**: [plan.md](plan.md) · **Tasks**: [tasks.md](tasks.md) · **Contract**:
 `libs/contracts/src/wave3.ts`, [reference/api.md](../../docs/reference/api.md#wave-3-plan-and-reconcile-specs-005011)
 
 ## Why

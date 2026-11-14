@@ -48,6 +48,15 @@ export const SCREENS: Screen[] = [
     note: 'Wave 1 reads budgets from a CSV; Datarails comes in wave 4.',
   },
   {
+    path: '/reconciliation',
+    wave: 3,
+    purpose: 'AI usage tied to the providers’ invoices.',
+    shows: [
+      'Per provider, model and month: estimated, invoiced, the variance and whether it is within ±2%',
+      'The invoices imported, their versions and what each posted; a controller or the CFO imports and voids',
+    ],
+  },
+  {
     path: '/approvals',
     wave: 2,
     purpose: 'Spend above the threshold, waiting on a person. Agents request; people decide.',

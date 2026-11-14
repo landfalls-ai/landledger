@@ -16,7 +16,7 @@ describe('the shell', () => {
         .map((a) => a.textContent),
     );
     expect(groups).toEqual([
-      ['Overview', 'Explore', 'Budgets'],
+      ['Overview', 'Explore', 'Budgets', 'Reconciliation'],
       ['Approvals', 'Contracts'],
       ['Agents'],
       ['Month-end'],
@@ -43,6 +43,7 @@ describe('the shell', () => {
         .map((a) => a.textContent),
     ).toEqual([
       'Budgets',
+      'Reconciliation',
       'Contracts',
       'Agents',
       'Month-end',

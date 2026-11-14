@@ -9,7 +9,7 @@ import { CopyButton } from '@/components/ui/copy-button';
 import { type Column, DataTable } from '@/components/ui/data-table';
 import { get, quiet } from '@/lib/api';
 import { toTsv } from '@/lib/copy';
-import { change, dayLabel, monthLabel, num, pct, usd } from '@/lib/format';
+import { change, dayLabel, invoicedShare, monthLabel, num, pct, usd } from '@/lib/format';
 
 const LINK_BUTTON =
   'inline-flex h-[30px] items-center justify-center gap-[7px] whitespace-nowrap rounded-[9px] border border-bd bg-sf px-2.5 text-[12.5px] font-medium text-t1 hover:bg-acdim';
@@ -195,9 +195,10 @@ export function ExplorePage() {
                     All <Estimated />: usage × the rate card
                   </>
                 ) : (
-                  <>
-                    {usd(r.total.invoiced)} <Invoiced />, the rest <Estimated />
-                  </>
+                  <span data-testid="invoiced-share">
+                    {invoicedShare(r.total.invoiced, r.total.total)}% invoiced: {usd(r.total.invoiced)} <Invoiced />,
+                    the rest <Estimated />
+                  </span>
                 )}
                 {r.total.provisional !== '0.000000' && ` · ${usd(r.total.provisional)} today, provisional`}
               </>
@@ -289,7 +290,8 @@ export function ExplorePage() {
             <div className="flex flex-wrap justify-between gap-2 border-t border-hair px-4 py-3 text-[13px]">
               <span className="font-semibold">Total</span>
               <span className="figure">
-                {usd(r.total.estimated)} estimated · {usd(r.total.invoiced)} invoiced · <b>{usd(r.total.total)}</b>
+                {usd(r.total.estimated)} estimated · {usd(r.total.invoiced)} invoiced (
+                {invoicedShare(r.total.invoiced, r.total.total)}%) · <b>{usd(r.total.total)}</b>
               </span>
             </div>
           </Card>

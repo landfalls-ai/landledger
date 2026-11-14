@@ -119,6 +119,18 @@ Bearer `lls_…` only (never a cookie or the dev bypass). `GET /ServiceProviderC
 `groups` replace) and `DELETE`; RFC 7644 errors. Deactivating a person (`active: false`, or `DELETE`) ends their
 sessions at once; group membership decides their roles on the next request. Details in [identity.md](../identity.md).
 
+## Wave 3: plan and reconcile (specs 005–011)
+
+The schemas are in `libs/contracts/src/wave3.ts`. Amounts are six-decimal strings in USD.
+
+| Route | Needs | Does |
+|---|---|---|
+| `POST /api/invoices/import` `{ csv, fileName?, note?, origin?: entered\|dev-fixture }` | `admin`, a person (controller or CFO) | Posts or corrects each invoice in the CSV ([invoices.md](../invoices.md)); 201 `{ invoices, reconciliation }`; 400 with `details.problems` (nothing imported); 422 for a non-USD line; a key gets 403 |
+| `GET /api/invoices?month=`, `GET /api/invoices/:id` | `read` | Invoices at their newest version: lines, what the last import posted, `correction`, origin |
+| `POST /api/invoices/:id/void` `{ reason }` | `admin`, a person (controller or CFO) | Reverses every live record of the invoice; a `voided` version; 409 if voided already |
+| `GET /api/reconciliation?month=` | `read` | Per provider × model: estimated, invoiced, variance, variance %, status (`matched`, `outside`, `not_invoiced`, `no_estimate`), the invoices; totals with the share invoiced; the tolerance |
+| `GET /api/requests/:id/lifecycle` | `read` | An approved request's stages (approved, reserved, consumed, invoiced), approved and actual to date, the variance; `null` before approval |
+
 ## Webhook events
 
 Standard Webhooks, from the outbox; subscriptions are managed by an admin (`/api/webhooks`). Each body is

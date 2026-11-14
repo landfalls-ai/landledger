@@ -24,6 +24,7 @@ import { Requests } from './requests.js';
 import { Reservations } from './reservations.js';
 import { SecretBox } from './secrets.js';
 import { Spend } from './spend.js';
+import { Invoices } from './invoices.js';
 
 /** Everything the routes call. */
 export interface Services {
@@ -51,6 +52,7 @@ export interface Services {
   owners: CostCenterOwners;
   links: PersonLinks;
   relayChannels: RelayChannels;
+  invoices: Invoices;
   landflow: LandflowClient | null;
   log: IngestLog;
   fetchImpl: typeof fetch;
@@ -127,6 +129,10 @@ export function createServices(
       });
   };
   const proposals = new Proposals(sql, audit, spend, allocation, requests, now);
+  // Wave 3: invoices post records; the months they land in are allocated like an ingest run's.
+  const invoices = new Invoices(sql, audit, spend, config, now, async (months) => {
+    for (const month of months) await allocation.allocatePending(month);
+  });
   const exceptions = new Exceptions(sql, audit, webhooks, spend, policies, now, budgets, config.consoleUrl);
   return {
     config,
@@ -153,6 +159,7 @@ export function createServices(
     owners,
     links,
     relayChannels,
+    invoices,
     landflow,
     log,
     fetchImpl,

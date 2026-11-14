@@ -5,6 +5,7 @@ import {
   CircleCheck,
   FileText,
   LayoutDashboard,
+  Receipt,
   type LucideIcon,
   ShieldCheck,
   SlidersHorizontal,
@@ -27,6 +28,7 @@ export const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
       { href: '/overview', label: 'Overview', icon: LayoutDashboard, bar: true },
       { href: '/explore', label: 'Explore', icon: ChartColumn, bar: true },
       { href: '/budgets', label: 'Budgets', icon: Wallet },
+      { href: '/reconciliation', label: 'Reconciliation', icon: Receipt },
     ],
   },
   {

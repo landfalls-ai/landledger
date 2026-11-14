@@ -1,0 +1,50 @@
+/**
+ * Wave 3's routes, "Plan and reconcile" (specs 005–011): invoices and reconciliation, the year ahead, anomalies,
+ * agents, contracts and seats, the access review. Each route checks its scope; what only a person may do is checked
+ * again by its service (a key never imports, attests or acknowledges).
+ */
+import { type ApiScope, InvoiceImportInput, InvoiceVoidInput, ReconciliationQuery } from '@landledger/contracts';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { z } from 'zod';
+import { parse } from './app.js';
+import { notFound } from './errors.js';
+import type { Services } from './services.js';
+
+const Id = z.object({ id: z.string().min(1).max(100) });
+
+export function registerWave3(
+  app: FastifyInstance,
+  services: Services,
+  need: (r: FastifyRequest, scope: ApiScope) => void,
+) {
+  const { invoices, sql } = services;
+
+  // 005 Invoices and reconciliation ----------------------------------------------------------------------------------
+  app.get('/api/invoices', async (r) => {
+    need(r, 'read');
+    const month = parse(ReconciliationQuery, r.query).month ?? new Date().toISOString().slice(0, 7);
+    return { month, invoices: await invoices.list(month) };
+  });
+  app.get('/api/invoices/:id', async (r) => (need(r, 'read'), invoices.view(parse(Id, r.params).id)));
+  app.post('/api/invoices/import', async (r, reply) => {
+    need(r, 'admin');
+    return reply.status(201).send(await invoices.import(parse(InvoiceImportInput, r.body), r.principal));
+  });
+  app.post('/api/invoices/:id/void', async (r) => {
+    need(r, 'admin');
+    return invoices.void(parse(Id, r.params).id, parse(InvoiceVoidInput, r.body).reason, r.principal);
+  });
+  app.get('/api/reconciliation', async (r) => {
+    need(r, 'read');
+    return invoices.reconciliation(parse(ReconciliationQuery, r.query).month);
+  });
+  app.get('/api/requests/:id/lifecycle', async (r) => {
+    need(r, 'read');
+    const [row] = await sql<Parameters<typeof invoices.lifecycle>[0][]>`
+      SELECT id, title, status, amount_micros::text AS amount_micros, currency, recurrence, start_day, end_day,
+             decided_at, closed_by, cost_center, evidence, automatic
+      FROM requests WHERE id = ${parse(Id, r.params).id}`;
+    if (!row) throw notFound('Request');
+    return { lifecycle: await invoices.lifecycle(row) };
+  });
+}

@@ -12,12 +12,13 @@
 | [approvals.md](approvals.md) | Requests, confirmation, policies, cost center owners, decisions by people only (console, or a verified Slack relay), evidence snapshots and who saw them, deadlines and escalation, reservations, rate card and rule set proposals with a preview, the exceptions report and stored reports, the evidence pack, keys and webhooks |
 | [identity.md](identity.md) | Sign-in, roles from groups, effective groups, SCIM 2.0 after Clickland's, deactivation, `pnpm scim:token` |
 | [spend.md](spend.md) | Overview, Explore, Budgets: the figures, the forecast, exports, the MCP tools, cost metrics in Clickland |
+| [invoices.md](invoices.md) | Invoices and reconciliation: the CSV, posting beside the estimates they replace, never counting twice, corrections and voids, a locked month's true-up, reconciliation per provider and model, a request from approval to invoice |
 | [reference/api.md](reference/api.md), [reference/env.md](reference/env.md) | Every route and every environment variable |
 | [ui.md](ui.md) | The console's screens and the rules they follow; `../ui/prototype.html` is the clickable version |
 | [research.md](research.md) | Wave 0's study on one page: what OpenCost and FOCUS 1.4 teach, what the sources give today, the decisions (D1–D15) and what is still open |
 | [research/opencost.md](research/opencost.md) | OpenCost v1.121.3 read by file and line: the cost model, max(request, usage), idle, shared cost, custom pricing, the API, what Landledger takes, changes or rejects |
 | [research/focus.md](research/focus.md) | FOCUS 1.4: the 45 columns kept and the ones dropped, estimated against invoiced, AI tokens as rows, corrections, the `x_` columns, periods |
-| [../specs/](../specs/) | Feature specs (spec, plan, tasks): [001 money and records](../specs/001-money-and-records/spec.md), [002 ingest and pricing](../specs/002-ingest/spec.md), [003 allocation](../specs/003-allocation/spec.md), [004 approvals](../specs/004-approvals/spec.md) |
+| [../specs/](../specs/) | Feature specs (spec, plan, tasks): [001 money and records](../specs/001-money-and-records/spec.md), [002 ingest and pricing](../specs/002-ingest/spec.md), [003 allocation](../specs/003-allocation/spec.md), [004 approvals](../specs/004-approvals/spec.md), [005 invoices](../specs/005-invoices/spec.md), [006 forecasts](../specs/006-forecasts/spec.md), [007 anomalies](../specs/007-anomalies/spec.md), [008 agents](../specs/008-agents/spec.md), [009 contracts](../specs/009-contracts/spec.md), [010 tool or seat](../specs/010-tool-or-seat/spec.md), [011 access review](../specs/011-access-review/spec.md) |
 | [../study/README.md](../study/README.md) | The study's outputs: OpenCost's source graphs (Craft Anything) and the read-only probe of Clickland's metrics, and how to re-create them |
 | [history.md](history.md) | Every change, in order |
 

@@ -395,11 +395,14 @@ export class Spend {
         WHERE a.month = (r.billing_period_start AT TIME ZONE 'UTC')::date AND a.record_id = r.record_id
         ORDER BY g.number DESC LIMIT 1) a ON TRUE
       WHERE ${where}
-        -- An estimate an invoice line replaces is never added to it (invoice_estimate_links, migration 0006).
+        -- An estimate an invoice line replaces is never added to it (invoice_estimate_links, migrations 0006 and
+        -- 0012): left out while a live invoiced entry exists for the key of a record it is linked to, so a re-entered
+        -- invoice keeps it replaced and a voided one gives it back.
         AND NOT (r.basis = 'estimated' AND EXISTS (
           SELECT 1 FROM invoice_estimate_links l JOIN cost_record_keys k ON k.record_id = l.invoiced_record_id
+          JOIN cost_record_keys y ON y.source_key = k.source_key AND y.basis = 'invoiced' AND NOT y.is_reversal
           WHERE l.estimated_source_key = r.source_key
-            AND NOT EXISTS (SELECT 1 FROM cost_record_keys x WHERE x.correction_of_id = k.record_id)))`;
+            AND NOT EXISTS (SELECT 1 FROM cost_record_keys x WHERE x.correction_of_id = y.record_id)))`;
     // Provisional rows are booked in the month they are charged in, so both selections read them by charge day.
     const prov = provisional
       ? await s<Row[]>`

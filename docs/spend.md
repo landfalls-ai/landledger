@@ -14,8 +14,9 @@ Clickland. Code: `apps/api/src/spend.ts` (reads), `budgets.ts`, `export.ts`, `mc
   `costCenter:CORRECTIONS`) shows whose it is. A `from`/`to` range instead selects by charge day (`basis: charge`):
   the usage of those days as corrected, wherever it was booked. Results say which (`basis: billing | charge`).
 - **Month to date**: ledger records booked in the month (the newest allocation generation) plus provisional rows.
-  Every figure is labelled _estimated_ (usage × the rate card) or _invoiced_; wave 1 has estimates only, and an
-  estimate an invoice line replaces is never added to it ([money.md](money.md#estimated-and-invoiced)).
+  Every figure is labelled _estimated_ (usage × the rate card) or _invoiced_, and a total that mixes them says how
+  much is invoiced ("71% invoiced"); an estimate an invoice line replaces is never added to it
+  ([money.md](money.md#estimated-and-invoiced), [invoices.md](invoices.md)).
 - **Forecast**: month to date plus a run rate for the hours left. The run rate is per source: Σ cost ÷ Σ observed hours
   over the last 7 days (today included; observed hours come from each day's newest run: the window Clickland's samples
   covered, Landflow's whole day), summed across sources, so a partial day weighs by its hours. With fewer than **3 full

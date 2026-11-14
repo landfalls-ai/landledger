@@ -1,0 +1,7 @@
+provider,invoice_number,period,model,sku,quantity,unit,amount,currency,charge_category,description
+Anthropic,DEV-ANT-2026-11-0042,2026-11,claude-sonnet-4-5,input-tokens,4200000,Tokens,12.600000,USD,Usage,Claude Sonnet 4.5 input tokens
+Anthropic,DEV-ANT-2026-11-0042,2026-11,claude-sonnet-4-5,output-tokens,610000,Tokens,9.150000,USD,Usage,Claude Sonnet 4.5 output tokens
+Anthropic,DEV-ANT-2026-11-0042,2026-11,claude-sonnet-4-5,cache-read-tokens,2500000,Tokens,0.750000,USD,Usage,Claude Sonnet 4.5 cache reads
+Anthropic,DEV-ANT-2026-11-0042,2026-11,claude-haiku-4-5,input-tokens,1800000,Tokens,1.800000,USD,Usage,Claude Haiku 4.5 input tokens
+Anthropic,DEV-ANT-2026-11-0042,2026-11,claude-haiku-4-5,output-tokens,240000,Tokens,1.200000,USD,Usage,Claude Haiku 4.5 output tokens
+Anthropic,DEV-ANT-2026-11-0042,2026-11,,promotional-credit,,,-2.000000,USD,Credit,Development fixture: a promotional credit

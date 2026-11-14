@@ -40,6 +40,7 @@ import { evidencePackHtml } from './evidence-pack.js';
 import { toCsv, toXlsx, type Sheet } from './export.js';
 import { createMcpServer } from './mcp.js';
 import { registerScim } from './scim.js';
+import { registerWave3 } from './wave3-routes.js';
 import { actorOf, identify, type Principal, requireScope, SESSION_COOKIE } from './principal.js';
 import type { Services } from './services.js';
 
@@ -562,5 +563,6 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
   app.get('/api/mcp', noSessions);
   app.delete('/api/mcp', noSessions);
 
+  registerWave3(app, services, need);
   return app;
 }

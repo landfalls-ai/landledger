@@ -1,0 +1,3 @@
+provider,invoice_number,period,model,sku,quantity,unit,amount,currency,charge_category,description
+Ollama,DEV-OLLAMA-2026-11,2026-11,qwen3-coder:30b,local,385485,Tokens,0,USD,Usage,Local model on this machine: no charge
+Ollama,DEV-OLLAMA-2026-11,2026-11,nomic-embed-text,local,405,Tokens,0,USD,Usage,Local model on this machine: no charge

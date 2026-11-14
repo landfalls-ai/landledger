@@ -10,10 +10,11 @@ import { ExplorePage } from './routes/explore';
 import { OverviewPage } from './routes/overview';
 import { ProfilePage } from './routes/profile';
 import { RulesPage } from './routes/rules';
+import { ReconciliationPage } from './routes/reconciliation';
 import { SCREENS } from './routes/screens';
 
 /** Built screens; the rest are placeholders that name their wave. */
-const BUILT = new Set(['/overview', '/explore', '/budgets', '/approvals', '/audit', '/rules']);
+const BUILT = new Set(['/overview', '/explore', '/budgets', '/reconciliation', '/approvals', '/audit', '/rules']);
 
 export const routes: RouteObject[] = [
   {
@@ -23,6 +24,7 @@ export const routes: RouteObject[] = [
       { path: 'overview', element: <OverviewPage /> },
       { path: 'explore', element: <ExplorePage /> },
       { path: 'budgets', element: <BudgetsPage /> },
+      { path: 'reconciliation', element: <ReconciliationPage /> },
       { path: 'approvals', element: <ApprovalsPage /> },
       { path: 'approvals/:id', element: <RequestPage /> },
       // Webhooks (request.step_pending) link to /requests/:id.

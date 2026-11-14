@@ -35,3 +35,10 @@ export const dayLabel = (d: string, opts: Intl.DateTimeFormatOptions = { day: 'n
 
 export const monthLabel = (m: string) =>
   new Date(`${m}-01T00:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+/** Of a total that mixes estimated and invoiced cost, the share invoiced, whole percent ("71% invoiced"). */
+export function invoicedShare(invoiced: string, total: string): number {
+  const t = Decimal.parse(total);
+  if (t.isZero()) return Decimal.parse(invoiced).isZero() ? 0 : 100;
+  return Math.round(Number(Decimal.parse(invoiced).times('100').divide(t, 1, 'halfEven').toString()));
+}

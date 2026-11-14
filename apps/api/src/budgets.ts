@@ -6,6 +6,7 @@
 import { SHARED_POOL } from '@landledger/allocation';
 import type { BudgetImportView } from '@landledger/contracts';
 import { Decimal, Money, REPORTING_CURRENCY } from '@landledger/money';
+import { cells } from './csv.js';
 import type { AuditLog } from './audit.js';
 import { day, type Sql, type Tx } from './db.js';
 import { ApiError } from './errors.js';
@@ -19,29 +20,6 @@ export interface BudgetRow {
 }
 
 const HEADER = ['cost_center', 'month', 'amount', 'currency'];
-
-/** Splits one CSV line (commas, double quotes, `""` inside quotes). */
-function cells(line: string): string[] {
-  const out: string[] = [];
-  let cur = '';
-  let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]!;
-    if (quoted) {
-      if (ch === '"' && line[i + 1] === '"') {
-        cur += '"';
-        i++;
-      } else if (ch === '"') quoted = false;
-      else cur += ch;
-    } else if (ch === '"') quoted = true;
-    else if (ch === ',') {
-      out.push(cur);
-      cur = '';
-    } else cur += ch;
-  }
-  out.push(cur);
-  return out.map((c) => c.trim());
-}
 
 /**
  * Parses and validates a budget CSV: a header `cost_center,month,amount,currency` (any case; `cost center` too), then

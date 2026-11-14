@@ -41,4 +41,5 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_BUSINESS_DAYS` | `mon-fri` | The days that count toward a deadline, each whole in `LANDLEDGER_TZ`: a range `mon-fri` or a list `sun,mon,tue,wed,thu`. This machine: `sun-thu` (a default to confirm, `docs/plan.md`) |
 | `LANDLEDGER_TZ` | `UTC` | The IANA time zone business days are counted in (`Asia/Jerusalem` on this machine) |
 | `LANDLEDGER_HOLIDAYS_FILE` | `deploy/holidays.txt` | Dates that never count toward a deadline: one `YYYY-MM-DD` per line, `#` comments; `none` for no file. The file is empty for now |
+| `LANDLEDGER_RECONCILE_TOLERANCE_PCT` | `2` | Reconciliation's tolerance: a provider × model × month is within it when \|invoiced − estimated\| ≤ this percent of the estimate |
 | `LANDLEDGER_INTEGRATION` | unset | Tests: a comma list of real services to test against (`db`, or `all`) |

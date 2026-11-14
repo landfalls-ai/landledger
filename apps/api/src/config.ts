@@ -63,6 +63,19 @@ export interface Config {
   timeZone: string;
   /** Local dates that never count as business days (LANDLEDGER_HOLIDAYS_FILE, default deploy/holidays.txt). */
   holidays: Set<string>;
+  /** Wave 3 (spec 005): reconciliation tolerance, percent (LANDLEDGER_RECONCILE_TOLERANCE_PCT, default 2). */
+  reconcileTolerancePct?: string;
+  /** Wave 3 (spec 007): the smallest daily jump that is an anomaly, USD (LANDLEDGER_ANOMALY_MIN_USD, default 1). */
+  anomalyMinUsd?: string;
+  /** Wave 3 (spec 007): the dev-only spike path (LANDLEDGER_DEV_ANOMALY=on), never in production. */
+  devAnomaly?: boolean;
+  /**
+   * Wave 3 (specs 007, 008): Clickland's Agent Value (a `read` key) and alert rules (an `alerts:write` key); null until
+   * set (LANDLEDGER_CLICKLAND_VALUE_KEY, LANDLEDGER_CLICKLAND_ALERTS_KEY, LANDLEDGER_CLICKLAND_API_URL).
+   */
+  clicklandApi?: { url: string; valueKey: string | null; alertsKey: string | null } | null;
+  /** Wave 3 (spec 009): days before a contract's notice date its renewal shows (LANDLEDGER_RENEWAL_WINDOW_DAYS, 30). */
+  renewalWindowDays?: number;
 }
 
 /** deploy/holidays.txt in the workspace (src/ and dist/ sit at the same depth). */
@@ -200,6 +213,38 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
         ? null
         : expandHome(env.LANDLEDGER_HOLIDAYS_FILE ?? DEFAULT_HOLIDAYS_FILE),
     ),
+    reconcileTolerancePct: (() => {
+      const v = env.LANDLEDGER_RECONCILE_TOLERANCE_PCT ?? '2';
+      if (!/^\d{1,2}(\.\d{1,2})?$/.test(v))
+        throw new Error('LANDLEDGER_RECONCILE_TOLERANCE_PCT is a percent, 0 to 99.99');
+      return v;
+    })(),
+    anomalyMinUsd: (() => {
+      const v = env.LANDLEDGER_ANOMALY_MIN_USD ?? '1';
+      if (!/^\d+(\.\d{1,6})?$/.test(v)) throw new Error('LANDLEDGER_ANOMALY_MIN_USD is an amount in USD');
+      return v;
+    })(),
+    devAnomaly: (() => {
+      const on = env.LANDLEDGER_DEV_ANOMALY === 'on';
+      if (on && !LOOPBACK.has(host)) throw new Error('LANDLEDGER_DEV_ANOMALY=on is for this machine only');
+      return on;
+    })(),
+    clicklandApi:
+      env.LANDLEDGER_CLICKLAND_VALUE_KEY || env.LANDLEDGER_CLICKLAND_ALERTS_KEY
+        ? {
+            url: (env.LANDLEDGER_CLICKLAND_API_URL ?? env.LANDLEDGER_CLICKLAND_URL ?? 'http://localhost:4710').replace(
+              /\/$/,
+              '',
+            ),
+            valueKey: env.LANDLEDGER_CLICKLAND_VALUE_KEY || null,
+            alertsKey: env.LANDLEDGER_CLICKLAND_ALERTS_KEY || null,
+          }
+        : null,
+    renewalWindowDays: (() => {
+      const n = Number(env.LANDLEDGER_RENEWAL_WINDOW_DAYS ?? '30');
+      if (!Number.isInteger(n) || n < 0 || n > 365) throw new Error('LANDLEDGER_RENEWAL_WINDOW_DAYS is 0 to 365');
+      return n;
+    })(),
     auditAnchorMinutes: (() => {
       const n = Number(env.LANDLEDGER_AUDIT_ANCHOR_MINUTES ?? '60');
       if (!Number.isInteger(n) || n < 0)
