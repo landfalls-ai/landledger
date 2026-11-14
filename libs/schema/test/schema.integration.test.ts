@@ -29,7 +29,12 @@ describe.skipIf(!integrationEnabled('db'))('0001 against Postgres', () => {
   const insert = (...records: CostRecord[]) => sql`INSERT INTO cost_records ${sql(records.map(toRow))}`;
 
   it('applies once, then has nothing to do, and refuses an edited migration', async () => {
-    expect(await migrate(db.url)).toEqual(['0001_core.sql']);
+    expect(await migrate(db.url)).toEqual([
+      '0001_core.sql',
+      '0002_approvals_and_ingest.sql',
+      '0003_allocation.sql',
+      '0004_budgets.sql',
+    ]);
     expect(await migrate(db.url)).toEqual([]);
     const edited = loadMigrations().map((m) => ({ ...m, checksum: 'x' }));
     await expect(migrate(db.url, () => {}, edited)).rejects.toThrow(/changed after it was applied/);

@@ -1,0 +1,28 @@
+{
+  "name": "@landledger/allocation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Allocation for Landledger (spec 003): ordered rules (first match wins) to cost center, team, product, P&L class and the capitalisable flag; the shared pool and unallocated on their own; share rules (weighted per resource, even, fixed) for the spread view. Pure: no database, no clock.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@landledger/money": "workspace:*"
+  },
+  "devDependencies": {
+    "fast-check": "4.10.2",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

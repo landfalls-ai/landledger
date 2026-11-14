@@ -1,0 +1,28 @@
+{
+  "name": "@landledger/pricing",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pricing for Landledger (spec 002): rate card lookup by day, AI calls priced per call (input, cache read, cache write, output, long-context tier), cluster capacity split into allocated rows and idle; exact, on @landledger/money.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@landledger/money": "workspace:*"
+  },
+  "devDependencies": {
+    "fast-check": "4.10.2",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

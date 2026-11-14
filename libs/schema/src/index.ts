@@ -11,15 +11,23 @@ export const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..'
 export const DEFAULT_PG_URL = 'postgres://landledger:landledger-dev@127.0.0.1:25532/landledger';
 
 /**
- * Loads the workspace `.env` (if there is one) into process.env without overriding what is already set, so every
- * process reads the same LANDLEDGER_* values. `.env.example` documents them; the defaults are the local stack.
+ * Loads the env files into process.env without overriding what is already set, so every process reads the same
+ * LANDLEDGER_* values: the starting directory's `.env.local` (an app's untracked keys, e.g. `apps/api/.env.local`),
+ * then the workspace's `.env.local` and `.env`. `.env.example` documents them; the defaults are the local stack.
+ * `.env.local` files are git-ignored: keys to Landflow and Clickland live there, never in git.
  */
 export function loadWorkspaceEnv(from: string = process.cwd()): void {
-  let dir = resolve(from);
+  const start = resolve(from);
+  let dir = start;
   for (;;) {
     if (existsSync(join(dir, 'pnpm-workspace.yaml'))) {
-      const file = join(dir, '.env');
-      if (existsSync(file)) process.loadEnvFile(file);
+      const files = [
+        join(start, '.env.local'),
+        join(dir, 'apps', 'api', '.env.local'),
+        join(dir, '.env.local'),
+        join(dir, '.env'),
+      ];
+      for (const file of new Set(files)) if (existsSync(file)) process.loadEnvFile(file);
       return;
     }
     const up = dirname(dir);
