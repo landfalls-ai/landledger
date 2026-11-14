@@ -1,0 +1,4 @@
+# Downloaded tool binaries: re-fetch with scripts/fetch-tools.sh
+craft-anything-cli-*/
+*.zip
+SHA256SUMS.txt

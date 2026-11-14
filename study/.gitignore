@@ -1,0 +1,3 @@
+# Source graphs copy string literals out of upstream (including test fixtures that look like secrets): regenerate with
+# scripts/study-source-graph.sh. The small index next to them (opencost-source-graph.md) is committed.
+/opencost-source-graph/
