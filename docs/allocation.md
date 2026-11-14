@@ -29,7 +29,9 @@ The spread layer is computed when read, from the stored direct layer; it is not 
 `allocations` holds each record's direct split, in **generations** per month (`allocation_generations`). Records
 ingested later join the month's newest generation (`allocate` runs after every ingest run that entered records). A rule
 set approval or `POST /api/allocation/rebuild/:month` starts a new generation for each **open** month; the database
-refuses a generation for a closing or locked month, and old generations stay. Reads use the newest generation; today's
+refuses a generation for a closing or locked month, and old generations stay. A record entered in a **closing** month
+(a late day) joins that month's newest generation under its rules, so the month locks with every record allocated
+(the lock checks it). Reads use the newest generation; today's
 provisional rows (and any record not yet allocated) are allocated on the fly with the rules in effect.
 
 ## Approval

@@ -3,6 +3,9 @@
  * ledger to it. Idempotent: a run that finds the same figures appends nothing. A changed figure is reversed and
  * re-entered; a figure that vanished is reversed; a locked month's change is booked in the open month as a Correction.
  * Today (and a day whose data may still arrive) goes to `provisional_usage`, replaced wholesale on every run.
+ *
+ * A source that answers with nothing for a day the ledger has entries for is taken as an outage, not as a day with no
+ * usage: the run fails rather than reverse the day, unless forced with a reason (audited `ingest.forced`).
  */
 import type { IngestRun } from '@landledger/contracts';
 import {
@@ -21,6 +24,7 @@ import { Decimal, Money } from '@landledger/money';
 import type { PricedVersion } from '@landledger/pricing';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { canonicalJson } from '../canonical.js';
+import type { AuditLog } from '../audit.js';
 import { day as dayOf, type Sql } from '../db.js';
 import { newId } from '../ids.js';
 import type { Records } from '../ledger.js';
@@ -30,6 +34,23 @@ import type { ClicklandClient, LandflowClient } from './sources.js';
 
 export type IngestSource = 'landflow' | 'clickland';
 export type RunKind = 'hourly' | 'daily' | 'backfill' | 'manual';
+
+/** What a run may do beyond the usual: reverse a day the source answered with nothing for; why it ran. */
+export interface RunOptions {
+  force?: boolean;
+  reason?: string;
+}
+
+/** A complete day whose source answered with nothing while the ledger holds entries for it. */
+export class EmptySourceError extends Error {
+  constructor(source: string, day: string, live: number) {
+    super(
+      `${source} answered with nothing for ${day}, but the ledger has ${live} live entr${live === 1 ? 'y' : 'ies'} for it: ` +
+        'refusing to reverse the whole day (an outage looks the same as a day with no usage). Re-run with force and a reason if the source really has nothing.',
+    );
+    this.name = 'EmptySourceError';
+  }
+}
 
 export interface IngestLog {
   info(data: object, msg: string): void;
@@ -45,6 +66,8 @@ export interface IngestOptions {
   /** The cluster whose node the Docker engine shares (its usage comes out of that node's idle), or null. */
   dockerSharesCluster?: string | null;
   log: IngestLog;
+  /** Where forced runs are recorded. */
+  audit?: AuditLog;
   now?: () => Date;
   /** After a run that entered records: allocation of the months it touched. */
   afterRun?: (run: IngestRun & { provisional: boolean }) => Promise<void>;
@@ -158,14 +181,16 @@ export class Ingest {
     day: string,
     kind: RunKind,
     startedBy: string,
+    options: RunOptions = {},
   ): Promise<IngestRun & { provisional: boolean }> {
     const prev = this.queues.get(source) ?? Promise.resolve();
-    const next = prev.catch(() => undefined).then(() => this.runNow(source, day, kind, startedBy));
+    const next = prev.catch(() => undefined).then(() => this.runNow(source, day, kind, startedBy, options));
     this.queues.set(source, next);
     return next;
   }
 
-  private async runNow(source: IngestSource, day: string, kind: RunKind, startedBy: string) {
+  private async runNow(source: IngestSource, day: string, kind: RunKind, startedBy: string, options: RunOptions) {
+    if (options.force && !options.reason?.trim()) throw new RangeError('A forced run needs a reason');
     const today = this.now().toISOString().slice(0, 10);
     if (day > today) throw new RangeError(`${day} hasn't started yet`);
     const provisional = !this.isComplete(source, day);
@@ -175,7 +200,7 @@ export class Ingest {
     await this.sql`
       INSERT INTO ingest_runs (id, source, kind, day, rate_card_version_id, params, started_by)
       VALUES (${id}, ${source}, ${kind}, ${day}, ${version?.id ?? null},
-              ${this.sql.json({ provisional })}, ${startedBy})`;
+              ${this.sql.json({ provisional, ...(options.force ? { force: true } : {}), ...(options.reason ? { reason: options.reason } : {}) })}, ${startedBy})`;
     const log = this.options.log;
     return tracer.startActiveSpan(`ingest ${source}`, async (span) => {
       span.setAttributes({
@@ -196,7 +221,7 @@ export class Ingest {
         observed = [out.observedFrom, out.observedTo];
         counts = provisional
           ? await this.replaceProvisional(source, day, id, out.built.records)
-          : await this.reconcile(source, day, id, out.built.records);
+          : await this.reconcile(source, day, id, out.built, { ...options, startedBy });
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);
         span.recordException(e as Error);
@@ -312,7 +337,14 @@ export class Ingest {
   }
 
   /** A complete day: the ledger brought to what the day should hold, with entries, reversals and re-entries. */
-  private async reconcile(source: IngestSource, day: string, runId: string, records: CostRecord[]) {
+  private async reconcile(
+    source: IngestSource,
+    day: string,
+    runId: string,
+    built: BuiltDay,
+    options: RunOptions & { startedBy: string },
+  ) {
+    const records = built.records;
     return this.sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext(${`ingest:${source}:${day}`}))`;
       const live = await tx<CostRow[]>`
@@ -330,6 +362,20 @@ export class Ingest {
         openMonth: thisMonth > lastLocked ? thisMonth : nextOpen(lastLocked),
       };
       const ctx = { ingestRunId: runId };
+      if (built.read === 0 && records.length === 0 && live.length > 0) {
+        if (!options.force) throw new EmptySourceError(source, day, live.length);
+        await this.options.audit?.append(
+          {
+            actor: options.startedBy,
+            actorKind: options.startedBy === 'schedule' || options.startedBy === 'cli' ? 'system' : 'person',
+            action: 'ingest.forced',
+            subjectType: 'ingest_run',
+            subjectId: runId,
+            data: { source, day, reversed: live.length, reason: options.reason ?? '' },
+          },
+          tx,
+        );
+      }
       const byKey = new Map(
         live.map((r) => {
           const rec = fromRow(r);
@@ -372,6 +418,25 @@ export class Ingest {
       await tx`DELETE FROM provisional_usage WHERE source = ${source} AND charge_period_start = ${`${day}T00:00:00Z`}::timestamptz`;
       return { newCount, correctedCount, unchangedCount };
     }) as Promise<{ newCount: number; correctedCount: number; unchangedCount: number }>;
+  }
+
+  /**
+   * After a rate card version is approved: every day from its effective date to today is read again, for every source
+   * with data then, so the new prices reach each day (corrections in open months). The approval already refused an
+   * effective date in a closing or locked month, so every day here is in an open month.
+   */
+  async reprice(effectiveFrom: string, startedBy: string, reason: string) {
+    const today = this.now().toISOString().slice(0, 10);
+    const runs = [];
+    for (const source of this.sources()) {
+      const [first] = await this.sql<{ day: Date | null }[]>`
+        SELECT min(day) AS day FROM ingest_runs WHERE source = ${source} AND outcome = 'succeeded'`;
+      if (!first?.day) continue;
+      const from = dayOf(first.day) > effectiveFrom ? dayOf(first.day) : effectiveFrom;
+      for (const d of Ingest.days(from, today))
+        runs.push(await this.run(source, d, d === today ? 'manual' : 'backfill', startedBy, { reason }));
+    }
+    return runs;
   }
 
   /** The days a source has data for, earliest first, from `from` to today. */

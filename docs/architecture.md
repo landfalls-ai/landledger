@@ -57,7 +57,7 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 | `reservations` | budget reserved by an approved request until real cost arrives | reserved → consumed or released |
 | `contracts` | vendor, product, cost center, value, seats, term, renewal and notice dates | versioned |
 | `invoices`, `reconciliations` | provider invoices and how estimated usage matched them | append only |
-| `periods` | each month: open, closing, locked; who closed and locked it | one step forward at a time, by a person; locked is final and refuses inserts |
+| `periods` | each month: open, closing, locked; who closed and locked it | one step forward at a time, by a person; locked is final and refuses inserts; a month locks only when whole (ended, every source-day complete, no provisional rows, every record allocated) unless a controller overrides with a reason |
 | `audit_log` | every change above, each entry carrying the hash of the one before | append only |
 | `outbox` | webhook deliveries (Standard Webhooks, the Clickland pattern) | retried, then kept |
 

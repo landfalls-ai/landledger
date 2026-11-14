@@ -32,8 +32,9 @@ the longest prefix (dated model ids find their family), as Landflow does.
    database holds the same rules (migration 0005): the proposer is a user (`proposed_by` references `users`; the seed
    is the system user `seed`), the approver must be a user of kind `person`, not the proposer and not a line's author;
    and it refuses changes to an approved version's lines.
-3. Ingest prices each day with the version in effect that day. A new version changes figures only for days ingested
-   or re-ingested after it, through corrections in open months.
+3. Ingest prices each day with the version in effect that day. On approval every day from the new version's
+   effective date to today is re-ingested, so its prices reach each day through corrections in open months (an
+   effective date in a closing or locked month is refused).
 
 ## Live on this machine
 

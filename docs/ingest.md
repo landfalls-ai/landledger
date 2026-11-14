@@ -24,6 +24,12 @@ Keys: `LANDLEDGER_LANDFLOW_URL`/`_KEY` and `LANDLEDGER_CLICKLAND_URL`/`_KEY`, re
    fingerprint with the live entry; new keys are appended, equal ones skipped, changed ones corrected (reversal and
    re-entry, [money.md](money.md)), and keys that vanished are reversed. An entry for a locked month is booked in the
    open month as `ChargeClass = Correction`. The day's provisional rows are then deleted.
+
+   **An empty answer is not a day with no usage.** When the source returns nothing for a complete day the ledger has
+   live entries for, the run fails (`… answered with nothing for <day>, but the ledger has N live entries`) and the
+   day stands: an outage, an expired key or a wiped source look the same as a quiet day. A person who knows the day
+   really is empty re-runs it with `force` and a reason (`POST /api/ingest/run { force: true, reason }`, or
+   `ingest run --force --reason "…"`); the reversal is audited as `ingest.forced` and the run's params keep the reason.
 4. The run is finished with counts (read, new, corrected, unchanged), warnings, the error if any, and the window the
    source covered; an `ingest` log line goes to Clickland with the trace id. Records entered are allocated at once
    ([allocation.md](allocation.md)).
@@ -35,10 +41,14 @@ ago for Clickland. Running a day twice writes nothing the second time.
 
 The API runs `tick` every hour (the first 20 s after start; `LANDLEDGER_INGEST=off` stops it): today's provisional
 figures for each source, and each of the last 7 days that no run entered into the ledger in the last 20 hours (late
-data and corrections are picked up about once a day). By hand:
+data and corrections are picked up about once a day). Approving a rate card version re-reads **every** day from its
+effective date to today for each source with data then (`Ingest.reprice`, kind `backfill`, the reason in the run's
+params), so a retroactive price reaches days older than the hourly job's seven; the approval answers with
+`repriced: { runs, failed, corrected, added }`. An effective date in a closing or locked month is refused, so every day
+repriced is in an open month. By hand:
 
 ```bash
-pnpm --filter @landledger/api ingest run [--source landflow|clickland] [--day YYYY-MM-DD]
+pnpm --filter @landledger/api ingest run [--source landflow|clickland] [--day YYYY-MM-DD] [--force --reason "…"]
 pnpm --filter @landledger/api ingest backfill --source landflow --from 2026-10-31
 pnpm --filter @landledger/api ingest tick
 pnpm --filter @landledger/api ingest allocate [--month 2026-11]

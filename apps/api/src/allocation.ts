@@ -420,12 +420,16 @@ export class Allocation {
    */
   async allocatePending(month: string, by: Actor = SYSTEM_INGEST) {
     const [p] = await this.sql<{ status: string }[]>`SELECT status FROM periods WHERE month = ${`${month}-01`}`;
-    if (p && p.status !== 'open') return null;
+    if (p?.status === 'locked') return null;
+    const closing = p?.status === 'closing';
     const book = await this.book();
     const [gen] = await this.sql<{ id: string; rule_set_version_ids: string[] }[]>`
       SELECT id, rule_set_version_ids FROM allocation_generations WHERE month = ${`${month}-01`} ORDER BY number DESC LIMIT 1`;
     const current = book.versions.map((v) => v.id).join(',');
-    if (!gen || gen.rule_set_version_ids.join(',') !== current)
+    // A closing month takes no new generation, but a record entered in it (a late day) joins its newest one, so the
+    // month locks with every record allocated. With no generation at all it waits, and the lock check names it.
+    if (closing && !gen) return null;
+    if (!closing && (!gen || gen.rule_set_version_ids.join(',') !== current))
       return this.rebuild(month, gen ? 'rules changed' : 'first allocation', by);
     return this.sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext(${`allocation:${month}`}))`;

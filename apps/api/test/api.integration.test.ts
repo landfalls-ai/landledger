@@ -364,7 +364,16 @@ describe.skipIf(!integrationEnabled('db'))('the API against Postgres', () => {
       closingBy: expect.stringMatching(/^usr_/),
     });
     expect((await post('/api/periods/2026-10/lock', { headers: asKey })).statusCode).toBe(403); // a key never locks
-    const locked = await post('/api/periods/2026-10/lock', { cookies: yoav });
+    // The record was appended by hand, never allocated: the month isn't whole, so the lock needs an override.
+    const notWhole = await post('/api/periods/2026-10/lock', { cookies: yoav });
+    expect(notWhole.statusCode).toBe(409);
+    expect(notWhole.json().error.details.problems).toEqual(['1 record(s) booked in 2026-10 have no stored allocation']);
+    const locked = await app.inject({
+      method: 'POST',
+      url: '/api/periods/2026-10/lock',
+      cookies: yoav,
+      payload: { override: { reason: 'A test record, appended without allocation' } },
+    });
     expect(locked.json()).toMatchObject({ status: 'locked', lockedBy: expect.stringMatching(/^usr_/) });
     expect((await post('/api/periods/2026-10/lock', { cookies: yoav })).json().error.message).toMatch(/never reopens/);
     expect((await post('/api/periods/2026-10/close', { cookies: yoav })).statusCode).toBe(409);

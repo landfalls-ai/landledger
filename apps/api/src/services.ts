@@ -66,6 +66,7 @@ export function createServices(
     },
     dockerSharesCluster: config.dockerSharesCluster,
     log,
+    audit,
     now,
     // Records entered: allocate the months they landed in (their own, or the open month for a correction).
     afterRun: async (run) => {
@@ -82,7 +83,7 @@ export function createServices(
     sessions: new Sessions(sql, config, audit, oidc),
     dimensions: new Dimensions(sql),
     webhooks,
-    periods: new Periods(sql, audit, webhooks),
+    periods: new Periods(sql, audit, webhooks, now),
     records,
     rateCards,
     allocation,

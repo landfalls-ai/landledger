@@ -110,7 +110,12 @@ describe.skipIf(!integrationEnabled('db'))('wave 1 against Postgres', () => {
     // The workload's CPU and the idle CPU both changed.
     expect(run).toMatchObject({ newCount: 0, correctedCount: 2, unchangedCount: 3 });
     sources.state.events = [];
-    const lf = await services.ingest.run('landflow', '2026-11-13', 'manual', 'test');
+    // Nothing from the source for a day with entries: refused unless forced with a reason.
+    expect((await services.ingest.run('landflow', '2026-11-13', 'manual', 'test')).outcome).toBe('failed');
+    const lf = await services.ingest.run('landflow', '2026-11-13', 'manual', 'test', {
+      force: true,
+      reason: 'The call was removed in Landflow',
+    });
     expect(lf.correctedCount).toBe(3);
     const [{ net }] =
       await sql`SELECT coalesce(sum(effective_cost_micros), 0)::text AS net FROM cost_records WHERE source = 'landflow'`;

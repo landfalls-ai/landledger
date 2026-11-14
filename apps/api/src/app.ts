@@ -7,6 +7,7 @@ import {
   DIMENSION_LABEL,
   IngestRunInput,
   IngestRunsQuery,
+  LockInput,
   Month,
   MonthQuery,
   RecordsQuery,
@@ -40,6 +41,14 @@ export interface AppOptions {
 }
 
 /** Validates a body, query or params object; the first problem becomes a 400 that names its path. */
+/** What a re-pricing did, in short. */
+export const repricedOf = (runs: readonly { outcome: string; correctedCount: number; newCount: number }[]) => ({
+  runs: runs.length,
+  failed: runs.filter((r) => r.outcome === 'failed').length,
+  corrected: runs.reduce((n, r) => n + r.correctedCount, 0),
+  added: runs.reduce((n, r) => n + r.newCount, 0),
+});
+
 export function parse<S extends z.ZodType>(schema: S, value: unknown): z.output<S> {
   const result = schema.safeParse(value ?? {});
   if (result.success) return result.data;
@@ -138,7 +147,8 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
   });
   app.post('/api/periods/:month/lock', async (r) => {
     need(r, 'admin');
-    return periods.advance(parse(MonthParam, r.params).month, 'locked', r.principal);
+    const { override } = parse(LockInput, r.body ?? {});
+    return periods.advance(parse(MonthParam, r.params).month, 'locked', r.principal, override);
   });
   app.get('/api/records', async (r) => (need(r, 'read'), records.list(parse(RecordsQuery, r.query))));
 
@@ -197,7 +207,10 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
       throw new ApiError('unavailable', 'No source is configured (LANDLEDGER_LANDFLOW_* or LANDLEDGER_CLICKLAND_*)');
     const by = r.principal.email ?? r.principal.name;
     const runs = [];
-    for (const s of sources) runs.push(await ingest.run(s, day, 'manual', by));
+    if (input.force && r.principal.kind !== 'person' && r.principal.kind !== 'dev')
+      throw new ApiError('forbidden', 'A person forces a run (it may reverse a whole day); an API key never does');
+    for (const s of sources)
+      runs.push(await ingest.run(s, day, 'manual', by, { force: input.force, reason: input.reason }));
     return reply.status(201).send({ runs });
   });
 
@@ -205,7 +218,14 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
   const VersionId = z.object({ id: z.string().min(1).max(100) });
   app.post('/api/rate-cards/versions/:id/approve', async (r) => {
     need(r, 'admin');
-    return rateCards.approve(parse(VersionId, r.params).id, r.principal);
+    const approved = await rateCards.approve(parse(VersionId, r.params).id, r.principal);
+    // The new prices reach every day from the effective date, not only the days the hourly job re-reads.
+    const runs = await ingest.reprice(
+      approved.effectiveFrom,
+      actorOf(r.principal).actor,
+      `rate card v${approved.version} approved`,
+    );
+    return { ...approved, repriced: repricedOf(runs) };
   });
   app.post('/api/rate-cards/versions/:id/ai-lines', async (r, reply) => {
     need(r, 'admin');

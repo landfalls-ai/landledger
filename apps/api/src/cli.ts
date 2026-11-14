@@ -2,6 +2,7 @@
  * `pnpm --filter @landledger/api ingest <command>`: ingest and its setup from the command line (spec 002).
  *
  *   run [--source landflow|clickland|all] [--day YYYY-MM-DD]   one run per source (default: all, today)
+ *       [--force --reason "…"]                                  reverse a day the source now answers with nothing for
  *   backfill --source landflow|clickland --from YYYY-MM-DD      every day from --from to today
  *   tick                                                        what the hourly job does
  *   allocate [--month YYYY-MM]                                  allocate records entered since the last generation
@@ -25,8 +26,9 @@ const { positionals, values } = parseArgs({
     source: { type: 'string', default: 'all' },
     day: { type: 'string' },
     from: { type: 'string' },
-    version: { type: 'string', default: 'rcv_internal_1' },
     month: { type: 'string' },
+    force: { type: 'boolean', default: false },
+    reason: { type: 'string' },
   },
 });
 const config = configFromEnv();
@@ -54,7 +56,8 @@ const show = (r: {
 try {
   switch (positionals[0]) {
     case 'run':
-      for (const s of sources()) show(await ingest.run(s, values.day ?? today, 'manual', 'cli'));
+      for (const s of sources())
+        show(await ingest.run(s, values.day ?? today, 'manual', 'cli', { force: values.force, reason: values.reason }));
       break;
     case 'backfill': {
       if (!values.from) throw new Error('backfill needs --from YYYY-MM-DD');

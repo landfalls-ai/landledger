@@ -38,11 +38,28 @@ export const IngestRunsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(50),
 });
 
-export const IngestRunInput = z.object({
-  source: z.enum(['landflow', 'clickland', 'all']).default('all'),
-  /** A UTC day; today goes to the provisional table. Default: today. */
-  day: Day.optional(),
-});
+export const IngestRunInput = z
+  .object({
+    source: z.enum(['landflow', 'clickland', 'all']).default('all'),
+    /** A UTC day; today goes to the provisional table. Default: today. */
+    day: Day.optional(),
+    /**
+     * When the source answers with nothing for a day the ledger has entries for, the run is refused rather than reverse
+     * the day; `force` with a reason reverses it (audited `ingest.forced`).
+     */
+    force: z.boolean().default(false),
+    reason: z.string().trim().min(10).max(500).optional(),
+  })
+  .refine((v) => !v.force || v.reason, {
+    message: 'A forced run needs a reason (10 characters or more)',
+    path: ['reason'],
+  });
+
+/** Locking a month that fails its checks: a controller, with a reason; audited. */
+export const LockInput = z
+  .object({ override: z.object({ reason: z.string().trim().min(10).max(1000) }).optional() })
+  .default({});
+export type LockInput = z.infer<typeof LockInput>;
 export type IngestRunInput = z.infer<typeof IngestRunInput>;
 
 // Spend ---------------------------------------------------------------------------------------------------------------

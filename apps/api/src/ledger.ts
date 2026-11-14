@@ -26,26 +26,90 @@ const periodOf = (r: PeriodRow): Period => ({
   lockedAt: r.locked_at?.toISOString() ?? null,
 });
 
-const currentMonth = () => new Date().toISOString().slice(0, 7);
+const nextMonth = (month: string) => {
+  const [y, m] = month.split('-').map(Number) as [number, number];
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+};
 
 /**
  * The months of the ledger (spec 001): open → closing → locked, one step at a time, by a person signed in with
  * Landbright; never by an API key, and never back. The database enforces the same (periods_forward_only).
+ *
+ * A month locks only when it is whole: it has ended, every source has a complete (non-provisional) run for every day
+ * of the month since its first data, no provisional rows are left, and every record has a stored allocation. A
+ * controller can lock anyway with a reason; the override and the problems it overrode are audited.
  */
 export class Periods {
   constructor(
     private readonly sql: Sql,
     private readonly audit: AuditLog,
     private readonly webhooks: Webhooks,
+    private readonly now: () => Date = () => new Date(),
   ) {}
+
+  /** Why `month` isn't ready to lock; empty when it is. */
+  async lockProblems(month: string, tx: Tx = this.sql): Promise<string[]> {
+    const problems: string[] = [];
+    const first = `${month}-01`;
+    const next = `${nextMonth(month)}-01`;
+    if (this.now().getTime() < Date.parse(`${next}T00:00:00Z`))
+      problems.push(`${month} hasn't ended yet (it ends ${next} 00:00 UTC)`);
+    const lastDay = day(new Date(Date.parse(`${next}T00:00:00Z`) - 86_400_000));
+    const sources = await tx<{ source: string; first: Date }[]>`
+      SELECT source, min(day) AS first FROM ingest_runs WHERE outcome = 'succeeded' AND source <> 'manual'
+      GROUP BY source ORDER BY source`;
+    for (const s of sources) {
+      const from = day(s.first) > first ? day(s.first) : first;
+      if (from > lastDay) continue;
+      const done = new Set(
+        (
+          await tx<{ day: Date }[]>`
+            SELECT DISTINCT day FROM ingest_runs
+            WHERE source = ${s.source} AND outcome = 'succeeded' AND day BETWEEN ${from} AND ${lastDay}
+              AND NOT coalesce((params->>'provisional')::boolean, false)`
+        ).map((r) => day(r.day)),
+      );
+      const missing: string[] = [];
+      for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${lastDay}T00:00:00Z`); t += 86_400_000) {
+        const d = new Date(t).toISOString().slice(0, 10);
+        if (!done.has(d)) missing.push(d);
+      }
+      if (missing.length)
+        problems.push(
+          `${s.source} has no complete run for ${missing.length} day(s) of ${month}: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ', …' : ''}`,
+        );
+    }
+    const provisional = await tx<{ source: string; n: number }[]>`
+      SELECT source, count(*)::int AS n FROM provisional_usage
+      WHERE charge_period_start >= ${`${first}T00:00:00Z`}::timestamptz AND charge_period_start < ${`${next}T00:00:00Z`}::timestamptz
+      GROUP BY source ORDER BY source`;
+    for (const p of provisional)
+      problems.push(`${p.n} provisional row(s) from ${p.source} are still in ${month}: its last days aren't complete`);
+    const [{ n }] = (await tx`
+      SELECT count(*)::int AS n FROM cost_records r
+      WHERE r.billing_period_start = ${`${first}T00:00:00Z`}::timestamptz
+        AND NOT EXISTS (
+          SELECT 1 FROM allocations a
+          WHERE a.month = ${first} AND a.record_id = r.record_id
+            AND a.generation_id = (SELECT id FROM allocation_generations g WHERE g.month = ${first} ORDER BY number DESC LIMIT 1))`) as unknown as [
+      { n: number },
+    ];
+    if (n) problems.push(`${n} record(s) booked in ${month} have no stored allocation`);
+    return problems;
+  }
 
   async list(): Promise<Period[]> {
     const rows = await this.sql<PeriodRow[]>`SELECT * FROM periods ORDER BY month DESC`;
     return rows.map(periodOf);
   }
 
-  /** Moves `month` to `closing` (from open) or `locked` (from closing). */
-  async advance(month: string, to: 'closing' | 'locked', by: Principal): Promise<Period> {
+  /** Moves `month` to `closing` (from open) or `locked` (from closing; see `lockProblems`, and the override). */
+  async advance(
+    month: string,
+    to: 'closing' | 'locked',
+    by: Principal,
+    override?: { reason: string },
+  ): Promise<Period> {
     if (by.kind !== 'person')
       throw new ApiError(
         'forbidden',
@@ -53,7 +117,9 @@ export class Periods {
       );
     if (!by.roles.some((r) => r === 'controller' || r === 'cfo'))
       throw new ApiError('forbidden', 'Closing and locking a month is for the controller or the CFO');
-    if (month > currentMonth()) throw new ApiError('bad_request', `${month} hasn't started yet`);
+    if (month > this.now().toISOString().slice(0, 7)) throw new ApiError('bad_request', `${month} hasn't started yet`);
+    if (override && (to !== 'locked' || !by.roles.includes('controller')))
+      throw new ApiError('forbidden', 'Only a controller overrides the checks, and only to lock a month');
     const from = to === 'closing' ? 'open' : 'closing';
     return this.sql.begin(async (tx) => {
       const first = monthStart(month).slice(0, 10);
@@ -72,6 +138,13 @@ export class Periods {
         if (earlier)
           throw new ApiError('conflict', `Lock ${day(earlier.month).slice(0, 7)} first: months lock in order`);
       }
+      const problems = to === 'locked' ? await this.lockProblems(month, tx) : [];
+      if (problems.length && !override)
+        throw new ApiError(
+          'conflict',
+          `${month} isn't ready to lock: ${problems.join('; ')}. A controller can lock it anyway with a reason (audited).`,
+          { problems },
+        );
       const [updated] =
         to === 'closing'
           ? await tx<PeriodRow[]>`
@@ -82,7 +155,19 @@ export class Periods {
               WHERE month = ${first} RETURNING *`;
       const period = periodOf(updated!);
       await this.audit.append(
-        { ...actorOf(by), action: `period.${to}`, subjectType: 'period', subjectId: month, data: { from, to } },
+        {
+          ...actorOf(by),
+          action: `period.${to}`,
+          subjectType: 'period',
+          subjectId: month,
+          data: {
+            from,
+            to,
+            ...(to === 'locked'
+              ? { checks: problems.length ? 'overridden' : 'passed', ...(override ? { problems, override } : {}) }
+              : {}),
+          },
+        },
         tx,
       );
       if (to === 'closing') await this.webhooks.enqueue(tx, 'period.closing', { month });
