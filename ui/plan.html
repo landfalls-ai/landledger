@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Landledger Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* The land family's tokens (@land/tokens), verbatim: monochrome, brick red, forest green, amber; light and dark. */
+:root {
+  --bg: #ffffff;
+  --sf: #ffffff;
+  --sf2: #fafafa;
+  --wl: #fafafa;
+  --hair: rgba(0, 0, 0, 0.08);
+  --bd: #e4e4e4;
+  --t1: #141414;
+  --t2: #5a5a5a;
+  --t3: #737373;
+  --ac: #141414;
+  --ac2: #141414;
+  --ac2-hover: #333333;
+  --on-ac: #ffffff;
+  --acdim: rgba(0, 0, 0, 0.05);
+  --acbd: rgba(0, 0, 0, 0.16);
+  --rd: #c0271e;
+  --rddim: rgba(192, 39, 30, 0.07);
+  --rdbd: rgba(192, 39, 30, 0.26);
+  --warn: #8a5700;
+  --warndim: rgba(245, 163, 0, 0.13);
+  --warnbd: rgba(138, 87, 0, 0.32);
+  --gn: #2e7d46;
+  --gndim: rgba(46, 125, 70, 0.09);
+  --gnbd: rgba(46, 125, 70, 0.28);
+  --nudim: rgba(0, 0, 0, 0.05);
+  --overlay: rgba(20, 20, 20, 0.45);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --canvas-dot: rgba(0, 0, 0, 0.13);
+  --shadow-pop: 0 24px 48px rgba(0, 0, 0, 0.16);
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-7: #4a3aa7;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0d0d0d;
+    --sf: #161616;
+    --sf2: #111111;
+    --wl: #111111;
+    --hair: rgba(255, 255, 255, 0.09);
+    --bd: rgba(255, 255, 255, 0.16);
+    --t1: #f2f2f2;
+    --t2: #a8a8a8;
+    --t3: #858585;
+    --ac: #fafafa;
+    --ac2: #fafafa;
+    --ac2-hover: #e0e0e0;
+    --on-ac: #0d0d0d;
+    --acdim: rgba(255, 255, 255, 0.08);
+    --acbd: rgba(255, 255, 255, 0.22);
+    --rd: #ff6157;
+    --rddim: rgba(255, 97, 87, 0.12);
+    --rdbd: rgba(255, 97, 87, 0.3);
+    --warn: #f5b84a;
+    --warndim: rgba(245, 184, 74, 0.14);
+    --warnbd: rgba(245, 184, 74, 0.32);
+    --gn: #5bb97e;
+    --gndim: rgba(91, 185, 126, 0.12);
+    --gnbd: rgba(91, 185, 126, 0.3);
+    --nudim: rgba(255, 255, 255, 0.08);
+    --overlay: rgba(0, 0, 0, 0.6);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+    --canvas-dot: rgba(255, 255, 255, 0.11);
+    --shadow-pop: 0 24px 48px rgba(0, 0, 0, 0.5);
+    --viz-1: #3987e5;
+    --viz-2: #d95926;
+    --viz-3: #199e70;
+    --viz-4: #c98500;
+    --viz-5: #d55181;
+    --viz-7: #9085e9;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0d0d0d;
+  --sf: #161616;
+  --sf2: #111111;
+  --wl: #111111;
+  --hair: rgba(255, 255, 255, 0.09);
+  --bd: rgba(255, 255, 255, 0.16);
+  --t1: #f2f2f2;
+  --t2: #a8a8a8;
+  --t3: #858585;
+  --ac: #fafafa;
+  --ac2: #fafafa;
+  --ac2-hover: #e0e0e0;
+  --on-ac: #0d0d0d;
+  --acdim: rgba(255, 255, 255, 0.08);
+  --acbd: rgba(255, 255, 255, 0.22);
+  --rd: #ff6157;
+  --rddim: rgba(255, 97, 87, 0.12);
+  --rdbd: rgba(255, 97, 87, 0.3);
+  --warn: #f5b84a;
+  --warndim: rgba(245, 184, 74, 0.14);
+  --warnbd: rgba(245, 184, 74, 0.32);
+  --gn: #5bb97e;
+  --gndim: rgba(91, 185, 126, 0.12);
+  --gnbd: rgba(91, 185, 126, 0.3);
+  --nudim: rgba(255, 255, 255, 0.08);
+  --overlay: rgba(0, 0, 0, 0.6);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --canvas-dot: rgba(255, 255, 255, 0.11);
+  --shadow-pop: 0 24px 48px rgba(0, 0, 0, 0.5);
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-5: #d55181;
+  --viz-7: #9085e9;
+  color-scheme: dark;
+}
+
+/* Layout: one column, phone first, 760px max; the plan, then the screens, then how it's built and how it meets the family. */
+:root { --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; --mono: "Geist Mono", ui-monospace, Menlo, monospace; }
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--t1); font: 15.5px/1.6 var(--sans); }
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px 72px; display: grid; gap: 32px; }
+h1, h2, h3 { margin: 0; line-height: 1.2; text-wrap: balance; letter-spacing: -0.01em; }
+h1 { font-size: 1.9rem; font-weight: 700; }
+h2 { font-size: 1.35rem; font-weight: 650; }
+h3 { font-size: 1.02rem; font-weight: 600; }
+p { margin: 0; max-width: 65ch; }
+a { color: var(--t1); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; border-radius: 4px; }
+code { font: .86em var(--mono); background: var(--acdim); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+.eyebrow { font: 500 11.5px/1.3 var(--mono); color: var(--t3); letter-spacing: .06em; text-transform: uppercase; }
+.lede { color: var(--t2); font-size: 1.04rem; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.tile { width: 34px; height: 34px; border-radius: 8px; background: var(--ac); color: var(--on-ac); display: grid; place-items: center; font: 700 13px var(--sans); }
+section { display: grid; gap: 14px; }
+.card { background: var(--sf); border: 1px solid var(--bd); border-radius: 12px; padding: 16px; display: grid; gap: 10px; }
+.card.key { border-color: var(--acbd); box-shadow: inset 3px 0 0 var(--ac); }
+ul, ol { margin: 0; padding-left: 1.15rem; display: grid; gap: 6px; }
+li { max-width: 65ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 11.5px/1 var(--mono); padding: 5px 8px; border-radius: 99px; border: 1px solid var(--bd); color: var(--t2); white-space: nowrap; }
+.chip.gn { color: var(--gn); border-color: var(--gnbd); background: var(--gndim); }
+.chip.warn { color: var(--warn); border-color: var(--warnbd); background: var(--warndim); }
+.chip.rd { color: var(--rd); border-color: var(--rdbd); background: var(--rddim); }
+.head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.small { font-size: .9rem; color: var(--t2); }
+.gets { font-size: .92rem; color: var(--t2); border-top: 1px solid var(--hair); padding-top: 8px; }
+.gets b { color: var(--t1); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 16px; border-radius: 10px; background: var(--ac); color: var(--on-ac); text-decoration: none; font-weight: 600; font-size: .95rem; min-height: 44px; }
+.btn:hover { background: var(--ac2-hover); }
+.btn.ghost { background: transparent; color: var(--t1); border: 1px solid var(--bd); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.toc { display: flex; flex-wrap: wrap; gap: 6px; }
+.toc a { font-size: 13px; text-decoration: none; padding: 6px 10px; border: 1px solid var(--bd); border-radius: 99px; background: var(--sf); }
+.shots { display: grid; gap: 12px; }
+.shot { margin: 0; display: grid; gap: 6px; }
+.shot img { width: 100%; height: auto; border: 1px solid var(--bd); border-radius: 12px; display: block; background: var(--sf2); }
+.shot figcaption { font-size: .88rem; color: var(--t2); }
+.shot a { text-decoration: none; }
+.phones { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 640px) { .phones { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+dl.kv { display: grid; grid-template-columns: 104px 1fr; gap: 6px 12px; margin: 0; font-size: .94rem; }
+dl.kv dt { font: 500 11.5px/1.7 var(--mono); color: var(--t3); text-transform: uppercase; letter-spacing: .04em; }
+dl.kv dd { margin: 0; }
+figure.dia { margin: 0; display: grid; gap: 8px; color: var(--t1); }
+figure.dia svg { width: 100%; max-width: 420px; height: auto; justify-self: center; }
+figure.dia figcaption { font-size: .88rem; color: var(--t2); }
+.num { font: 500 11.5px var(--mono); color: var(--t3); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<main>
+
+<header style="display:grid;gap:12px">
+  <div class="brand"><div class="tile">LL</div><div class="eyebrow">Landledger · plan · 14 Nov 2026</div></div>
+  <h1>Landledger: the plan, the console and how it meets the land family</h1>
+  <p class="lede">You chose a dedicated project. Here is how to build it, what the finance team will use, and how it connects to Landflow, Clickland, Landbright, Landfall, Landlens and Datarails.</p>
+  <div class="actions">
+    <a class="btn" href="prototype.html#overview">Open the clickable console</a>
+    <a class="btn ghost" href="prototype.html#approvals">Try an approval</a>
+  </div>
+  <nav class="toc" aria-label="Sections">
+    <a href="#plan">Plan</a><a href="#screens">Console</a><a href="#build">How it's built</a><a href="#family">Land family</a><a href="#approve">Approval loop</a><a href="#siblings">Sibling changes</a><a href="#decide">Decisions</a>
+  </nav>
+</header>
+
+<section>
+  <div class="card key">
+    <h3>In short</h3>
+    <ul>
+      <li><b>What it is:</b> the cost subledger for technology and AI spend. Every cost gets an owner and a P&amp;L class, spend above a threshold gets a named approver, and each month comes with its explanation. The accounting system and Datarails stay the books.</li>
+      <li><b>How it's built:</b> Clickland's stack (Fastify, zod, Postgres, React, MCP Apps), its own repo at <code>~/WorkSpace/landledger</code>, local on OrbStack, a fake Datarails.</li>
+      <li><b>How it connects:</b> it pulls usage from Clickland and Landflow, prices it with a finance-owned rate card, and sends cost metrics back to Clickland. Approvals go through Landflow, with people from Landbright. Month-end goes to Datarails.</li>
+      <li><b>First value:</b> wave 1 shows last month's AI and cluster cost per team against budget, with an Excel export.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="plan">
+  <h2>The plan</h2>
+  <div class="card">
+    <h3>Seven principles</h3>
+    <ol>
+      <li><b>Agents request; people decide.</b> No key, token or tool lets an agent approve.</li>
+      <li><b>Every figure says estimated or invoiced.</b> Notional cluster cost never goes to the books as actuals.</li>
+      <li><b>Money is exact:</b> integer minor units with a currency, decimal rates, FX by date.</li>
+      <li><b>Nothing is edited.</b> Records, decisions and the audit log are appended; closed months lock.</li>
+      <li><b>It reads the family; nobody depends on it.</b> If it's down, flows wait and nothing else breaks.</li>
+      <li><b>Local only, fakes first.</b> Real outside services wait for your decision.</li>
+      <li><b>Spec-driven, as Landbright is.</b> Each feature starts as a spec, a plan and tasks; docs move with the code.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <div class="head"><h3>Wave 0 · Study and scaffold</h3><span class="chip">start here</span></div>
+    <p>A Craft Anything study of OpenCost (allocation of idle and shared cost, custom pricing for on-premises clusters) and the FOCUS 1.4 columns. The monorepo, design tokens, compose infrastructure and telemetry to Clickland. The first three specs: money and records, ingest, allocation.</p>
+  </div>
+  <div class="card">
+    <div class="head"><h3>Wave 1 · See the spend</h3><span class="chip gn">first value</span></div>
+    <p>Cost records, rate card v1, allocation with P&amp;L class and capitalisable flag, ingest from Landflow (AI usage) and Clickland (a new usage-totals route), budgets from a CSV, the Overview, Explore and Budgets screens, Excel export, Landbright sign-in, the first MCP tools, cost metrics to Clickland.</p>
+    <p class="gets"><b>Finance gets:</b> last month's AI and cluster cost per team against budget, a daily figure since, a file for Excel.</p>
+  </div>
+  <div class="card">
+    <div class="head"><h3>Wave 2 · Control the spend</h3><span class="chip">approvals</span></div>
+    <p>Requests, policies, decisions and reserved budget; requester ≠ approver; the hash-chained audit log and auditor role; the weekly exceptions report. The Landflow plugin, approvals in Slack and email, approved AI budgets written to Landflow's caps. Flows: infrastructure change and AI budget.</p>
+    <p class="gets"><b>Finance gets:</b> spend above the threshold carries a named approver; spend that skipped one is listed weekly.</p>
+  </div>
+  <div class="card">
+    <div class="head"><h3>Wave 3 · Plan and reconcile</h3><span class="chip">forecast</span></div>
+    <p>Invoice import and reconciliation of AI usage, driver-based forecasts, cost anomalies as Clickland alerts, agent cost and capacity freed, contracts and renewals, the tool-or-seat flow with Landbright access requests.</p>
+    <p class="gets"><b>Finance gets:</b> AI cost tied to invoices, a forecast on calendar day 10, an alert the hour a cost jumps.</p>
+  </div>
+  <div class="card">
+    <div class="head"><h3>Wave 4 · Month-end</h3><span class="chip">close</span></div>
+    <p>Periods and locking, the close checklist, the accrual proposal, variance notes an agent drafts and an analyst accepts, incident cost into Landfall postmortems, the Datarails connector against the fake.</p>
+    <p class="gets"><b>Finance gets:</b> technology lines ready on business day 1 after month-end, for the controller to review and book.</p>
+  </div>
+  <div class="card">
+    <div class="head"><h3>Wave 5 · Real systems</h3><span class="chip rd">your decision</span></div>
+    <p>A real Datarails tenant, SaaS invoices from an inbox, cloud bills if the company runs in a cloud. Each sends data outside this machine.</p>
+  </div>
+  <p class="small">Each wave ends with a live check on this machine, screenshots at phone and desktop width, and a Fable review.</p>
+</section>
+
+<section id="screens">
+  <h2>The console</h2>
+  <p>Built for the finance team, in the land family's look, phone first. The prototype is clickable with sample data: open a request, approve it, switch Explore's grouping, copy a table for Excel.</p>
+  <figure class="shot"><a href="prototype.html#overview"><img src="shots/overview-1440.png" width="1440" height="900" alt="Overview at desktop width: month to date, forecast, budget, the burn chart, what needs you, cost centers with their state"></a><figcaption>Overview on a desktop: the CFO's view of the month.</figcaption></figure>
+  <div class="phones">
+    <figure class="shot"><a href="prototype.html#overview"><img src="shots/overview-390.png" width="780" height="1688" alt="Overview on a phone"></a><figcaption>Overview</figcaption></figure>
+    <figure class="shot"><a href="prototype.html#request"><img src="shots/request-390.png" width="780" height="1688" alt="A request on a phone: amount, reason, evidence"></a><figcaption>A request</figcaption></figure>
+    <figure class="shot"><a href="prototype.html#request"><img src="shots/decide-390.png" width="780" height="1688" alt="The policy path and the decide card on a phone"></a><figcaption>Path and decision</figcaption></figure>
+    <figure class="shot"><a href="prototype.html#explore"><img src="shots/explore-390.png" width="780" height="1688" alt="Explore on a phone: daily cost by cost center"></a><figcaption>Explore</figcaption></figure>
+  </div>
+  <figure class="shot"><a href="prototype.html#agents"><img src="shots/agents-1440.png" width="1440" height="900" alt="Agents at desktop width: cost, outcomes, cost per outcome, capacity freed and a suggestion per agent"></a><figcaption>Agents: what each costs and what it frees.</figcaption></figure>
+  <div class="card">
+    <h3>Nine screens</h3>
+    <dl class="kv">
+      <dt><a href="prototype.html#overview">Overview</a></dt><dd>On plan this month? Month to date, forecast, budget left, the burn chart, cost centers with their state, what needs you.</dd>
+      <dt><a href="prototype.html#explore">Explore</a></dt><dd>Where spend comes from, by cost center, service, agent, model or P&amp;L class, down to the resource and over to Clickland.</dd>
+      <dt><a href="prototype.html#budgets">Budgets</a></dt><dd>Budget, actual, reserved, available and forecast per cost center, with the budget's source.</dd>
+      <dt><a href="prototype.html#approvals">Approvals</a></dt><dd>The inbox, and one request with its evidence, policy path and one-tap decision.</dd>
+      <dt><a href="prototype.html#contracts">Contracts</a></dt><dd>Vendors, seats used against seats paid, renewals inside their notice window first.</dd>
+      <dt><a href="prototype.html#agents">Agents</a></dt><dd>Each agent's cost, outcomes, cost per outcome and capacity freed; keep, scale, review or retire.</dd>
+      <dt><a href="prototype.html#close">Month-end</a></dt><dd>The close as a checklist, from ingest to the locked period.</dd>
+      <dt><a href="prototype.html#rules">Rates, rules</a></dt><dd>Rate card versions, allocation rules, approval policies; each change is itself a request.</dd>
+      <dt><a href="prototype.html#audit">Audit log</a></dt><dd>Every decision and change, hash-chained, with a chain check.</dd>
+    </dl>
+  </div>
+</section>
+
+<section id="build">
+  <h2>How it's built</h2>
+  <div class="card">
+    <h3>Processes</h3>
+    <dl class="kv">
+      <dt>API</dt><dd>Fastify 5 on port 4810: routes, the MCP server, SCIM 2.0, background jobs, signed webhooks.</dd>
+      <dt>Console</dt><dd>React 19, Vite, Tailwind 4, TanStack Query on 4811, with <code>@land/tokens</code>.</dd>
+      <dt>Views</dt><dd>One MCP App, <code>ui://landledger/view</code>: spend, budget and request cards in Claude and Landflow chats.</dd>
+      <dt>Store</dt><dd>Postgres 18 with monthly partitions. Detail below a day is read from Clickland, never copied.</dd>
+      <dt>Fakes</dt><dd>A fake Datarails (MCP and upload) on 4819, for tests and demos.</dd>
+    </dl>
+  </div>
+  <div class="card">
+    <h3>Libraries</h3>
+    <dl class="kv">
+      <dt>money</dt><dd>Integer minor units with an ISO 4217 code, exact decimal rates, FX by date. No floats.</dd>
+      <dt>focus</dt><dd>FOCUS 1.4 columns plus Landledger's <code>x_Basis</code>, <code>x_Source</code>, <code>x_RateCardVersion</code>.</dd>
+      <dt>allocation</dt><dd>Ordered rules: selector → cost center, team, product, P&amp;L class, capitalisable; shared-cost splits.</dd>
+      <dt>contracts</dt><dd>zod schemas for the API, the plugin and the console.</dd>
+    </dl>
+  </div>
+  <div class="card">
+    <h3>What it keeps</h3>
+    <ul>
+      <li><b>Cost records:</b> one row per resource, charge and day, append-only, each estimated or invoiced.</li>
+      <li><b>Allocations</b> to cost center, team, product, P&amp;L class, rebuilt only for open months.</li>
+      <li><b>Rate cards, rules and policies,</b> versioned and effective-dated; each change is an approved request.</li>
+      <li><b>Budgets and forecasts</b> per cost center and month, with their source.</li>
+      <li><b>Requests, decisions and reservations:</b> the approval trail and the budget it reserves.</li>
+      <li><b>Contracts, invoices and reconciliations.</b></li>
+      <li><b>Periods</b> that lock, and a hash-chained <b>audit log</b>.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Jobs</h3>
+    <dl class="kv">
+      <dt>Hourly</dt><dd>Ingest and price usage, allocate, evaluate budgets and forecasts, escalate overdue steps.</dd>
+      <dt>Minute</dt><dd>Send cost metrics to Clickland; deliver webhooks.</dd>
+      <dt>Weekly</dt><dd>The exceptions report: spend above a threshold that no approved request covers.</dd>
+      <dt>On import</dt><dd>Reconcile invoices against estimated usage.</dd>
+    </dl>
+  </div>
+</section>
+
+<section id="family">
+  <h2>How it meets the land family</h2>
+  <figure class="dia">
+    <svg viewBox="0 0 360 380" role="img" aria-label="Landledger in the middle: usage comes in from Clickland and Landflow, people and groups from Landbright, budgets from Datarails; cost metrics go back to Clickland, webhooks to Landflow, month-end actuals to Datarails; Claude and Landlens ask it over MCP.">
+      <defs>
+        <marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="currentColor"/></marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.2">
+        <rect x="125" y="10" width="110" height="40" rx="8"/>
+        <rect x="10" y="110" width="110" height="40" rx="8"/>
+        <rect x="240" y="110" width="110" height="40" rx="8"/>
+        <rect x="10" y="320" width="110" height="40" rx="8"/>
+        <rect x="240" y="320" width="110" height="40" rx="8"/>
+        <rect x="100" y="200" width="160" height="58" rx="10" stroke-width="2.2"/>
+        <line x1="180" y1="50" x2="180" y2="198" marker-end="url(#ah)"/>
+        <line x1="88" y1="150" x2="124" y2="198" marker-end="url(#ah)"/>
+        <line x1="136" y1="200" x2="100" y2="152" marker-end="url(#ah)"/>
+        <line x1="272" y1="150" x2="236" y2="198" marker-end="url(#ah)"/>
+        <line x1="224" y1="200" x2="260" y2="152" marker-end="url(#ah)"/>
+        <line x1="124" y1="258" x2="88" y2="318" marker-end="url(#ah)"/>
+        <line x1="100" y1="320" x2="136" y2="260" marker-end="url(#ah)"/>
+        <line x1="272" y1="320" x2="236" y2="260" marker-end="url(#ah)"/>
+      </g>
+      <g fill="currentColor" font-family="Geist, system-ui, sans-serif" text-anchor="middle">
+        <text x="180" y="35" font-size="13" font-weight="600">Landbright</text>
+        <text x="65" y="135" font-size="13" font-weight="600">Clickland</text>
+        <text x="295" y="135" font-size="13" font-weight="600">Landflow</text>
+        <text x="65" y="345" font-size="13" font-weight="600">Datarails</text>
+        <text x="295" y="345" font-size="12" font-weight="600">Claude, Landlens</text>
+        <text x="180" y="225" font-size="14" font-weight="700">Landledger</text>
+        <text x="180" y="243" font-size="11" opacity=".75">prices · allocates · approves</text>
+      </g>
+      <g fill="currentColor" font-family="Geist, system-ui, sans-serif" font-size="11" opacity=".8">
+        <text x="186" y="84">people, groups</text>
+        <text x="12" y="178">usage in</text>
+        <text x="12" y="192">cost metrics out</text>
+        <text x="354" y="176" text-anchor="end">usage, requests in</text>
+        <text x="354" y="190" text-anchor="end">webhooks out</text>
+        <text x="12" y="284">budgets in</text>
+        <text x="12" y="298">actuals out</text>
+        <text x="348" y="291" text-anchor="end">MCP questions</text>
+      </g>
+    </svg>
+    <figcaption>Landledger sits in the middle and nothing depends on it: it pulls usage, prices it with finance's rate card, and sends only estimated cost back to Clickland.</figcaption>
+  </figure>
+
+  <div class="card">
+    <div class="head"><h3>Clickland · the eyes</h3><span class="chip">new route</span></div>
+    <ul>
+      <li><b>Usage totals in:</b> a new <code>POST /api/usage/rollup</code> gives CPU core-hours, memory GiB-hours, storage and network per day, namespace, workload and service, from the kubelet and Docker metrics it already stores. Clickland never sees a rate.</li>
+      <li><b>Cost back out:</b> Landledger sends <code>landledger.cost.*</code> metrics over OTLP. Clickland's services page shows cost beside latency, and a cost jump is an ordinary Clickland alert.</li>
+      <li><b>Agent Value:</b> outcomes and time saved per agent, reported as capacity freed.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <div class="head"><h3>Landflow · the hands</h3><span class="chip">new plugin</span></div>
+    <ul>
+      <li><b>AI usage in,</b> hourly, from the usage ledger: tokens per model, agent, workflow and person, priced with Landledger's own rate card.</li>
+      <li><b>The <code>landledger</code> plugin:</b> Budget Check, Cost Query, Create Request, Reserve and Period Status, usable as AI tools; a trigger for <code>request.decided</code>, <code>budget.at_risk</code> and <code>period.closing</code>.</li>
+      <li><b>Caps follow budgets:</b> an approved AI budget writes Landflow's caps, so the hard stop and the budget agree.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <div class="head"><h3>Landbright · who</h3><span class="chip gn">no code</span></div>
+    <ul>
+      <li>OIDC sign-in with groups in the <code>roles</code> claim: Finance CFO, Controllers, FP&amp;A, Budget Owners, Auditors, Engineering.</li>
+      <li>Policies name groups, so who approves is a Landbright change with Landbright's own audit. SCIM 2.0 is ready for Landbright's push.</li>
+      <li>Paid seats: an access request raises a Landledger request, and Landbright grants only after approval.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <div class="head"><h3>Landfall · stays agnostic</h3><span class="chip">through Landflow</span></div>
+    <p>Landfall knows nothing of Landledger. When an incident closes, a Landflow flow asks Landledger for the cost of the incident window and writes it to the postmortem through Landfall's generic interface. Landfall's billing app is empty today, so customer revenue comes later from Stripe or Datarails.</p>
+  </div>
+  <div class="card">
+    <div class="head"><h3>Landlens, Claude and Datarails</h3></div>
+    <ul>
+      <li><b>Landlens</b> shows a workload's cost beside its pods, so the engineer changing replicas sees the money.</li>
+      <li><b>Claude</b> asks over MCP: spend by anything, budget status, explain a variance, raise a request. It never decides one.</li>
+      <li><b>Datarails:</b> budgets in over its MCP server, read-only; invoiced actuals and accepted notes out at month-end through its upload API. Built against a fake first.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="approve">
+  <h2>The approval loop</h2>
+  <figure class="dia">
+    <svg viewBox="0 0 360 400" role="img" aria-label="A Landflow flow creates a request in Landledger; Landledger tells Landflow which step is pending; Landflow posts a Slack card to the approver; the approver taps Approve; Landflow relays the decision; Landledger checks the group and that the approver is not the requester, records it, and sends request.decided; the flow continues.">
+      <defs>
+        <marker id="ah2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="currentColor"/></marker>
+      </defs>
+      <g fill="currentColor" font-family="Geist, system-ui, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle">
+        <text x="60" y="22">Landflow</text>
+        <text x="180" y="22">Landledger</text>
+        <text x="300" y="22">Approver</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1" stroke-dasharray="3 4" opacity=".45">
+        <line x1="60" y1="32" x2="60" y2="390"/>
+        <line x1="180" y1="32" x2="180" y2="390"/>
+        <line x1="300" y1="32" x2="300" y2="390"/>
+      </g>
+      <g fill="none" stroke="currentColor" stroke-width="1.3">
+        <line x1="62" y1="64" x2="176" y2="64" marker-end="url(#ah2)"/>
+        <line x1="178" y1="108" x2="64" y2="108" marker-end="url(#ah2)"/>
+        <line x1="62" y1="152" x2="296" y2="152" marker-end="url(#ah2)"/>
+        <line x1="298" y1="196" x2="64" y2="196" marker-end="url(#ah2)"/>
+        <line x1="62" y1="240" x2="176" y2="240" marker-end="url(#ah2)"/>
+        <line x1="178" y1="326" x2="64" y2="326" marker-end="url(#ah2)"/>
+      </g>
+      <rect x="112" y="258" width="136" height="44" rx="6" style="fill: var(--sf)" stroke="currentColor" stroke-width="1.2"/>
+      <rect x="4" y="348" width="112" height="32" rx="6" style="fill: var(--sf)" stroke="currentColor" stroke-width="1.2"/>
+      <g fill="currentColor" font-family="Geist, system-ui, sans-serif" font-size="11" text-anchor="middle">
+        <text x="120" y="58">create request</text>
+        <text x="120" y="102">step pending</text>
+        <text x="180" y="146">Slack card with the evidence</text>
+        <text x="180" y="190">Approve</text>
+        <text x="120" y="234">relay decision</text>
+        <text x="180" y="276">in the step's group?</text>
+        <text x="180" y="292">not the requester?</text>
+        <text x="120" y="320">request.decided</text>
+        <text x="60" y="368">change goes ahead</text>
+      </g>
+    </svg>
+    <figcaption>Landledger owns the request, the policy and the decision; Landflow only carries the conversation. An agent can start this loop but can't close it.</figcaption>
+  </figure>
+  <div class="card small">
+    <p>A person can also decide in Landledger's console or from a signed email link. Each decision stores a hash of the evidence shown, so the record proves what the approver saw.</p>
+  </div>
+</section>
+
+<section id="siblings">
+  <h2>Changes asked of the siblings</h2>
+  <div class="card">
+    <dl class="kv">
+      <dt>Clickland</dt><dd>The usage-totals route and a cost column on Services. Wave 1.</dd>
+      <dt>Landbright</dt><dd>Register the client and create the finance groups, no code. Wave 1. Seat cost before granting, wave 3.</dd>
+      <dt>Landflow</dt><dd>The <code>landledger</code> plugin and three templates: infra change, AI budget, tool or seat. Wave 2.</dd>
+      <dt>Landlens</dt><dd>Cost per workload from Landledger. Wave 3.</dd>
+      <dt>Landfall</dt><dd>None: it stays agnostic.</dd>
+    </dl>
+    <p class="small">Each is asked of the session that owns the repo first. Landledger runs without any of them.</p>
+  </div>
+</section>
+
+<section id="decide">
+  <h2>Your decisions</h2>
+  <div class="card">
+    <ol>
+      <li><b>Start wave 0:</b> the OpenCost and FOCUS study, then the scaffold.</li>
+      <li><b>The name:</b> keep Landledger, or rename it now while it's cheap.</li>
+      <li><b>Approval thresholds:</b> automatic under USD 500 a month, budget owner to 5,000, Finance to 25,000, CFO above.</li>
+      <li><b>The rate card:</b> cloud list prices, a blended internal rate, or a flat rate per team.</li>
+      <li><b>Datarails:</b> is there a tenant, and are budgets kept there or in Landledger?</li>
+      <li><b>The repo:</b> public in landfalls-ai like the other land projects?</li>
+    </ol>
+  </div>
+  <p class="small">The plan, architecture and screen spec are in <code>~/WorkSpace/landledger/docs</code>, and the prototype in <code>ui/prototype.html</code>.</p>
+</section>
+
+</main>
+</body>
+</html>

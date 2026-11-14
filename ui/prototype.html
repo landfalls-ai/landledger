@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Landledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* @land/tokens (copied from ui/land-tokens.css) */
+:root {
+  --bg: #ffffff; --sf: #ffffff; --sf2: #fafafa; --wl: #fafafa;
+  --hair: rgba(0, 0, 0, 0.08); --bd: #e4e4e4;
+  --t1: #141414; --t2: #5a5a5a; --t3: #737373;
+  --ac: #141414; --ac2: #141414; --ac2-hover: #333333; --on-ac: #ffffff;
+  --acdim: rgba(0, 0, 0, 0.05); --acbd: rgba(0, 0, 0, 0.16);
+  --rd: #c0271e; --rddim: rgba(192, 39, 30, 0.07); --rdbd: rgba(192, 39, 30, 0.26);
+  --warn: #8a5700; --warndim: rgba(245, 163, 0, 0.13); --warnbd: rgba(138, 87, 0, 0.32);
+  --gn: #2e7d46; --gndim: rgba(46, 125, 70, 0.09); --gnbd: rgba(46, 125, 70, 0.28);
+  --nudim: rgba(0, 0, 0, 0.05); --overlay: rgba(20, 20, 20, 0.45);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.18); --canvas-dot: rgba(0, 0, 0, 0.13);
+  --shadow-pop: 0 24px 48px rgba(0, 0, 0, 0.16);
+  --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a; --viz-4: #eda100; --viz-5: #e87ba4; --viz-7: #4a3aa7;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0d0d0d; --sf: #161616; --sf2: #111111; --wl: #111111;
+    --hair: rgba(255, 255, 255, 0.09); --bd: rgba(255, 255, 255, 0.16);
+    --t1: #f2f2f2; --t2: #a8a8a8; --t3: #858585;
+    --ac: #fafafa; --ac2: #fafafa; --ac2-hover: #e0e0e0; --on-ac: #0d0d0d;
+    --acdim: rgba(255, 255, 255, 0.08); --acbd: rgba(255, 255, 255, 0.22);
+    --rd: #ff6157; --rddim: rgba(255, 97, 87, 0.12); --rdbd: rgba(255, 97, 87, 0.3);
+    --warn: #f5b84a; --warndim: rgba(245, 184, 74, 0.14); --warnbd: rgba(245, 184, 74, 0.32);
+    --gn: #5bb97e; --gndim: rgba(91, 185, 126, 0.12); --gnbd: rgba(91, 185, 126, 0.3);
+    --nudim: rgba(255, 255, 255, 0.08); --overlay: rgba(0, 0, 0, 0.6);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.2); --canvas-dot: rgba(255, 255, 255, 0.11);
+    --shadow-pop: 0 24px 48px rgba(0, 0, 0, 0.5);
+    --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70; --viz-4: #c98500; --viz-5: #d55181; --viz-7: #9085e9;
+    color-scheme: dark;
+  }
+}
+:root[data-theme='dark'] {
+  --bg: #0d0d0d; --sf: #161616; --sf2: #111111; --wl: #111111;
+  --hair: rgba(255, 255, 255, 0.09); --bd: rgba(255, 255, 255, 0.16);
+  --t1: #f2f2f2; --t2: #a8a8a8; --t3: #858585;
+  --ac: #fafafa; --ac2: #fafafa; --ac2-hover: #e0e0e0; --on-ac: #0d0d0d;
+  --acdim: rgba(255, 255, 255, 0.08); --acbd: rgba(255, 255, 255, 0.22);
+  --rd: #ff6157; --rddim: rgba(255, 97, 87, 0.12); --rdbd: rgba(255, 97, 87, 0.3);
+  --warn: #f5b84a; --warndim: rgba(245, 184, 74, 0.14); --warnbd: rgba(245, 184, 74, 0.32);
+  --gn: #5bb97e; --gndim: rgba(91, 185, 126, 0.12); --gnbd: rgba(91, 185, 126, 0.3);
+  --nudim: rgba(255, 255, 255, 0.08); --overlay: rgba(0, 0, 0, 0.6);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.2); --canvas-dot: rgba(255, 255, 255, 0.11);
+  --shadow-pop: 0 24px 48px rgba(0, 0, 0, 0.5);
+  --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70; --viz-4: #c98500; --viz-5: #d55181; --viz-7: #9085e9;
+  color-scheme: dark;
+}
+
+/* base */
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--t1);font:14px/1.45 Geist,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+.m,.mono{font-family:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+a{color:inherit}
+button,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--t1);outline-offset:2px;border-radius:6px}
+h1,h2,h3,p{margin:0}
+small{font-size:12px;color:var(--t3);font-weight:400}
+svg.i{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb);border-radius:4px}
+
+/* shell */
+.app{min-height:100dvh}
+.side{display:none}
+.tile{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--ac);color:var(--on-ac);font-weight:700;font-size:12px;letter-spacing:.02em;flex:none}
+.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;height:60px;padding:0 16px;background:var(--bg);border-bottom:1px solid var(--hair)}
+.top h1{font-size:16px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.per{position:relative}
+.perbtn{display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;border:1px solid var(--bd);border-radius:10px;background:var(--sf);font-weight:500;white-space:nowrap}
+.perbtn .st{color:var(--t3);font-weight:400}
+@media (max-width:767px){.perbtn .st{display:none}}
+.pop{position:absolute;right:0;top:calc(100% + 6px);width:280px;background:var(--sf);border:1px solid var(--bd);border-radius:12px;box-shadow:var(--shadow-pop);padding:6px;z-index:30}
+.pop button{display:flex;width:100%;align-items:center;gap:10px;padding:10px;border:0;background:none;border-radius:8px;text-align:left}
+.pop button:hover{background:var(--acdim)}
+.pop button span{flex:1}
+.pop p{padding:8px 10px 6px;font-size:12px;color:var(--t3);border-top:1px solid var(--hair);margin-top:4px}
+#view{padding:16px 16px 104px;max-width:1280px;outline:none}
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:25;display:grid;grid-template-columns:repeat(4,1fr);background:var(--bg);border-top:1px solid var(--hair);padding-bottom:env(safe-area-inset-bottom)}
+.tabs a,.tabs button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 2px 8px;border:0;background:none;color:var(--t3);font-size:11px;text-decoration:none;min-height:56px}
+.tabs svg.i{width:22px;height:22px}
+.tabs [aria-current]{color:var(--t1);font-weight:600}
+.cnt{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--ac);color:var(--on-ac);font:600 11px "Geist Mono",monospace}
+.tabs .cnt{position:absolute;top:5px;left:calc(50% + 6px)}
+.cnt[data-n="0"]{display:none}
+
+@media (min-width:768px){
+  .app{display:grid;grid-template-columns:208px minmax(0,1fr)}
+  .side{display:flex;flex-direction:column;position:sticky;top:0;height:100dvh;border-right:1px solid var(--hair);padding:14px 8px 10px;overflow-y:auto}
+  .brand{display:flex;align-items:center;gap:10px;padding:0 8px 14px;font-weight:600}
+  .side h2{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);padding:12px 10px 6px}
+  .side nav a{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:8px;text-decoration:none;color:var(--t2)}
+  .side nav a:hover{background:var(--acdim);color:var(--t1)}
+  .side nav a[aria-current]{background:var(--acdim);color:var(--t1);font-weight:600}
+  .side nav a .cnt{margin-left:auto}
+  .side .foot{margin-top:auto;padding:10px 4px 0}
+  .tabs,.top .tile{display:none}
+  .top{padding:0 24px;height:52px}
+  #view{padding:20px 24px 48px}
+}
+.seg{display:inline-flex;border:1px solid var(--bd);border-radius:9px;padding:2px;gap:2px}
+.seg button{display:grid;place-items:center;min-width:30px;height:28px;padding:0 8px;border:0;background:none;border-radius:6px;color:var(--t3);font-size:13px}
+.seg button[aria-pressed=true]{background:var(--acdim);color:var(--t1);font-weight:600}
+.seg svg.i{width:15px;height:15px}
+.user{display:flex;align-items:center;gap:10px;padding:12px 6px 4px;margin-top:12px;border-top:1px solid var(--hair)}
+.av{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--acdim);border:1px solid var(--hair);font-size:10.5px;font-weight:600;flex:none}
+.user b{display:block;font-size:13px;font-weight:600;line-height:1.2}
+.user small{font-size:11.5px}
+
+/* sheet */
+.sheetw{position:fixed;inset:0;z-index:40;background:var(--overlay);display:flex;align-items:flex-end}
+.sheet{width:100%;background:var(--sf);border-radius:18px 18px 0 0;padding:8px 12px calc(16px + env(safe-area-inset-bottom));max-height:86dvh;overflow-y:auto;animation:up .2s ease-out}
+@keyframes up{from{transform:translateY(24px);opacity:0}}
+.sheet .grip{width:36px;height:4px;border-radius:2px;background:var(--bd);margin:4px auto 8px}
+.sheet h2{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);padding:10px 10px 4px}
+.sheet a{display:flex;align-items:center;gap:12px;padding:13px 10px;border-radius:10px;text-decoration:none;font-size:15px}
+.sheet a[aria-current]{background:var(--acdim);font-weight:600}
+.sheet .row{display:flex;align-items:center;justify-content:space-between;padding:12px 10px 4px;border-top:1px solid var(--hair);margin-top:8px}
+
+/* building blocks */
+.lede{color:var(--t2);margin:0 0 14px;font-size:13px}
+.card{background:var(--sf);border:1px solid var(--hair);border-radius:14px;min-width:0}
+.card+.card,.stack>*+*{margin-top:14px}.grid>.card,.grid>.stack{margin-top:0}
+.ch{display:flex;align-items:center;gap:10px;padding:14px 16px 0;min-height:44px;flex-wrap:wrap}
+.ch h2{font-size:14px;font-weight:600;flex:1;min-width:0}
+.ch h2 small{display:block;margin-top:1px}
+.cb{padding:12px 16px 16px}
+.grid{display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:1024px){.g21{grid-template-columns:minmax(0,2fr) minmax(0,1fr)}.g11{grid-template-columns:repeat(2,minmax(0,1fr))}.g32{grid-template-columns:minmax(0,3fr) minmax(0,2fr);align-items:start}}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px}
+@media (min-width:1024px){.stats{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}}
+.stat{background:var(--sf);border:1px solid var(--hair);border-radius:14px;padding:13px 14px;min-width:0}
+.stat .k{font-size:12px;color:var(--t3)}
+.stat .v{font-size:21px;font-weight:600;letter-spacing:-.02em;margin:3px 0 2px;white-space:nowrap}
+.stat .s{font-size:12px;color:var(--t2);line-height:1.35}
+@media (min-width:768px){.stat{padding:16px}.stat .v{font-size:26px}}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:36px;padding:0 13px;border-radius:9px;border:1px solid var(--bd);background:var(--sf);font-weight:500;white-space:nowrap;text-decoration:none}
+.btn:hover{background:var(--acdim)}
+.btn.sm{height:30px;padding:0 10px;font-size:12.5px}.btn.sm svg.i{width:14px;height:14px}
+.btn.pri{background:var(--ac2);color:var(--on-ac);border-color:var(--ac2)}.btn.pri:hover{background:var(--ac2-hover)}
+.btn.big{height:48px;font-size:15px;font-weight:600;border-radius:12px}
+.btn.dng{color:var(--rd);border-color:var(--rdbd)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.lnk{border:0;background:none;padding:0;text-align:left;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:6px;max-width:100%}
+.lnk:hover .nm,a.lnk:hover{text-decoration:underline;text-underline-offset:3px}
+.lnk svg.i{width:14px;height:14px;color:var(--t3);transition:transform .15s}
+.lnk[aria-expanded=true] svg.i{transform:rotate(90deg)}
+.pill{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:11px;font-size:12px;font-weight:500;white-space:nowrap;border:1px solid var(--hair);background:var(--nudim);color:var(--t2)}
+.pill svg{width:8px;height:8px;fill:currentColor;flex:none}
+.pill.ok{color:var(--gn);background:var(--gndim);border-color:var(--gnbd)}
+.pill.risk{color:var(--warn);background:var(--warndim);border-color:var(--warnbd)}
+.pill.over{color:var(--rd);background:var(--rddim);border-color:var(--rdbd)}
+.bdg{display:inline-block;font:500 10.5px/16px "Geist Mono",monospace;padding:0 5px;border-radius:4px;border:1px solid var(--acbd);color:var(--t2);vertical-align:1px;white-space:nowrap}
+.bdg.est{border-style:dashed}
+.bdg.inv{background:var(--acdim)}
+.code{font:500 12px "Geist Mono",monospace;letter-spacing:-.01em}
+.sub{display:block;font-size:12px;color:var(--t3);font-weight:400}
+.pos{color:var(--rd)}.neg{color:var(--gn)}.dim{color:var(--t3)}.t2{color:var(--t2)}
+.nw{white-space:nowrap}
+
+/* tables */
+.tw{overflow-x:auto}
+table.t{width:100%;border-collapse:collapse}
+.t th{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--t3);text-align:left;padding:10px 12px;white-space:nowrap}
+.t td{padding:11px 12px;border-top:1px solid var(--hair);vertical-align:middle}
+.t th:first-child,.t td:first-child{padding-left:16px}.t th:last-child,.t td:last-child{padding-right:16px}
+.t .n{text-align:right;font-family:"Geist Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+.t th.n{font-family:inherit}
+.t tfoot td{font-weight:600;background:var(--sf2)}
+.t tr.detail td{background:var(--sf2);padding:14px 16px}
+.t.plain td{padding-top:9px;padding-bottom:9px}
+@media (max-width:767px){
+  .t.cards,.t.cards tbody,.t.cards tfoot{display:block}
+  .t.cards thead{display:none}
+  .t.cards tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px 18px;padding:14px 16px;border-top:1px solid var(--hair)}
+  .t.cards td{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:0!important;border:0;text-align:right;min-width:0;background:none!important}
+  .t.cards td::before{content:attr(data-l);color:var(--t3);font:400 12px Geist,sans-serif;text-align:left;flex:none}
+  .t.cards td.ttl,.t.cards td.full{grid-column:1/-1;display:block;text-align:left}
+  .t.cards td.wide{grid-column:1/-1}
+  .t.cards td.ttl::before,.t.cards td.full::before{display:none}
+  .t.cards td.ttl{margin-bottom:2px}
+  .t.cards tr.detail{display:block;background:var(--sf2)}
+  .t.cards td.none{display:none}
+}
+.bar{position:relative;height:6px;border-radius:3px;background:var(--nudim);min-width:90px}
+.bar i,.bar u{position:absolute;top:0;bottom:0;background:var(--t1)}
+.bar i{left:0;border-radius:3px 0 0 3px}
+.bar u{opacity:.35}
+.bar b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--t1);border-radius:1px}
+.bar.risk i,.bar.risk u{background:var(--warn)}.bar.over i,.bar.over u{background:var(--rd)}
+.barc{display:flex;align-items:center;gap:10px}.barc .bar{flex:1}.barc span{font:12px "Geist Mono",monospace;color:var(--t2);min-width:38px;text-align:right}
+
+/* lists */
+.ls{list-style:none;margin:0;padding:0}
+.ls li{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-top:1px solid var(--hair)}
+.ls li:first-child{border-top:0}
+.ls a.go{display:flex;gap:12px;align-items:flex-start;flex:1;text-decoration:none;min-width:0}
+.ls .tx{flex:1;min-width:0}
+.ls b{font-weight:600}
+.ls .tx small{display:block}
+.dot{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;flex:none;background:var(--nudim);color:var(--t2)}
+.dot svg.i{width:15px;height:15px}
+.dot.risk{background:var(--warndim);color:var(--warn)}.dot.ok{background:var(--gndim);color:var(--gn)}.dot.over{background:var(--rddim);color:var(--rd)}
+.split .r{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 12px;align-items:baseline;padding:9px 0}
+.split .r+.r{border-top:1px solid var(--hair)}
+.split .sb{grid-column:1/-1;height:8px;border-radius:4px;background:var(--nudim);display:flex;overflow:hidden;margin-top:3px}
+.sb i{background:var(--t1)}
+.sb u{background:repeating-linear-gradient(135deg,var(--t3) 0 2px,transparent 2px 5px)}
+.lg{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--t2);padding:10px 0 0}
+.lg span{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.lg i{width:10px;height:10px;border-radius:2px;flex:none;display:inline-block}
+.lg i.ln{height:0;width:16px;border-top:2px solid var(--viz-1);border-radius:0}
+.lg i.ds{border-top-style:dashed}
+.lg i.bg{border-top:1.5px solid var(--t3)}
+.chart{width:100%}.chart svg{display:block;width:100%;overflow:visible}
+.chart text{font:11px "Geist Mono",monospace;fill:var(--t3)}
+.chart text.a{font:500 12px Geist,sans-serif;fill:var(--t1)}
+.chart text.v{fill:var(--t1);font-weight:600}
+
+/* explore */
+.scroll{display:flex;gap:6px;overflow-x:auto;padding:2px 2px 8px;margin:0 -2px;scrollbar-width:none}
+.scroll::-webkit-scrollbar{display:none}
+.chip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:16px;border:1px solid var(--bd);background:var(--sf);white-space:nowrap;flex:none;font-size:13px;color:var(--t2)}
+.chip[aria-pressed=true]{background:var(--ac2);border-color:var(--ac2);color:var(--on-ac);font-weight:500}
+.chip.f{background:var(--acdim);color:var(--t1)}
+.chip svg.i{width:13px;height:13px}
+.lab{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin:0 0 6px}
+.crumb{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:13px;color:var(--t3)}
+.crumb button{border:0;background:none;padding:2px 0;color:var(--t2);text-decoration:underline;text-underline-offset:3px}
+.crumb b{color:var(--t1);font-weight:600}
+.empty{padding:28px 16px;text-align:center;color:var(--t3)}
+
+/* request */
+.back{display:inline-flex;align-items:center;gap:4px;text-decoration:none;color:var(--t2);margin-bottom:10px;padding:4px 0}
+.rqh{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:flex-end;margin-bottom:14px}
+.rqh h2{font-size:20px;font-weight:600;letter-spacing:-.01em;line-height:1.25;flex:1 1 260px}
+.rqh .amt{font-size:24px;font-weight:600;letter-spacing:-.02em}
+.rqh .meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.note{border-left:2px solid var(--bd);padding:2px 0 2px 12px;color:var(--t1);margin:0 0 14px}
+dl.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 16px;margin:0}
+dl.kv dt{color:var(--t3);font-size:13px}dl.kv dd{margin:0;min-width:0}
+.ev h3{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin:16px 0 6px}
+.ev h3:first-child{margin-top:0}
+.rows>div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-top:1px solid var(--hair)}
+.rows>div:first-child{border-top:0}
+.rows>div span:first-child{color:var(--t2);min-width:0}
+.rows>div.tot{font-weight:600}.rows>div.tot span:first-child{color:var(--t1)}
+.ba{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--hair);border-radius:10px;background:var(--sf2)}
+.ba+.ba{margin-top:8px}
+.ba small{display:block}.ba .m{font-size:16px;font-weight:600}.ba>div:last-child{text-align:right}
+.tiers{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:10px}
+.tiers div{padding:7px 6px;border:1px solid var(--hair);border-radius:8px;font-size:11.5px;line-height:1.3;color:var(--t3);text-align:center}
+.tiers div b{display:block;color:var(--t2);font-weight:500}
+.tiers div.on{border-color:var(--t1);color:var(--t1)}.tiers div.on b{color:var(--t1);font-weight:600}
+.steps{list-style:none;margin:14px 0 0;padding:0}
+.steps li{position:relative;display:flex;gap:12px;padding-bottom:16px}
+.steps li:last-child{padding-bottom:0}
+.steps li::before{content:"";position:absolute;left:11px;top:26px;bottom:2px;width:1px;background:var(--bd)}
+.steps li:last-child::before{display:none}
+.sn{width:23px;height:23px;border-radius:50%;display:grid;place-items:center;flex:none;border:1.5px solid var(--bd);font:600 11px "Geist Mono",monospace;color:var(--t3);background:var(--sf)}
+.sn svg.i{width:13px;height:13px;stroke-width:2.5}
+.sn.ok{background:var(--gn);border-color:var(--gn);color:var(--sf)}
+.sn.now{border-color:var(--t1);color:var(--t1);box-shadow:0 0 0 3px var(--acdim)}
+.sn.no{background:var(--rd);border-color:var(--rd);color:var(--sf)}
+.steps .tx{min-width:0;flex:1}.steps b{font-weight:600}.steps small{display:block}
+.steps li.wait b{color:var(--t3);font-weight:500}
+textarea{width:100%;min-height:72px;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);resize:vertical;font-size:16px}
+@media (min-width:768px){textarea{font-size:14px}}
+textarea.err{border-color:var(--rd)}
+.acts{display:grid;grid-template-columns:2fr 1fr;gap:8px;margin-top:10px}
+.who{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.msg{padding:10px 12px;border-radius:10px;font-size:13px;border:1px solid var(--hair);background:var(--sf2);color:var(--t2)}
+.msg.ok{background:var(--gndim);border-color:var(--gnbd);color:var(--t1)}
+.msg.no{background:var(--rddim);border-color:var(--rdbd);color:var(--t1)}
+.msg.warn{background:var(--warndim);border-color:var(--warnbd);color:var(--t1)}
+.msg b{font-weight:600}
+.mt{margin-top:10px}
+.hash{font:12px "Geist Mono",monospace;color:var(--t2)}
+.sec{font-size:13px;font-weight:600;margin:20px 2px 8px;display:flex;align-items:center;gap:8px}
+.sec:first-of-type{margin-top:4px}
+.dgrid{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:900px){.dgrid{grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.3fr)}}
+.dgrid h3{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin-bottom:6px}
+#toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translate(-50%,12px);max-width:min(92vw,420px);padding:10px 14px;border-radius:10px;background:var(--ac);color:var(--on-ac);font-size:13px;font-weight:500;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:60;text-align:center}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+@media (min-width:768px){#toast{bottom:28px}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="tile">LL</span>Landledger</div>
+    <nav id="nav" aria-label="Screens"></nav>
+    <div class="foot">
+      <div class="seg" role="group" aria-label="Theme" data-themeseg></div>
+      <div class="user"><span class="av">RS</span><div><b>Rina Shapiro</b><small>Finance · controller</small></div></div>
+    </div>
+  </aside>
+  <div>
+    <header class="top">
+      <span class="tile" aria-hidden="true">LL</span>
+      <h1 id="ttl">Overview</h1>
+      <div class="per">
+        <button class="perbtn" data-a="per" aria-haspopup="true" aria-expanded="false" id="perbtn"></button>
+        <div class="pop" id="pop" hidden>
+          <button data-a="setper" data-v="nov"><span><b>November 2026</b><small class="sub">Open · day 14 of 30</small></span><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check"/></svg></button>
+          <button data-a="setper" data-v="oct"><span><b>October 2026</b><small class="sub">Locked 5 Nov · opens its close</small></span><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-lock"/></svg></button>
+          <p>This prototype holds November's figures. October opens as its closed month-end.</p>
+        </div>
+      </div>
+    </header>
+    <main id="view" tabindex="-1"></main>
+  </div>
+  <nav class="tabs" id="tabs" aria-label="Screens"></nav>
+  <div class="sheetw" id="sheetw" hidden data-a="closeMore">
+    <div class="sheet" role="dialog" aria-modal="true" aria-label="More screens" id="sheet"></div>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<g id="i-overview"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></g>
+<g id="i-explore"><path d="M3 21h18M7 17v-6M12 17V5M17 17v-9"/></g>
+<g id="i-budgets"><path d="M3 7h15a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7zm0 0a3 3 0 0 1 3-3h10"/><path d="M16.5 13.5h.01"/></g>
+<g id="i-approvals"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></g>
+<g id="i-contracts"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></g>
+<g id="i-agents"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M9 13v2M15 13v2M2 13v2M22 13v2"/></g>
+<g id="i-close"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M8 3v4M16 3v4M3 10h18m-12 5 2 2 4-4"/></g>
+<g id="i-rules"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="18" r="2"/></g>
+<g id="i-audit"><path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z"/><path d="m9 12 2 2 4-4"/></g>
+<g id="i-more"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></g>
+<g id="i-cal"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M8 3v4M16 3v4M3 10h18"/></g>
+<g id="i-down"><path d="m6 9 6 6 6-6"/></g>
+<g id="i-right"><path d="m9 6 6 6-6 6"/></g>
+<g id="i-left"><path d="m15 6-6 6 6 6"/></g>
+<g id="i-copy"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></g>
+<g id="i-ext"><path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></g>
+<g id="i-lock"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></g>
+<g id="i-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"/></g>
+<g id="i-moon"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></g>
+<g id="i-sys"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></g>
+<g id="i-check"><path d="m5 12 5 5 9-10"/></g>
+<g id="i-x"><path d="M6 6l12 12M18 6 6 18"/></g>
+<g id="i-alert"><path d="M12 4 2.5 20h19zM12 10v4M12 17h.01"/></g>
+</defs></svg>
+
+<script>
+(function(){
+'use strict';
+/* ---------- helpers ---------- */
+const $=(s,r)=>(r||document).querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ic=n=>`<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+const num=n=>Math.abs(Math.round(n)).toLocaleString('en-US');
+const fmt=n=>(n<0?'−':'')+'$'+num(n);
+const M=n=>`<span class="m nw">${fmt(n)}</span>`;
+const sg=n=>(n>0?'+':n<0?'−':'')+'$'+num(n);
+const pc=(n,d)=>(n>0?'+':n<0?'−':'')+Math.abs(n).toFixed(d==null?1:d)+'%';
+const SH={ok:'<svg viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.5"/></svg>',risk:'<svg viewBox="0 0 8 8"><path d="M4 .5 8 7.5H0z"/></svg>',over:'<svg viewBox="0 0 8 8"><path d="M4 0 8 4 4 8 0 4z"/></svg>'};
+const pill=(k,t)=>`<span class="pill ${k}">${SH[k]||''}${esc(t)}</span>`;
+const STAT={ok:'On track',risk:'At risk',over:'Over'};
+const bdg=k=>`<span class="bdg ${k}">${k==='est'?'estimated':'invoiced'}</span>`;
+const strip=h=>String(h).replace(/<[^>]+>/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/−/g,'-').replace(/\s+/g,' ').trim();
+const COPY={},CH={};
+function tbl(id,cols,rows,o){o=o||{};
+  COPY[id]=[cols.map(c=>c.h).join('\t')].concat(rows.map(r=>cols.map(c=>c.v?c.v(r):strip(c.c(r))).join('\t'))).join('\n');
+  return `<div class="tw"><table class="t ${o.cards===false?'plain':'cards'}"><thead><tr>${cols.map(c=>`<th${c.n?' class="n"':''}>${c.th||esc(c.h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map((c,j)=>`<td class="${c.n?'n ':''}${c.k||''}${j?'':' ttl'}" data-l="${esc(c.h)}">${c.c(r)}</td>`).join('')}</tr>${o.after?o.after(r,cols.length):''}`).join('')}</tbody>${o.foot||''}</table></div>`;
+}
+const copyBtn=id=>`<button class="btn sm" data-a="copy" data-v="${id}">${ic('copy')}Copy for Excel</button>`;
+const card=(title,body,act,sub)=>`<section class="card"><div class="ch"><h2>${title}${sub?`<small>${sub}</small>`:''}</h2>${act||''}</div>${body}</section>`;
+let toastT;
+function toast(t){const el=$('#toast');el.textContent=t;el.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('on'),2600);}
+function hash(s){let a=0x811c9dc5,b=0x9e3779b1;for(let i=0;i<s.length;i++){a=Math.imul(a^s.charCodeAt(i),16777619);b=Math.imul(b+s.charCodeAt(i),2246822519)^(b>>>13);}return ((a>>>0).toString(16).padStart(8,'0')+(b>>>0).toString(16).padStart(8,'0')).slice(0,12);}
+const nowT=()=>{const d=new Date();return '14 Nov 2026, '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
+
+/* ---------- data ---------- */
+const ME='Rina Shapiro';
+const OC='Own cluster',COR='Cost of revenue',RD='R&D',SM='S&M',GA='G&A',AI='AI models',CO='Cluster compute',ST='Storage',SA='SaaS',SP='Shared pool',HAR='landflow-harness';
+const CATS=[AI,CO,ST,SA],PLS=[COR,RD,SM,GA];
+const CC={
+ 'ENG-PLATFORM':{n:'Platform',o:'Dana Levi',b:28000,f:29300,r:1840,src:'Datarails',h:[27000,25910,27000,26840],res:[['Add 3 replicas to landflow-host',1840,'Waiting · step 2 of 3 · Finance']]},
+ 'ENG-AGENTS':{n:'AI Agents',o:'Omer Katz',b:12000,f:20500,r:0,src:'Datarails',h:[10000,10420,11000,12960],res:[]},
+ 'ENG-PRODUCT':{n:'Product Engineering',o:'Maya Cohen',b:18000,f:16900,r:874,src:'Datarails',h:[18000,16480,18000,17120],res:[['Linear seats ×12',874,'Waiting · step 2 of 3 · Finance']]},
+ 'RND-DATA':{n:'Data & ML',o:'Yael Ben-David',b:16000,f:14700,r:900,src:'Datarails',h:[15000,14870,16000,15230],res:[['Reserve a GPU node for fine-tuning',900,'Approved 12 Nov by Yael Ben-David']]},
+ 'GA-IT':{n:'Internal IT',o:'Noam Peretz',b:9000,f:8300,r:0,src:'Datarails',h:[9000,8540,9000,8610],res:[]},
+ 'CS-SUPPORT':{n:'Customer Support',o:'Lior Azulay',b:7000,f:5900,r:0,src:'A spreadsheet',h:[7000,6390,7000,6480],res:[]},
+ 'Shared pool':{n:'Cluster idle and shared services',o:'Allocated by usage',b:6000,f:5800,r:0,src:'Entered here',h:[6000,5730,6000,6240],res:[]}
+};
+const P='ENG-PLATFORM',A='ENG-AGENTS',E='ENG-PRODUCT',DT='RND-DATA',IT='GA-IT',CS='CS-SUPPORT';
+const X=[
+[P,'Platform','Landflow','landflow-host','landflow','','',OC,COR,CO,5180,.8,6.2,'deploy/landflow-host'],
+[P,'Platform','Landflow','landflow-host','landflow','','',OC,COR,ST,640,.8,2.1,'pvc/landflow-data'],
+[P,'Platform','Landflow','core-api','landflow','','',OC,COR,CO,2870,.8,3.4,'deploy/core-api'],
+[P,'Platform','Landflow','landflow-code-runner','landflow','','',OC,COR,CO,1420,.8,-4.8,'deploy/code-runner'],
+[P,'Platform','Clickland',HAR,'kagent','Clickland observability lead','Claude Sonnet','Anthropic',RD,AI,2210,.44,18.5,'agent/clickland-observability-lead · tokens'],
+[P,'Platform','Clickland',HAR,'kagent','Clickland observability lead','',OC,RD,CO,400,.8,9,'agent/clickland-observability-lead · pods'],
+[P,'Platform','Landflow','SaaS subscriptions','','','','GitHub',RD,SA,1220,1,0,'GitHub Enterprise · Platform seats and Actions'],
+[A,'Agents','Landfall',HAR,'kagent','Triage lead','Claude Opus','Anthropic',RD,AI,3720,.44,61.3,'agent/triage-lead · tokens',1],
+[A,'Agents','Landfall',HAR,'kagent','Triage lead','',OC,RD,CO,560,.8,12.4,'agent/triage-lead · pods'],
+[A,'Agents','Landflow',HAR,'kagent','Developer','Claude Opus','Anthropic',RD,AI,2300,.44,22,'agent/developer · Claude tokens'],
+[A,'Agents','Landflow',HAR,'kagent','Developer','GPT-5','OpenAI',RD,AI,1180,.36,19.6,'agent/developer · GPT tokens'],
+[A,'Agents','Landflow',HAR,'kagent','Developer','',OC,RD,CO,460,.8,14.2,'agent/developer · pods'],
+[A,'Agents','Landflow',HAR,'kagent','Reviewer','Claude Sonnet','Anthropic',RD,AI,1640,.44,8.3,'agent/reviewer · tokens'],
+[A,'Agents','Landflow',HAR,'kagent','Reviewer','',OC,RD,CO,230,.8,5.1,'agent/reviewer · pods'],
+[A,'Agents','Landflow',HAR,'kagent','Planner','Claude Opus','Anthropic',RD,AI,1040,.44,-6.4,'agent/planner · tokens'],
+[A,'Agents','Landflow',HAR,'kagent','Planner','',OC,RD,CO,120,.8,-3,'agent/planner · pods'],
+[A,'Agents','Landflow','core-api','landflow','','text-embedding-3-large','OpenAI',RD,AI,480,.36,4.2,'job/brain-index · embeddings'],
+[A,'Agents','Landflow',HAR,'kagent','','',OC,RD,CO,750,.8,7.7,'job/agent-evals'],
+[E,'Web app','Landflow','core-api','landflow','','',OC,COR,CO,1540,.8,2.2,'deploy/web-bff'],
+[E,'Web app','Landflow','landflow-host','landflow','','Claude Haiku','Anthropic',COR,AI,1090,.44,11.8,'feature/in-app-assistant · tokens'],
+[E,'Web app','Landflow','SaaS subscriptions','','','','GitHub',RD,SA,720,1,0,'GitHub Enterprise · Web app seats'],
+[E,'Web app','Landflow','SaaS subscriptions','','','','Linear',RD,SA,560,1,0,'Linear · 40 seats'],
+[E,'Web app','Landflow','SaaS subscriptions','','','','Figma',RD,SA,400,1,0,'Figma · Web app seats'],
+[E,'Mobile','Landfall','landfall-warroom','landfall','','',OC,COR,CO,1360,.8,-2.6,'deploy/landfall-warroom'],
+[E,'Mobile','Landfall','landfall-warroom','landfall','','Claude Sonnet','Anthropic',COR,AI,720,.44,6.9,'feature/incident-summaries · tokens'],
+[E,'Mobile','Landfall','SaaS subscriptions','','','','GitHub',RD,SA,460,1,0,'GitHub Enterprise · Mobile seats'],
+[E,'Mobile','Landfall','SaaS subscriptions','','','','Figma',RD,SA,410,1,0,'Figma · Mobile seats'],
+[DT,'Data & ML','Clickland','clickhouse','clickland','','',OC,RD,CO,2640,.8,3.1,'statefulset/clickhouse'],
+[DT,'Data & ML','Clickland','clickhouse','clickland','','',OC,RD,ST,2180,.8,9.4,'pvc/clickhouse-data'],
+[DT,'Data & ML','Clickland','clickhouse','clickland','','GPT-5','OpenAI',RD,AI,720,.36,-8.2,'job/model-evals · GPT tokens'],
+[DT,'Data & ML','Clickland','clickhouse','clickland','','Claude Sonnet','Anthropic',RD,AI,340,.44,2.4,'job/pattern-labels · tokens'],
+[DT,'Data & ML','Clickland','SaaS subscriptions','','','','Sentry',RD,SA,300,1,0,'Sentry · Business plan'],
+[IT,'IT','Internal tools','SaaS subscriptions','','','','Google Workspace',GA,SA,1530,1,0,'Google Workspace · 90 seats'],
+[IT,'IT','Internal tools','SaaS subscriptions','','','','1Password',GA,SA,720,1,0,'1Password · 90 seats'],
+[IT,'IT','Landbright','landbright-idp','landbright','','',OC,GA,CO,830,.8,1.9,'deploy/landbright-idp'],
+[IT,'IT','Landbright','landbright-idp','landbright','','',OC,GA,ST,340,.8,.8,'pvc/landbright-db'],
+[CS,'Support','Landfall','landfall-warroom','landfall','','',OC,COR,CO,410,.8,-1.2,'deploy/support-desk'],
+[CS,'Support','Landfall','landfall-warroom','landfall','','Claude Haiku','Anthropic',COR,AI,340,.44,5.5,'feature/reply-drafts · tokens'],
+[CS,'Support','Internal tools','SaaS subscriptions','','','','Slack',SM,SA,500,1,0,'Slack · customer channels'],
+[CS,'Support','Internal tools','SaaS subscriptions','','','','Notion',SM,SA,900,1,0,'Notion · help centre, 90 seats'],
+[SP,SP,SP,SP,SP,'','',OC,COR,CO,1690,.75,-5.6,'Cluster idle capacity'],
+[SP,SP,SP,SP,SP,'','',OC,COR,CO,680,.75,2,'Ingress, DNS and monitoring'],
+[SP,SP,SP,SP,SP,'','',OC,COR,ST,410,.75,3.3,'Backups and snapshots']
+].map(r=>({cc:r[0],team:r[1],product:r[2],service:r[3],ns:r[4]||'No namespace',agent:r[5]||'No agent',model:r[6]||'No model',provider:r[7],pl:r[8],cat:r[9],amt:r[10],inv:Math.round(r[10]*r[11]),prev:r[10]/(1+r[12]/100),res:r[13],loop:r[14]}));
+const agg=rs=>rs.reduce((a,r)=>(a.amt+=r.amt,a.inv+=r.inv,a.prev+=r.prev,a),{amt:0,inv:0,prev:0});
+function group(rs,d){const m=new Map();rs.forEach(r=>{let g=m.get(r[d]);if(!g)m.set(r[d],g={name:r[d],amt:0,inv:0,prev:0,recs:[]});g.amt+=r.amt;g.inv+=r.inv;g.prev+=r.prev;g.recs.push(r);});return [...m.values()].sort((a,b)=>b.amt-a.amt);}
+const TOT=agg(X),INVP=Math.round(TOT.inv/TOT.amt*100);
+const BUD=96000,FC=101400,FLO=98200,FHI=104900;
+const byCC=Object.fromEntries(group(X,'cc').map(g=>[g.name,g]));
+const CCS=Object.keys(CC).map(k=>{const c=CC[k],g=byCC[k];return Object.assign({k:k,a:g.amt,inv:g.inv,s:g.amt>c.b?'over':c.f>c.b?'risk':'ok'},c);});
+const RSV=CCS.reduce((s,c)=>s+c.r,0);
+const DAILY=[2890,3260,3340,3410,3380,3350,2960,2940,4610,3620,3540,3590,3660,3660],LOOP=1240;
+const BASE=DAILY.map((v,i)=>(i===8?v-LOOP:v)/(TOT.amt-LOOP));
+const days=rs=>DAILY.map((_,i)=>rs.reduce((s,r)=>s+(r.loop?(r.amt-LOOP)*BASE[i]+(i===8?LOOP:0):r.amt*BASE[i]),0));
+const ccName=k=>`<span class="code">${esc(k)}</span>`;
+
+const REQ=[
+{id:'r1',title:'Add 3 replicas to landflow-host',amt:1840,per:'a month',cc:P,kind:'Infra change',who:'Itai Shalev',role:'Platform engineer',age:'18 h',box:'me',status:'open',
+ src:[['Landflow run','#4821 · Scale the host for the November launch'],['Pull request','landfalls-ai/landflow #212 · replicas 3 → 6']],
+ note:'Run queue time on landflow-host passed 40 seconds at peak three days running. Three more replicas bring it back under 10 seconds before the launch on 24 Nov.',
+ lines:[['3 × 16 vCPU × 730 h × $0.034',1191],['3 × 64 GiB × 730 h × $0.0045',631],['3 × 60 GB storage × $0.10',18]],
+ basis:'Rate card v3 (effective 1 Oct 2026). Sized from the last 30 days: the 3 running replicas averaged 81% CPU, 97% at peak.',
+ ba:[['Budget left, ENG-PLATFORM',14060,12220],['Forecast for November',29300,30280]],fnote:'ENG-PLATFORM is already at risk. With this it ends November $2,280 over its $28,000 budget.',
+ sim:[['Add 2 replicas to core-api','+$1,210 a month','Approved 3 Sep 2026 · actual came in 4% under'],['Scale landflow-host for launch week','+$920 a month','Approved 18 Jun 2026']],
+ why:'$1,840 a month is in the budget owner\'s range. ENG-PLATFORM is at risk, so Finance decides too.',
+ steps:[{t:'Budget owner',who:'Dana Levi',st:'ok',when:'Approved 13 Nov 2026, 16:12'},{t:'Finance',who:'Rina Shapiro or Shira Mizrahi',st:'now'},{t:'Apply',who:'Landflow resumes run #4821 and merges the pull request',st:'wait',auto:1}],
+ done:'Run #4821 resumes and the pull request merges.'},
+{id:'r2',title:'Raise AI budget for Triage agent',amt:2500,per:'this month',cc:A,kind:'AI budget',who:'Triage lead',agent:1,sponsor:'Omer Katz',age:'2 d',box:'me',status:'open',
+ src:[['Landflow run','#4790 · Triage lead: budget guard tripped at 95%']],
+ note:'I have used $4,280 of my $4,500 budget for November. Without more I stop taking incidents on about 16 Nov. The loop on 9 Nov is fixed in pull request #209, which caps retries at three.',
+ lines:[['16 days left × 137 runs a day × $1.30',2850],['Left in the agent\'s budget',-220],['Rounded down: the agent stops when it runs out',-130]],
+ basis:'Rate card v3 token prices for Claude Opus. From the last 30 days: 1,912 runs, $1.30 a run without the 9 Nov loop ($1,240).',
+ ba:[['Budget left, ENG-AGENTS',-480,2020],['Month budget, ENG-AGENTS',12000,14500]],fnote:'The forecast stays at $20,500: this spend is already in it. ENG-AGENTS still ends November $6,000 over the raised budget.',
+ sim:[['Raise AI budget for Developer','+$1,500 once','Approved 21 Oct 2026 · 96% used'],['Raise AI budget for Planner','+$800 once','Rejected 30 Sep 2026 · low outcomes']],
+ why:'The sponsor owns this budget, so he can\'t approve it. ENG-AGENTS is over budget, so Finance decides.',
+ steps:[{t:'Sponsor',who:'Omer Katz stands behind the request',st:'ok',when:'Confirmed 12 Nov 2026, 09:20'},{t:'Finance',who:'Rina Shapiro or Shira Mizrahi',st:'now'},{t:'Apply',who:'The agent\'s budget rises to $7,000 for November',st:'wait',auto:1}],
+ done:'Triage lead\'s November budget is now $7,000.'},
+{id:'r3',title:'Linear seats ×12',amt:874,per:'once',cc:E,kind:'Tool or seat',who:'Tal Friedman',role:'Engineering manager',age:'1 d',box:'me',status:'open',
+ src:[['Landbright access request','AR-1182 · Linear access for 12 people joining Mobile']],
+ note:'Twelve people join Mobile on 1 Dec. All 40 Linear seats are taken, so they can\'t be added without more.',
+ lines:[['12 seats × $14 a month × 5.2 months to renewal',874]],
+ basis:'Contract price, prorated to the renewal on 20 Apr 2027. Last 30 days: 40 of 40 paid seats in use, 38 active.',
+ ba:[['Budget left, ENG-PRODUCT',10740,9866],['Forecast for November',16900,17774]],fnote:'ENG-PRODUCT stays on track: $226 under its $18,000 budget.',
+ sim:[['Linear seats ×8','$1,344 once','Approved 20 Apr 2026'],['Figma seats ×3','$405 once','Approved 2 Sep 2026']],
+ why:'Seat requests go to the budget owner. This one takes Linear past the 40 seats in its contract, so Finance decides too.',
+ steps:[{t:'Budget owner',who:'Maya Cohen',st:'ok',when:'Approved 13 Nov 2026, 10:02'},{t:'Finance',who:'Rina Shapiro or Shira Mizrahi',st:'now'},{t:'Apply',who:'Landbright grants the 12 seats',st:'wait',auto:1}],
+ done:'Landbright grants the 12 seats.'},
+{id:'r4',title:'Rate card v4: GPU hour',amt:310,per:'a month',cc:DT,kind:'Rate-card change',who:ME,role:'Finance controller',age:'1 d',box:'mine',status:'open',
+ src:[['Raised in','Rates and rules · rate card v3']],
+ note:'The GPU node\'s lease went up on 1 Nov. v3 prices a GPU hour at $1.90; the real cost is now $2.15. v4 would take effect on 1 Dec, so November keeps v3.',
+ lines:[['1,240 GPU hours a month × ($2.15 − $1.90)',310]],
+ basis:'GPU hours from the last 30 days of usage. Only RND-DATA uses the GPU node today.',
+ ba:[['Budget left, RND-DATA',8920,8610],['Forecast for December',15100,15410]],fnote:'RND-DATA stays on track.',
+ sim:[['Rate card v3: memory and tokens','+$640 a month','Approved 24 Sep 2026']],
+ why:'A rate change touches every estimate, so Finance and the CFO both decide, whatever the amount.',
+ steps:[{t:'Finance',who:'Shira Mizrahi',st:'now'},{t:'CFO',who:'Avi Goldman',st:'wait'},{t:'Apply',who:'v4 takes effect on 1 Dec 2026',st:'wait',auto:1}]},
+{id:'r5',title:'Reserve a GPU node for fine-tuning',amt:900,per:'once',cc:DT,kind:'Infra change',who:'Gal Stern',role:'ML engineer',age:'3 d',box:'done',status:'approved',decided:'Approved 12 Nov by Yael Ben-David',
+ src:[['Landflow run','#4733 · Fine-tune the pattern labeller']],
+ note:'Four days on the GPU node to fine-tune the pattern labeller, 18 to 21 Nov.',
+ lines:[['96 h × 4 GPUs × $1.90, plus storage',900]],basis:'Rate card v3.',
+ ba:[['Budget left, RND-DATA',9820,8920],['Forecast for November',14700,14700]],fnote:'Already in the forecast.',sim:[],
+ why:'$900 once is in the budget owner\'s range, and RND-DATA is on track.',
+ steps:[{t:'Budget owner',who:'Yael Ben-David',st:'ok',when:'Approved 12 Nov 2026, 14:30'},{t:'Apply',who:'Node reserved for 18 to 21 Nov',st:'ok',when:'12 Nov 2026, 14:30'}]},
+{id:'r6',title:'Notion AI add-on ×60',amt:600,per:'a month',cc:IT,kind:'Tool or seat',who:'Noa Barak',role:'IT lead',age:'5 d',box:'done',status:'rejected',decided:'Rejected 10 Nov by Rina Shapiro',
+ src:[['Landbright access request','AR-1140 · Notion AI for 60 people']],
+ note:'Notion AI for everyone who writes docs.',
+ lines:[['60 seats × $10 a month',600]],basis:'List price. Last 30 days: 61 of 90 Notion seats active.',
+ ba:[['Budget left, GA-IT',5580,4980],['Forecast for November',8300,8620]],fnote:'29 Notion seats are unused.',sim:[],
+ why:'Over $500 a month, so the budget owner and Finance decide.',
+ steps:[{t:'Budget owner',who:'Noam Peretz',st:'ok',when:'Approved 9 Nov 2026, 11:40'},{t:'Finance',who:'Rina Shapiro',st:'no',when:'Rejected 10 Nov 2026, 17:48',cm:'Drop the 29 unused seats first, then ask again for the people who write docs.'},{t:'Apply',who:'Not applied',st:'wait'}]}
+];
+const stepOf=r=>{if(r.status!=='open')return r.status==='approved'?'Approved':'Rejected';const i=r.steps.findIndex(s=>s.st==='now');return `Step ${i+1} of ${r.steps.length} · ${r.steps[i].t}`;};
+const waiting=()=>REQ.filter(r=>r.box==='me'&&r.status==='open');
+
+const CON=[
+['GitHub','Enterprise',P,15120,52,60,'16 Dec 2025 – 15 Dec 2026','15 Dec 2026','15 Nov 2026',1],
+['Anthropic','API · committed spend',A,180000,0,0,'1 Feb 2026 – 31 Jan 2027','31 Jan 2027','2 Dec 2026',18],
+['Notion','Plus',CS,10800,61,90,'11 Jan 2026 – 10 Jan 2027','10 Jan 2027','11 Dec 2026',27],
+['Slack','Business+',CS,12750,78,85,'2 Mar 2026 – 1 Mar 2027','1 Mar 2027','30 Jan 2027',77],
+['Linear','Business',E,6720,40,40,'21 Apr 2026 – 20 Apr 2027','20 Apr 2027','21 Mar 2027',127],
+['Sentry','Business',DT,12204,0,0,'6 May 2026 – 5 May 2027','5 May 2027','5 Apr 2027',142],
+['Figma','Organization',E,9720,15,18,'15 Jun 2026 – 14 Jun 2027','14 Jun 2027','15 May 2027',182],
+['1Password','Business',IT,8640,84,90,'9 Aug 2026 – 8 Aug 2027','8 Aug 2027','9 Jul 2027',237],
+['Google Workspace','Business Standard',IT,18360,88,90,'2 Sep 2026 – 1 Sep 2027','1 Sep 2027','2 Aug 2027',261],
+['OpenAI','API · pay as you go',A,0,0,0,'No term','—','—',999]
+].map(r=>({v:r[0],p:r[1],cc:r[2],val:r[3],u:r[4],s:r[5],term:r[6],ren:r[7],not:r[8],d:r[9]}));
+
+const AG=[
+['Triage lead','Omer Katz',A,1912,1406,'incidents triaged',352,'scale','Cheapest outcome of the five. Ship the retry cap from the 9 Nov loop first.'],
+['Developer','Omer Katz',A,318,142,'pull requests merged',284,'keep','Steady cost per merged pull request since September.'],
+['Clickland observability lead','Dana Levi',P,2204,96,'alerts resolved',64,'review','Runs are up 40% and resolved alerts are flat. Check what triggers it.'],
+['Reviewer','Omer Katz',A,406,388,'reviews posted',97,'keep','Nearly every run ends in a posted review.'],
+['Planner','Omer Katz',A,211,23,'plans accepted',12,'retire','One plan in nine is accepted. The Developer agent now plans its own work.']
+].map(r=>{const rs=X.filter(x=>x.agent===r[0]),t=agg(rs);return {n:r[0],o:r[1],cc:r[2],runs:r[3],out:r[4],unit:r[5],hrs:r[6],sug:r[7],why:r[8],cost:t.amt,inv:t.inv,ai:agg(rs.filter(x=>x.cat===AI)).amt};});
+const RATE=85,SUG={scale:['ok','Scale'],keep:['nu','Keep'],review:['risk','Review'],retire:['over','Retire']};
+
+const NOTES=[[A,'Over by $480 on day 14. Triage lead looped on one incident on 9 Nov ($1,240), and Developer runs are up 22% with the SDLC rollout.'],[P,'Forecast $1,300 over. landflow-host is up 6% on run volume, and three more replicas are waiting on approval.'],[DT,'On track. ClickHouse storage is up 9% after the retention change on 3 Nov.']];
+const RATES=[['Compute','vCPU-hour',0.034,'+6%'],['Memory','GiB-hour',0.0045,'+12%'],['Storage','GB-month',0.10,'same'],['GPU','GPU-hour',1.90,'same'],['Claude Opus · input','1M tokens',15,'same'],['Claude Opus · output','1M tokens',75,'same'],['Claude Sonnet · input','1M tokens',3,'same'],['Claude Sonnet · output','1M tokens',15,'same'],['Claude Haiku · input','1M tokens',0.80,'−20%'],['Claude Haiku · output','1M tokens',4,'−20%'],['GPT-5 · input','1M tokens',1.25,'same'],['GPT-5 · output','1M tokens',10,'same'],['text-embedding-3-large · input','1M tokens',0.13,'same']];
+const RULES=[['workflow = sdlc-*',E,'Web app','Landflow',RD,1],['agent = *',A,'Agents','Landflow',RD,0],['namespace = clickland, label tier = data',DT,'Data & ML','Clickland',RD,1],['namespace = landbright',IT,'IT','Landbright',GA,0],['label app = support-desk',CS,'Support','Landfall',COR,0],['namespace = landflow*',P,'Platform','Landflow',COR,0]];
+const POL=[['Infra change','Under $500 a month','To $5,000','To $25,000','Above $25,000'],['AI budget','Under $500 a month','To $5,000 · not the sponsor','To $25,000','Above $25,000'],['Tool or seat','Never','Always','When seats pass the contract','Above $25,000 a year'],['Rate-card change','Never','—','Always','Always'],['Policy change','Never','—','Always','Always']];
+let AUD=[
+['2 Nov 2026, 08:00','Datarails sync','system','Budget','Imported budget v3 for November 2026'],
+['5 Nov 2026, 17:20','Rina Shapiro','Finance','Period','Uploaded October 2026 actuals to Datarails'],
+['5 Nov 2026, 18:00','Avi Goldman','CFO','Period','Locked October 2026'],
+['6 Nov 2026, 10:15','Rina Shapiro','Finance','Rule','Changed allocation rule 3: clickland data tier to RND-DATA, capitalisable'],
+['9 Nov 2026, 13:20','Landledger','system','Anomaly','Flagged Triage lead: $1,240 in 3 hours'],
+['10 Nov 2026, 17:48','Rina Shapiro','Finance','Decision','Rejected "Notion AI add-on ×60" · $600 a month'],
+['12 Nov 2026, 09:02','Triage lead','agent · sponsor Omer Katz','Request','Raised "Raise AI budget for Triage agent" · $2,500'],
+['12 Nov 2026, 14:30','Yael Ben-David','Budget owner','Decision','Approved "Reserve a GPU node for fine-tuning" · $900 once'],
+['13 Nov 2026, 11:05','Rina Shapiro','Finance','Rate','Raised "Rate card v4: GPU hour"'],
+['13 Nov 2026, 15:40','Shira Mizrahi','FP&A','Period','Reconciled AI usage to provider invoices: 1.4% gap'],
+['13 Nov 2026, 16:12','Dana Levi','Budget owner','Decision','Approved step 1 of "Add 3 replicas to landflow-host"'],
+['14 Nov 2026, 02:10','Landledger ingest','system','Period','Ingested usage to 13 Nov: 31,204 records']
+].map(r=>({when:r[0],who:r[1],role:r[2],kind:r[3],what:r[4]}));
+let chainN=1272,lastH='a41f09c27be3';
+function seal(e){e.prev=lastH;e.n=++chainN;e.h=lastH=hash(e.prev+e.when+e.who+e.what);return e;}
+AUD.forEach(seal);AUD.reverse();
+
+/* ---------- state ---------- */
+const S={ex:{by:'cc',cat:'All',f:[]},req:'r1',cc:null,err:false,notes:[0,0,0],close:'nov',verify:0,theme:'sys'};
+const NAV=[['Money',[['overview','Overview',1],['explore','Explore',1],['budgets','Budgets']]],['Control',[['approvals','Approvals',1],['contracts','Contracts']]],['Value',[['agents','Agents']]],['Close',[['close','Month-end']]],['Setup',[['rules','Rates and rules'],['audit','Audit log']]]];
+const TITLE={overview:'Overview',explore:'Explore',budgets:'Budgets',approvals:'Approvals',request:'Request',contracts:'Contracts',agents:'Agents',close:'Month-end',rules:'Rates and rules',audit:'Audit log'};
+const DIMS=[['cc','Cost center'],['team','Team'],['product','Product'],['service','Service'],['ns','Namespace'],['agent','Agent'],['model','Model'],['provider','Provider'],['pl','P&L class']];
+const LBL=Object.assign({res:'Resource'},Object.fromEntries(DIMS));
+const NEXT={cc:'service',team:'service',product:'service',service:'res',ns:'service',agent:'model',model:'agent',provider:'service',pl:'cc'};
+const VIZ=['var(--viz-1)','var(--viz-2)','var(--viz-3)','var(--viz-4)','var(--viz-7)'];
+
+/* ---------- screens ---------- */
+const SC={};
+SC.overview=()=>{
+  const n=waiting().length,left=BUD-TOT.amt-RSV,done=3+(S.notes.every(Boolean)?1:0);
+  const cols=[
+   {h:'Cost center',c:c=>`<a class="lnk" href="#budgets">${ccName(c.k)}</a><span class="sub">${esc(c.n)} · ${esc(c.o)}</span>`,v:c=>c.k},
+   {h:'Month to date',n:1,c:c=>M(c.a)},
+   {h:'Invoiced',n:1,c:c=>Math.round(c.inv/c.a*100)+'%'},
+   {h:'Budget',n:1,c:c=>M(c.b)},
+   {h:'Forecast',n:1,c:c=>`<span class="${c.f>c.b?'pos':''}">${fmt(c.f)}</span>`},
+   {h:'Actual + reserved',k:'full',th:'Actual + reserved vs budget',c:c=>{const d=Math.max(c.b,c.a+c.r);return `<div class="barc"><div class="bar ${c.s==='ok'?'':c.s}" role="img" aria-label="${Math.round((c.a+c.r)/c.b*100)}% of budget used or reserved"><i style="width:${c.a/d*100}%"></i><u style="left:${c.a/d*100}%;width:${c.r/d*100}%"></u><b style="left:calc(${c.b/d*100}% - 2px)"></b></div><span>${Math.round((c.a+c.r)/c.b*100)}%</span></div>`;},v:c=>Math.round((c.a+c.r)/c.b*100)+'%'},
+   {h:'State',c:c=>pill(c.s,STAT[c.s])}];
+  const split=(d,keys)=>{const g=Object.fromEntries(group(X,d).map(x=>[x.name,x]));return `<div class="cb split">${keys.map(k=>{const x=g[k];return `<div class="r"><span>${esc(k)}</span><span class="m">${fmt(x.amt)}</span><span class="m dim" style="min-width:34px;text-align:right">${Math.round(x.amt/TOT.amt*100)}%</span><div class="sb" role="img" aria-label="${Math.round(x.inv/x.amt*100)}% invoiced"><i style="width:${x.inv/TOT.amt*100*2.2}%"></i><u style="width:${(x.amt-x.inv)/TOT.amt*100*2.2}%"></u></div></div>`;}).join('')}<div class="lg"><span><i style="background:var(--t1)"></i>invoiced</span><span><i style="background:repeating-linear-gradient(135deg,var(--t3) 0 2px,transparent 2px 5px)"></i>estimated</span></div></div>`;};
+  return `<p class="lede">November 2026, day 14 of 30. All figures in USD.</p>
+  <div class="stats">
+   <div class="stat"><div class="k">Month to date</div><div class="v m">${fmt(TOT.amt)}</div><div class="s">${INVP}% invoiced, ${100-INVP}% estimated</div></div>
+   <div class="stat"><div class="k">Forecast to month-end</div><div class="v m">${fmt(FC)}</div><div class="s"><span class="m">${fmt(FLO)} – ${fmt(FHI)}</span><br>${pill('risk',sg(FC-BUD).replace('+','')+' over')}</div></div>
+   <div class="stat"><div class="k">Budget</div><div class="v m">${fmt(BUD)}</div><div class="s">v3 from Datarails<br>${Math.round(TOT.amt/BUD*100)}% used at ${Math.round(14/30*100)}% of the month</div></div>
+   <div class="stat"><div class="k">Left after reservations</div><div class="v m">${fmt(left)}</div><div class="s"><span class="m">${fmt(RSV)}</span> reserved by 3 requests</div></div>
+  </div>
+  <div class="grid g21">
+   ${card('The month\'s burn',`<div class="cb"><div class="chart" data-chart="burn"></div><div class="lg"><span><i class="ln"></i>Actual</span><span><i class="ln ds"></i>Forecast and its range</span><span><i class="ln bg"></i>Budget</span></div></div>`,'','Cumulative cost, 1 to 30 Nov')}
+   ${card('Needs you',`<ul class="ls">
+    <li><a class="go" href="#approvals"><span class="dot ${n?'risk':'ok'}">${ic('approvals')}</span><span class="tx"><b>${n?n+' approval'+(n>1?'s':'')+' waiting on you':'No approvals waiting on you'}</b><small>${n?waiting().map(r=>esc(r.title)).join(' · '):'You\'re up to date.'}</small></span>${ic('right')}</a></li>
+    <li><a class="go" href="#agents"><span class="dot over">${ic('alert')}</span><span class="tx"><b>Triage lead looped on 9 Nov</b><small>$1,240 in 3 hours on one incident. A retry cap is in pull request #209.</small></span>${ic('right')}</a></li>
+    <li><a class="go" href="#contracts"><span class="dot risk">${ic('contracts')}</span><span class="tx"><b>GitHub renews unless told by 15 Nov</b><small>8 of 60 seats unused. Notice is due tomorrow.</small></span>${ic('right')}</a></li>
+    <li><a class="go" href="#close"><span class="dot">${ic('close')}</span><span class="tx"><b>November close: ${done} of 7 steps in order</b><small>${S.notes.every(Boolean)?'Variance notes accepted. The accrual proposal is next.':'3 variance notes are drafted and waiting for you.'}</small></span>${ic('right')}</a></li>
+   </ul>`)}
+  </div>
+  <div class="stack" style="margin-top:14px">
+   ${card('Cost centers',tbl('cc',cols,CCS),copyBtn('cc'))}
+   <div class="grid g11">${card('By category',split('cat',CATS))}${card('By P&amp;L class',split('pl',PLS))}</div>
+  </div>`;
+};
+
+SC.explore=()=>{
+  const s=S.ex,recs=X.filter(r=>(s.cat==='All'||r.cat===s.cat)&&s.f.every(f=>r[f.d]===f.v)),g=group(recs,s.by),T=agg(recs);
+  const nx=NEXT[s.by],can=nx&&!s.f.some(f=>f.d===nx),mx=g.length?g[0].amt:1;
+  const top=g.slice(0,5),rest=g.slice(5);
+  CH.stack=top.map((x,i)=>({n:x.name,c:VIZ[i],v:days(x.recs)})).concat(rest.length?[{n:'Other ('+rest.length+')',c:'var(--t3)',o:.45,v:days(rest.reduce((a,x)=>a.concat(x.recs),[]))}]:[]);
+  const nm=x=>{const real=s.by==='service'&&x.name!==SP&&x.name!=='SaaS subscriptions';
+    const lab=(s.by==='cc'&&CC[x.name]&&x.name!==SP?ccName(x.name):`<span class="nm">${esc(x.name)}</span>`)+(x.name===SP?' <span class="bdg">allocated by usage</span>':'');
+    return (can?`<button class="lnk" data-a="drill" data-v="${esc(x.name)}" data-fk="d-${esc(x.name)}">${lab}${ic('right')}</button>`:`<b>${lab}</b>`)+(s.by==='cc'&&CC[x.name]&&x.name!==SP?`<span class="sub">${esc(CC[x.name].n)}</span>`:'')+(real?`<button class="btn sm" style="margin-top:6px" data-a="toast" data-v="In the product this opens ${esc(x.name)} in Clickland: latency and errors next to the money.">${ic('ext')}Open in Clickland</button>`:'');};
+  const cols=[
+   {h:LBL[s.by],c:nm,v:x=>x.name},
+   {h:'Estimated',n:1,th:'Estimated '+bdg('est'),c:x=>M(x.amt-x.inv)},
+   {h:'Invoiced',n:1,th:'Invoiced '+bdg('inv'),c:x=>M(x.inv)},
+   {h:'Total',n:1,c:x=>`<b>${fmt(x.amt)}</b>`},
+   {h:'vs October',n:1,c:x=>{const p=(x.amt-x.prev)/x.prev*100;return Math.abs(p)<.05?'<span class="dim">same</span>':`<span class="${p>15?'pos':''}">${pc(p)}</span>`;}},
+   {h:'Share',k:'full',c:x=>`<div class="barc"><div class="bar"><i style="width:${x.amt/mx*100}%;border-radius:3px"></i></div><span>${(x.amt/T.amt*100).toFixed(1)}%</span></div>`,v:x=>(x.amt/T.amt*100).toFixed(1)+'%'}];
+  const pp=(T.amt-T.prev)/T.prev*100;
+  const foot=`<tfoot><tr><td class="ttl" data-l="">Total</td><td class="n" data-l="Estimated">${fmt(T.amt-T.inv)}</td><td class="n" data-l="Invoiced">${fmt(T.inv)}</td><td class="n" data-l="Total">${fmt(T.amt)}</td><td class="n" data-l="vs October">${pc(pp)}</td><td class="none"></td></tr></tfoot>`;
+  const crumb=`<div class="crumb">${s.f.length?`<button data-a="rmf" data-v="0" data-fk="c-all">All spend</button>`:'<b>All spend</b>'}${s.f.map((f,i)=>` <span aria-hidden="true">›</span> ${i<s.f.length-1?`<button data-a="rmf" data-v="${i+1}" data-fk="c-${i}">${esc(f.v)}</button>`:`<b>${esc(f.v)}</b>`}`).join('')}<span> · by ${esc(LBL[s.by].toLowerCase())}</span></div>`;
+  return `<p class="lede">Where November's spend comes from, 1 to 14 Nov. All figures in USD.</p>
+  <p class="lab" id="gb">Group by</p>
+  <div class="scroll" role="group" aria-labelledby="gb">${DIMS.map(d=>`<button class="chip" data-a="by" data-v="${d[0]}" data-fk="by-${d[0]}" aria-pressed="${s.by===d[0]}">${esc(d[1])}</button>`).join('')}</div>
+  <p class="lab" id="fl" style="margin-top:6px">Filter</p>
+  <div class="scroll" role="group" aria-labelledby="fl">${['All'].concat(CATS).map(c=>`<button class="chip" data-a="cat" data-v="${c}" data-fk="cat-${c}" aria-pressed="${s.cat===c}">${c==='All'?'All categories':c}</button>`).join('')}${s.f.map((f,i)=>`<button class="chip f" data-a="rmf1" data-v="${i}" data-fk="f-${i}" aria-label="Remove filter ${esc(LBL[f.d])}: ${esc(f.v)}">${esc(LBL[f.d])}: ${esc(f.v)} ${ic('x')}</button>`).join('')}</div>
+  <div class="stack" style="margin-top:8px">
+  ${g.length?card('Daily cost',`<div class="cb"><div class="chart" data-chart="stack"></div><div class="lg">${CH.stack.map(x=>`<span><i style="background:${x.c};opacity:${x.o||1}"></i>${esc(x.n)}</span>`).join('')}</div></div>`,`<span class="m" style="font-weight:600">${fmt(T.amt)}</span>`,`${Math.round(T.inv/T.amt*100)}% invoiced, the rest estimated`)
+   +card(crumb,tbl('ex',cols,g,{foot:foot}),copyBtn('ex'))+(can?`<p class="lede" style="margin-top:10px">Open a row to see its ${esc(LBL[nx].toLowerCase())}s.</p>`:'')
+   :`<div class="card empty">Nothing matches these filters. Remove one to see spend again.</div>`}
+  </div>`;
+};
+
+SC.budgets=()=>{
+  const cols=[
+   {h:'Cost center',c:c=>`<button class="lnk" data-a="cc" data-v="${c.k}" data-fk="cc-${c.k}" aria-expanded="${S.cc===c.k}">${ic('right')}${ccName(c.k)}</button><span class="sub">${esc(c.n)}</span>`,v:c=>c.k},
+   {h:'Budget',n:1,c:c=>M(c.b)},{h:'Actual',n:1,c:c=>M(c.a)},{h:'Reserved',n:1,c:c=>c.r?M(c.r):'<span class="dim">—</span>',v:c=>c.r},
+   {h:'Available',n:1,c:c=>{const a=c.b-c.a-c.r;return `<span class="${a<0?'pos':''}">${fmt(a)}</span>`;}},
+   {h:'Forecast',n:1,c:c=>M(c.f)},
+   {h:'Variance',n:1,k:'wide',c:c=>{const v=c.f-c.b;return `<span class="${v>0?'pos':'neg'}">${sg(v)} · ${pc(v/c.b*100)}</span>`;}},
+   {h:'State',c:c=>pill(c.s,STAT[c.s])}];
+  const after=(c,n)=>S.cc!==c.k?'':`<tr class="detail"><td colspan="${n}" class="full"><div class="dgrid">
+    <div><h3>Owner and source</h3><div><b>${esc(c.o)}</b></div><small>Budget v3 · ${esc(c.src)}${c.src==='Datarails'?' · synced 2 Nov 2026':''}</small></div>
+    <div><h3>Months</h3><div class="rows">${[['September',c.h[0],c.h[1]],['October · locked',c.h[2],c.h[3]],['November · forecast',c.b,c.f]].map(m=>`<div><span>${m[0]}</span><span class="m nw">${fmt(m[2])} of ${fmt(m[1])} <span class="${m[2]>m[1]?'pos':'neg'}">${pc((m[2]-m[1])/m[1]*100)}</span></span></div>`).join('')}</div></div>
+    <div><h3>Reservations</h3>${c.res.length?`<div class="rows">${c.res.map(r=>`<div><span><b style="color:var(--t1)">${esc(r[0])}</b><small class="sub">${esc(r[2])}</small></span>${M(r[1])}</div>`).join('')}</div>`:'<span class="dim">Nothing is reserved against this budget.</span>'}</div></div></td></tr>`;
+  const t=CCS.reduce((a,c)=>(a.b+=c.b,a.a+=c.a,a.r+=c.r,a.f+=c.f,a),{b:0,a:0,r:0,f:0});
+  const foot=`<tfoot><tr><td class="ttl" data-l="">All cost centers</td><td class="n" data-l="Budget">${fmt(t.b)}</td><td class="n" data-l="Actual">${fmt(t.a)}</td><td class="n" data-l="Reserved">${fmt(t.r)}</td><td class="n" data-l="Available">${fmt(t.b-t.a-t.r)}</td><td class="n" data-l="Forecast">${fmt(t.f)}</td><td class="n wide" data-l="Variance"><span class="pos">${sg(t.f-t.b)} · ${pc((t.f-t.b)/t.b*100)}</span></td><td data-l="State">${pill('risk','At risk')}</td></tr></tfoot>`;
+  return `<p class="lede">November 2026 by cost center. Actual is ${INVP}% invoiced, the rest estimated. All figures in USD.</p>
+  ${card('Budget v3',tbl('bud',cols,CCS,{after:after,foot:foot}),copyBtn('bud'),'From Datarails, synced 2 Nov 2026. Two rows come from elsewhere: open a row to see.')}
+  <p class="lede" style="margin-top:10px">Available is budget less actual and reservations. Variance is forecast against budget.</p>`;
+};
+
+SC.approvals=()=>{
+  const cols=[
+   {h:'Request',c:r=>`<a class="lnk" href="#request" data-a="req" data-v="${r.id}"><span class="nm">${esc(r.title)}</span></a><span class="sub">${esc(r.kind)}</span>`,v:r=>r.title},
+   {h:'Amount',n:1,c:r=>`<b>${sg(r.amt)}</b> <span class="dim" style="font-family:Geist,sans-serif">${r.per}</span>`,v:r=>r.amt+' '+r.per},
+   {h:'Cost center',c:r=>ccName(r.cc)},
+   {h:'Budget left after',n:1,c:r=>`<span class="${r.ba[0][2]<0?'pos':''}">${fmt(r.ba[0][2])}</span>`},
+   {h:'Asked by',k:'wide',c:r=>r.agent?`${esc(r.who)} <span class="bdg">agent</span><span class="sub">Sponsor ${esc(r.sponsor)}</span>`:esc(r.who)},
+   {h:'Age',c:r=>r.age},
+   {h:'Step',k:'wide',c:r=>r.status==='open'?pill(r.box==='me'?'risk':'nu',stepOf(r)):pill(r.status==='approved'?'ok':'over',r.decided)}];
+  const sec=(t,rows,id,empty)=>`<h2 class="sec">${t} <span class="cnt" data-n="${rows.length}">${rows.length}</span></h2>`+(rows.length?`<section class="card">${tbl(id,cols,rows)}</section>`:`<div class="card empty">${empty}</div>`);
+  const me=waiting(),mine=REQ.filter(r=>r.box==='mine'),done=REQ.filter(r=>r.status!=='open');
+  tbl('inbox',cols,REQ);
+  return `<div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap"><p class="lede" style="flex:1 1 240px">Spend that needs a person. Open a request to see its evidence before you decide. All figures in USD.</p>${copyBtn('inbox')}</div>
+  ${sec('Waiting on you',me,'in1','Nothing is waiting on you.')}${sec('You raised',mine,'in2','You haven\'t raised anything.')}${sec('Decided',done,'in3','Nothing decided yet.')}
+  <div class="card" style="margin-top:20px"><div class="ch"><h2>Who decides what<small>Per month, for infra and AI budget requests. A cost center that is at risk or over adds Finance.</small></h2><a class="btn sm" href="#rules">All policies</a></div><div class="cb"><div class="tiers" style="margin:0"><div><b>Automatic</b>under $500</div><div><b>Budget owner</b>to $5,000</div><div><b>Finance</b>to $25,000</div><div><b>CFO</b>above</div></div></div></div>`;
+};
+
+SC.request=()=>{
+  const r=REQ.find(x=>x.id===S.req)||REQ[0],c=CC[r.cc],tier=r.amt<500?0:r.amt<=5000?1:r.amt<=25000?2:3,tot=r.lines.reduce((s,l)=>s+l[1],0);
+  const SN={ok:ic('check'),no:ic('x')};
+  let decide;
+  if(r.status!=='open')decide=`<div class="msg ${r.status==='approved'?'ok':'no'}"><b>${esc(r.decided)}</b>${r.snap?`<br>A snapshot of the evidence above is saved with the decision.<br><span class="hash">record ${r.snap}</span>`:''}${r.status==='approved'&&r.done&&r.snap?`<br>${esc(r.done)}`:''}</div><a class="btn mt" href="#approvals" style="width:100%">Back to the inbox</a>`;
+  else if(r.who===ME)decide=`<div class="msg">You raised this request, so you can't decide it. It's with <b>${esc(r.steps.find(s=>s.st==='now').who)}</b>.</div>`;
+  else decide=`<div class="who"><span class="av">RS</span><div><b>Deciding as Rina Shapiro</b><small class="sub">Finance · controller</small></div></div>
+    <label for="cmt" class="sub" style="margin-bottom:4px">Comment${S.err?'':' (needed to reject)'}</label>
+    <textarea id="cmt" class="${S.err?'err':''}" placeholder="What the requester should know" aria-describedby="cmth"></textarea>
+    ${S.err?'<p class="pos" style="font-size:12.5px;margin-top:4px" role="alert">Say why, so the requester knows what to change.</p>':''}
+    <div class="acts"><button class="btn pri big" data-a="approve">Approve ${sg(r.amt).replace('+','')}</button><button class="btn big dng" data-a="reject">Reject</button></div>
+    <p class="sub mt" id="cmth">Your decision saves a snapshot of the evidence shown here.</p>`;
+  return `<a class="back" href="#approvals">${ic('left')}Approvals</a>
+  <div class="rqh"><div style="flex:1 1 260px;min-width:0"><h2>${esc(r.title)}</h2><div class="meta">${r.status==='open'?pill(r.box==='me'?'risk':'nu',stepOf(r)):pill(r.status==='approved'?'ok':'over',stepOf(r))}${pill('nu',r.kind)}${pill('nu','Raised '+r.age+' ago')}</div></div>
+   <div><div class="amt m">${sg(r.amt)} <small style="font-family:Geist,sans-serif;font-size:13px">${r.per} · USD</small></div><div style="margin-top:4px">${bdg('est')} <small>usage × rate card</small></div></div></div>
+  <div class="grid g32">
+   <div class="stack">
+    ${card('What and why',`<div class="cb"><blockquote class="note">${esc(r.note)}</blockquote><dl class="kv">
+      <dt>Asked by</dt><dd>${r.agent?`<b>${esc(r.who)}</b> <span class="bdg">agent</span><span class="sub">Sponsor: ${esc(r.sponsor)}, who answers for it. Agents can ask; only people decide.</span>`:`<b>${esc(r.who)}</b><span class="sub">${esc(r.role)}</span>`}</dd>
+      <dt>Cost center</dt><dd>${ccName(r.cc)}<span class="sub">${esc(c.n)} · owner ${esc(c.o)}</span></dd>
+      ${r.src.map(s=>`<dt>${esc(s[0])}</dt><dd>${esc(s[1])}</dd>`).join('')}</dl></div>`)}
+    ${card('The evidence',`<div class="cb ev">
+      <h3>Cost change</h3><div class="rows">${r.lines.map(l=>`<div><span>${esc(l[0])}</span>${M(l[1])}</div>`).join('')}<div class="tot"><span>${r.per==='a month'?'Each month':'Total'}</span><span class="m">${fmt(tot)}</span></div></div>
+      <p class="sub" style="margin-top:6px">${esc(r.basis)}</p>
+      <h3>Budget and forecast</h3>${r.ba.map(b=>`<div class="ba"><div><small>${esc(b[0])} · now</small><span class="m">${fmt(b[1])}</span></div><span class="dim" aria-hidden="true">→</span><div><small>with this request</small><span class="m ${b[2]<0?'pos':''}">${fmt(b[2])}</span></div></div>`).join('')}
+      <div class="msg mt ${/over/.test(r.fnote)&&!/stays on track/.test(r.fnote)?'warn':''}">${esc(r.fnote)}</div>
+      ${r.sim.length?`<h3>Similar past requests</h3><div class="rows">${r.sim.map(s=>`<div><span><b style="color:var(--t1);font-weight:500">${esc(s[0])}</b><small class="sub">${esc(s[2])}</small></span><span class="m nw">${esc(s[1])}</span></div>`).join('')}</div>`:''}
+    </div>`)}
+   </div>
+   <div class="stack">
+    ${card('The path',`<div class="cb"><div class="tiers">${[['Automatic','under $500'],['Budget owner','to $5,000'],['Finance','to $25,000'],['CFO','above']].map((t,i)=>`<div class="${i===tier?'on':''}"><b>${t[0]}</b>${t[1]}</div>`).join('')}</div>
+      <p class="sub">${esc(r.why)}</p>
+      <ol class="steps">${r.steps.map((s,i)=>`<li class="${s.st}"><span class="sn ${s.st}">${SN[s.st]||i+1}</span><div class="tx"><b>${esc(s.t)}</b>${s.st==='now'?' '+pill('risk','Now'):''}<small>${esc(s.who)}</small>${s.when?`<small>${esc(s.when)}</small>`:''}${s.cm?`<small style="color:var(--t2)">“${esc(s.cm)}”</small>`:''}</div></li>`).join('')}</ol></div>`)}
+    ${card('Decide',`<div class="cb">${decide}</div>`)}
+   </div>
+  </div>`;
+};
+
+SC.contracts=()=>{
+  const cols=[
+   {h:'Vendor',c:x=>`<b>${esc(x.v)}</b><span class="sub">${esc(x.p)}</span>`,v:x=>x.v+' '+x.p},
+   {h:'Cost center',c:x=>ccName(x.cc)},
+   {h:'Annual value',n:1,c:x=>x.val?M(x.val):'<span class="dim">usage</span>',v:x=>x.val||''},
+   {h:'Seats used of paid',k:'full',th:'Seats used of paid',c:x=>x.s?`<div class="barc"><div class="bar ${x.u>=x.s?'risk':''}"><i style="width:${x.u/x.s*100}%;border-radius:3px"></i></div><span style="min-width:52px">${x.u} / ${x.s}</span></div>`:'<span class="dim">No seats</span>',v:x=>x.s?x.u+' of '+x.s:''},
+   {h:'Term',k:'wide',c:x=>`<span class="nw">${x.term}</span>`},
+   {h:'Renews',c:x=>`<span class="nw">${x.ren}</span>`},
+   {h:'Notice by',k:'wide',c:x=>x.d<=30?`<span class="nw">${x.not}</span> ${pill(x.d<=7?'over':'risk',x.d===1?'Tomorrow':'In '+x.d+' days')}`:`<span class="nw">${x.not}</span>`,v:x=>x.not}];
+  const a=CON.filter(x=>x.d<=30),b=CON.filter(x=>x.d>30);
+  tbl('con',cols,CON);
+  return `<div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap"><p class="lede" style="flex:1 1 240px">Vendor contracts and subscriptions. Annual values are contracted, in USD.</p>${copyBtn('con')}</div>
+  <h2 class="sec">Notice due in the next 30 days <span class="cnt" data-n="${a.length}">${a.length}</span></h2><section class="card">${tbl('con1',cols,a)}</section>
+  <h2 class="sec">Later</h2><section class="card">${tbl('con2',cols,b)}</section>`;
+};
+
+SC.agents=()=>{
+  const cost=AG.reduce((s,a)=>s+a.cost,0),inv=AG.reduce((s,a)=>s+a.inv,0),hrs=AG.reduce((s,a)=>s+a.hrs,0);
+  const cols=[
+   {h:'Agent',c:a=>`<b>${esc(a.n)}</b><span class="sub">${esc(a.o)} · <span class="code">${a.cc}</span></span>`,v:a=>a.n},
+   {h:'Cost',n:1,c:a=>`<b>${fmt(a.cost)}</b>`},
+   {h:'Models',n:1,c:a=>M(a.ai)},{h:'Compute',n:1,c:a=>M(a.cost-a.ai)},
+   {h:'Runs',n:1,c:a=>a.runs.toLocaleString('en-US')},
+   {h:'Outcomes',n:1,k:'wide',c:a=>`${a.out.toLocaleString('en-US')} <span class="dim" style="font-family:Geist,sans-serif">${a.unit}</span>`},
+   {h:'Cost per outcome',n:1,k:'wide',c:a=>'$'+(a.cost/a.out).toFixed(2)},
+   {h:'Capacity freed',n:1,k:'wide',c:a=>`${a.hrs} h <span class="dim">· ${fmt(a.hrs*RATE)}</span>`,v:a=>a.hrs+' h'},
+   {h:'Suggestion',k:'full',c:a=>`${pill(SUG[a.sug][0],SUG[a.sug][1])}<span class="sub" style="margin-top:4px;max-width:260px">${esc(a.why)}</span>`,v:a=>SUG[a.sug][1]+': '+a.why}];
+  return `<p class="lede">Each agent's November so far, 1 to 14 Nov. From Landflow's usage ledger and Clickland's Agent Value. All figures in USD.</p>
+  <div class="stats">
+   <div class="stat"><div class="k">Agent cost</div><div class="v m">${fmt(cost)}</div><div class="s">${Math.round(inv/cost*100)}% invoiced, the rest estimated</div></div>
+   <div class="stat"><div class="k">Share of all spend</div><div class="v m">${(cost/TOT.amt*100).toFixed(1)}%</div><div class="s">of ${fmt(TOT.amt)} month to date</div></div>
+   <div class="stat"><div class="k">Capacity freed</div><div class="v m">${hrs} h</div><div class="s">${fmt(hrs*RATE)} at $${RATE} an hour.<br>Capacity, not cash.</div></div>
+   <div class="stat"><div class="k">Suggestions</div><div class="v" style="font-size:15px;white-space:normal;line-height:1.9">${pill('ok','1 scale')} ${pill('nu','2 keep')} ${pill('risk','1 review')} ${pill('over','1 retire')}</div><div class="s">An owner decides each one.</div></div>
+  </div>
+  ${card('Agents',tbl('ag',cols,AG),copyBtn('ag'))}
+  <p class="lede" style="margin-top:10px">Capacity freed is hours saved × a blended role rate of $${RATE}. It shows time people got back; it isn't money saved.</p>`;
+};
+
+SC.close=()=>{
+  const oct=S.close==='oct',acc=S.notes.filter(Boolean).length,est=TOT.amt-TOT.inv;
+  const steps=oct?[
+   ['ok','Usage ingested to the last day','Through 31 Oct · 68,912 usage records','Landledger ingest · 1 Nov 2026, 02:10'],
+   ['ok','AI usage reconciled to invoices','0.8% gap, inside ±2% · Anthropic and OpenAI','Shira Mizrahi · 3 Nov 2026, 11:30'],
+   ['ok','Unallocated spend under its limit','4% unallocated, limit 10%','Checked automatically · 3 Nov 2026, 11:31'],
+   ['ok','Accrual proposal','$6,140 accrued for usage not yet invoiced','Rina Shapiro · 4 Nov 2026, 15:05'],
+   ['ok','Variance notes','4 drafted by the Variance analyst agent, 4 accepted','Shira Mizrahi · 5 Nov 2026, 10:40'],
+   ['ok','Upload to Datarails','$93,480 actual against $94,000 budget','Rina Shapiro · 5 Nov 2026, 17:20'],
+   ['ok','Period locked','October can\'t change. Corrections post to November.','Avi Goldman · 5 Nov 2026, 18:00']
+  ]:[
+   ['ok','Usage ingested to the last day','Through 13 Nov · 31,204 usage records so far','Landledger ingest · 14 Nov 2026, 02:10'],
+   ['ok','AI usage reconciled to invoices','1.4% gap, inside ±2% · invoices to 11 Nov','Shira Mizrahi · 13 Nov 2026, 15:40'],
+   ['ok','Unallocated spend under its limit','6% unallocated, limit 10%','Checked automatically · 14 Nov 2026, 02:12'],
+   ['wait','Accrual proposal',fmt(est)+' is estimated and not yet invoiced. The proposal is drawn up on 30 Nov.','Pending · Rina Shapiro'],
+   [acc===3?'ok':'now','Variance notes','3 drafted by the Variance analyst agent, '+acc+' accepted',acc===3?'Rina Shapiro · '+S.noteT:'An analyst accepts each note. The agent only drafts.'],
+   ['wait','Upload to Datarails','Not started. Opens when the notes and the accrual are done.',''],
+   ['wait','Period locked','Not yet. The CFO locks November after the upload.','']];
+  const done=steps.filter(s=>s[0]==='ok').length;
+  return `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:14px"><div class="seg" role="group" aria-label="Period"><button data-a="cper" data-v="nov" data-fk="cp-nov" aria-pressed="${!oct}">November · open</button><button data-a="cper" data-v="oct" data-fk="cp-oct" aria-pressed="${oct}">October · locked</button></div>${pill(oct?'ok':'nu',done+' of 7 '+(oct?'done':'in order'))}</div>
+  ${oct?`<div class="msg ok" style="margin-bottom:14px;display:flex;gap:10px;align-items:center">${ic('lock')}<span><b>October 2026 is locked.</b> Avi Goldman locked it on 5 Nov 2026. It can't change; corrections post to November.</span></div>`:''}
+  ${card(oct?'October 2026 close':'November 2026 close',`<div class="cb"><ol class="steps" style="margin-top:4px">${steps.map((s,i)=>`<li class="${s[0]}"><span class="sn ${s[0]}">${s[0]==='ok'?ic('check'):i+1}</span><div class="tx"><b>${esc(s[1])}</b>${s[0]==='now'?' '+pill('risk','Needs you'):''}<small style="color:var(--t2)">${esc(s[2])}</small>${s[3]?`<small>${esc(s[3])}</small>`:''}${!oct&&i===4?`<div class="rows" style="margin-top:8px">${NOTES.map((n,j)=>`<div style="align-items:flex-start"><span><span class="code" style="color:var(--t1)">${n[0]}</span><small class="sub" style="color:var(--t2)">${esc(n[1])}</small></span>${S.notes[j]?pill('ok','Accepted'):`<button class="btn sm" data-a="note" data-v="${j}" data-fk="n-${j}">Accept</button>`}</div>`).join('')}</div>`:''}${!oct&&i===6?`<button class="btn sm mt" disabled>${ic('lock')}Lock November</button>`:''}</div></li>`).join('')}</ol></div>`,'','The steps run in order. Each shows who did it and when.')}`;
+};
+
+SC.rules=()=>{
+  const rc=[{h:'Rate',c:r=>`${esc(r[0])}<span class="sub">per ${r[1]}</span>`,v:r=>r[0]+' (per '+r[1]+')'},{h:'Price',n:1,c:r=>'$'+(r[2]<.01?r[2].toFixed(4):r[2]<1?r[2].toFixed(3).replace(/0$/,''):r[2].toFixed(2))},{h:'vs v2',n:1,c:r=>r[3]==='same'?'<span class="dim">same</span>':r[3]}];
+  const al=[{h:'Selector',c:r=>`<span class="dim m">${RULES.indexOf(r)+1}</span>&nbsp; <span class="code">${esc(r[0])}</span>`,v:r=>r[0]},{h:'Cost center',c:r=>ccName(r[1])},{h:'Team',c:r=>esc(r[2])},{h:'Product',c:r=>esc(r[3])},{h:'P&L class',c:r=>esc(r[4])},{h:'Capitalisable',c:r=>r[5]?pill('ok','Yes'):'<span class="dim">No</span>',v:r=>r[5]?'Yes':'No'}];
+  const po=[{h:'Request kind',c:r=>`<b>${r[0]}</b>`},{h:'Automatic',c:r=>r[1]},{h:'Budget owner',k:'wide',c:r=>r[2]},{h:'Finance',k:'wide',c:r=>r[3]},{h:'CFO',k:'wide',c:r=>r[4]}];
+  return `<p class="lede">How usage becomes cost, where it lands, and who decides. Prices in USD.</p>
+  <div class="grid g32">
+   ${card('Rate card v3',tbl('rc',rc,RATES,{cards:false})+`<div class="cb" style="border-top:1px solid var(--hair)"><div class="rows"><div><span>v2</span><span class="dim">1 Jul – 30 Sep 2026</span></div><div><span>v1</span><span class="dim">1 Jan – 30 Jun 2026</span></div></div><div class="msg mt">A change is a request. <a href="#request" data-a="req" data-v="r4"><b>Rate card v4: GPU hour</b></a> is waiting on Finance.</div></div>`,copyBtn('rc'),'In effect since 1 Oct 2026')}
+   <div class="stack">
+    ${card('Shared costs',`<div class="cb"><p class="t2">Whatever no rule matches lands in <b>Shared pool</b>: cluster idle, ingress, monitoring and backups. It stays its own row and is never folded into a team.</p><div class="rows mt"><div><span>Split basis</span><span>Share of vCPU-hours</span></div><div><span>Shown as</span><span>Showback only</span></div><div><span>Unallocated now</span><span class="m">6% · limit 10%</span></div></div></div>`)}
+    ${card('Not a general ledger',`<div class="cb"><p class="t2">Landledger is a cost subledger for management reporting. Nothing here posts journals. Month-end figures go to Datarails.</p></div>`)}
+   </div>
+  </div>
+  <div class="stack" style="margin-top:14px">
+   ${card('Allocation rules',tbl('al',al,RULES),copyBtn('al'),'Checked in order. The first match wins.')}
+   ${card('Policies',tbl('po',po,POL),copyBtn('po'),'Who decides each kind of request. A cost center that is at risk or over adds Finance.')}
+  </div>`;
+};
+
+SC.audit=()=>{
+  const cols=[{h:'What',c:e=>`<b style="font-weight:500">${esc(e.what)}</b>`},{h:'Who',k:'wide',c:e=>`${esc(e.who)} <span class="dim">· ${esc(e.role)}</span>`},{h:'Kind',c:e=>pill('nu',e.kind)},{h:'When',k:'wide',c:e=>`<span class="nw">${e.when}</span>`},{h:'Hash',k:'wide',c:e=>`<span class="hash">${e.h}</span>`,v:e=>e.h},{h:'Chain',n:1,k:'wide',c:e=>`#${e.n.toLocaleString('en-US')} <span class="dim">← ${e.prev.slice(0,6)}</span>`,v:e=>e.n}];
+  const v=S.verify;
+  return `<p class="lede">Every decision, rule, rate and period change, newest first. Auditors see this screen, Explore and Budgets, read-only.</p>
+  <div class="msg ${v===2?'ok':''}" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:14px" aria-live="polite"><span>${v===2?`<b>Chain intact.</b> ${chainN.toLocaleString('en-US')} records, each one's hash matches the next. Checked just now.`:v===1?'Checking each record against the one before it…':`<b>${chainN.toLocaleString('en-US')} records.</b> Each carries the hash of the one before, so a changed record breaks the chain.`}</span><button class="btn sm" data-a="verify" data-fk="verify" ${v===1?'disabled':''}>${ic('audit')}Verify chain</button></div>
+  ${card('Records',tbl('au',cols,AUD),copyBtn('au'),'The latest '+AUD.length+' of '+chainN.toLocaleString('en-US'))}`;
+};
+
+/* ---------- charts ---------- */
+const DRAW={
+ burn(el){
+  const W=el.clientWidth,H=W<520?230:270,l=44,r=10,t=14,b=24,pw=W-l-r,ph=H-t-b,ym=120000;
+  const x=d=>l+(d-1)/29*pw,y=v=>t+ph-v/ym*ph;
+  let c=0;const pts=DAILY.map((v,i)=>[i+1,c+=v]);
+  const line=pts.map((p,i)=>(i?'L':'M')+x(p[0]).toFixed(1)+' '+y(p[1]).toFixed(1)).join('');
+  const p9=pts[8],ax=x(9),ay=y(p9[1]),sm=W<520;
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Cumulative cost in November: $48,210 by 14 Nov, forecast $101,400 by 30 Nov against a budget of $96,000.">
+  ${[0,25000,50000,75000,100000].map(v=>`<line x1="${l}" x2="${W-r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--hair)"/><text x="${l-8}" y="${y(v)+4}" text-anchor="end">$${v/1000}k</text>`).join('')}
+  ${[1,7,14,21,30].map(d=>`<text x="${x(d)}" y="${H-6}" text-anchor="${d===30?'end':d===1?'start':'middle'}">${d} Nov</text>`).join('')}
+  <line x1="${l}" x2="${W-r}" y1="${y(BUD)}" y2="${y(BUD)}" stroke="var(--t3)" stroke-width="1.5"/>
+  <text x="${l+4}" y="${y(BUD)-6}" class="v">Budget $96,000</text>
+  <line x1="${x(14)}" x2="${x(14)}" y1="${y(BUD)+6}" y2="${t+ph}" stroke="var(--bd)" stroke-dasharray="2 3"/>
+  <path d="M${x(14)} ${y(TOT.amt)}L${x(30)} ${y(FHI)}L${x(30)} ${y(FLO)}Z" fill="var(--viz-1)" opacity=".2"/>
+  <line x1="${x(14)}" y1="${y(TOT.amt)}" x2="${x(30)}" y2="${y(FC)}" stroke="var(--viz-1)" stroke-width="2" stroke-dasharray="5 4"/>
+  <path d="${line}" fill="none" stroke="var(--viz-1)" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="${x(14)}" cy="${y(TOT.amt)}" r="4" fill="var(--viz-1)" stroke="var(--sf)" stroke-width="2"/>
+  <text x="${x(14)+9}" y="${y(TOT.amt)+16}" class="v">$48,210 today</text>
+  <circle cx="${x(30)}" cy="${y(FC)}" r="3.5" fill="var(--sf)" stroke="var(--viz-1)" stroke-width="2"/>
+  <text x="${W-r}" y="${y(FHI)-(sm?20:8)}" text-anchor="end" class="v">Forecast $101,400</text>
+  <line x1="${ax}" y1="${ay-7}" x2="${ax}" y2="${ay-48}" stroke="var(--t1)"/>
+  <circle cx="${ax}" cy="${ay}" r="4.5" fill="var(--sf)" stroke="var(--t1)" stroke-width="1.75"/>
+  <text x="${ax-(sm?70:6)}" y="${ay-54}" class="a">9 Nov · agent loop, $1,240</text>
+  </svg>`;
+ },
+ stack(el){
+  const S_=CH.stack,W=el.clientWidth,H=200,l=44,r=4,t=8,b=22,pw=W-l-r,ph=H-t-b,n=DAILY.length;
+  const tot=DAILY.map((_,i)=>S_.reduce((s,x)=>s+x.v[i],0)),mx=Math.max.apply(0,tot)||1;
+  const p=Math.pow(10,Math.floor(Math.log10(mx))),f=mx/p,ym=(f<=1?1:f<=2?2:f<=2.5?2.5:f<=5?5:10)*p;
+  const k=v=>v>=1000?'$'+(v/1000)+'k':'$'+v,bw=Math.min(30,pw/n*.64),y=v=>t+ph-v/ym*ph;
+  let h=`<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Daily cost, 1 to 14 Nov, stacked by group.">`;
+  [0,ym/2,ym].forEach(v=>h+=`<line x1="${l}" x2="${W-r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--hair)"/><text x="${l-8}" y="${y(v)+4}" text-anchor="end">${k(v)}</text>`);
+  for(let i=0;i<n;i++){const cx=l+(i+.5)*pw/n;let acc=0;
+   S_.forEach(x=>{const y1=y(acc+x.v[i]),hh=y(acc)-y1;acc+=x.v[i];if(hh>.6)h+=`<rect x="${(cx-bw/2).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(hh-1,.5).toFixed(1)}" rx="1.5" fill="${x.c}" opacity="${x.o||1}"><title>${i+1} Nov · ${esc(x.n)}: ${fmt(x.v[i])}</title></rect>`;});
+   if(W>520||i%2===0)h+=`<text x="${cx}" y="${H-6}" text-anchor="middle">${i+1}</text>`;}
+  el.innerHTML=h+'</svg>';
+ }
+};
+function draw(){document.querySelectorAll('[data-chart]').forEach(el=>DRAW[el.dataset.chart](el));}
+
+/* ---------- shell ---------- */
+let cur='';
+function shell(){
+  const n=waiting().length,link=(x,ph)=>`<a href="#${x[0]}"${(cur===x[0]||(cur==='request'&&x[0]==='approvals'))?' aria-current="page"':''}${ph?' data-a="closeMore"':''}>${ic(x[0])}<span>${x[1]}</span>${x[0]==='approvals'?`<span class="cnt" data-n="${n}" aria-label="${n} waiting">${n}</span>`:''}</a>`;
+  $('#nav').innerHTML=NAV.map(g=>`<h2>${g[0]}</h2>${g[1].map(x=>link(x)).join('')}`).join('');
+  const all=NAV.reduce((a,g)=>a.concat(g[1]),[]),bar=all.filter(x=>x[2]),more=all.filter(x=>!x[2]);
+  $('#tabs').innerHTML=bar.map(x=>link(x)).join('')+`<button data-a="more" aria-haspopup="dialog"${more.some(x=>x[0]===cur)?' aria-current="page"':''}>${ic('more')}<span>More</span></button>`;
+  $('#sheet').innerHTML=`<div class="grip"></div>`+NAV.map(g=>{const xs=g[1].filter(x=>!x[2]);return xs.length?`<h2>${g[0]}</h2>${xs.map(x=>link(x,1)).join('')}`:'';}).join('')+`<div class="row"><div class="user" style="border:0;margin:0;padding:0"><span class="av">RS</span><div><b>Rina Shapiro</b><small>Finance · controller</small></div></div><div class="seg" role="group" aria-label="Theme" data-themeseg></div></div>`;
+  document.querySelectorAll('[data-themeseg]').forEach(el=>el.innerHTML=[['sys','System'],['light','Light'],['dark','Dark']].map(t=>`<button data-a="theme" data-v="${t[0]}" aria-pressed="${S.theme===t[0]}" aria-label="${t[1]} theme" title="${t[1]}">${ic(t[0]==='light'?'sun':t[0]==='dark'?'moon':'sys')}</button>`).join(''));
+  $('#perbtn').innerHTML=`${ic('cal')}<span>Nov 2026 <span class="st">· open</span></span>${ic('down')}`;
+}
+function render(keep){
+  let r=location.hash.slice(1);if(!SC[r])r='overview';
+  const fk=keep&&document.activeElement&&document.activeElement.dataset?document.activeElement.dataset.fk:null;
+  const changed=r!==cur;cur=r;
+  if(changed){S.err=false;}
+  document.title=TITLE[r]+' · Landledger';$('#ttl').textContent=TITLE[r];
+  $('#view').innerHTML=SC[r]();shell();draw();
+  if(changed&&!keep)window.scrollTo(0,0);
+  if(fk){const el=document.querySelector('[data-fk="'+(window.CSS&&CSS.escape?CSS.escape(fk):fk)+'"]');if(el)el.focus({preventScroll:true});}
+}
+function more(open){const w=$('#sheetw');w.hidden=!open;if(open){const a=$('#sheet a');a&&a.focus();}else{const b=$('#tabs button');b&&b.focus({preventScroll:true});}}
+function pop(open){$('#pop').hidden=!open;$('#perbtn').setAttribute('aria-expanded',open);}
+function decide(ok){
+  const r=REQ.find(x=>x.id===S.req),cm=($('#cmt')||{}).value||'';
+  if(!r||r.status!=='open'||r.who===ME)return;
+  if(!ok&&!cm.trim()){S.err=true;render(true);const c=$('#cmt');c&&c.focus();return;}
+  const t=nowT(),i=r.steps.findIndex(s=>s.st==='now');
+  Object.assign(r.steps[i],{st:ok?'ok':'no',who:ME,when:(ok?'Approved ':'Rejected ')+t,cm:cm.trim()});
+  r.steps.slice(i+1).forEach(s=>{if(ok&&s.auto){s.st='ok';s.when='Done '+t;}else if(!ok){s.who='Not applied';}});
+  r.status=ok?'approved':'rejected';r.box='done';r.decided=(ok?'Approved':'Rejected')+' 14 Nov by '+ME;
+  const e=seal({when:t,who:ME,role:'Finance',kind:'Decision',what:(ok?'Approved':'Rejected')+' "'+r.title+'" · '+fmt(r.amt)+' '+r.per+' · evidence snapshot saved'});
+  AUD.unshift(e);r.snap=e.h;S.err=false;S.verify=0;
+  const c=CC[r.cc];if(c&&c.res)c.res.forEach(x=>{if(x[0]===r.title)x[2]=ok?'Approved 14 Nov by '+ME:'Released · rejected 14 Nov';});
+  render(true);
+  const n=waiting().length;
+  toast((ok?'Approved. ':'Rejected. ')+(r.agent?r.sponsor:r.who)+' has been told. '+(n?n+' still waiting on you.':'Nothing else is waiting on you.'));
+}
+const ACT={
+  copy(v){const txt=COPY[v]||'',ok=()=>toast('Copied '+(txt.split('\n').length-1)+' rows. Paste into Excel.'),no=()=>toast('The clipboard is blocked here. Select the table and copy it.');
+    const old=()=>{try{const ta=document.createElement('textarea');ta.value=txt;ta.style.cssText='position:fixed;opacity:0';document.body.appendChild(ta);ta.select();const done=document.execCommand('copy');ta.remove();done?ok():no();}catch(e){no();}};
+    try{if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(ok,old);else old();}catch(e){old();}},
+  by(v){S.ex.by=v;S.ex.f=S.ex.f.filter(f=>f.d!==v);render(true);},
+  cat(v){S.ex.cat=v;render(true);},
+  drill(v){const s=S.ex;s.f.push({d:s.by,v:v});s.by=NEXT[s.by];render(true);},
+  rmf(v){const s=S.ex,n=+v;if(s.f[n])s.by=s.f[n].d;s.f=s.f.slice(0,n);render(true);},
+  rmf1(v){S.ex.f.splice(+v,1);render(true);},
+  req(v){S.req=v;S.err=false;},
+  approve(){decide(true);},reject(){decide(false);},
+  theme(v){S.theme=v;if(v==='sys')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',v);shell();},
+  more(){more(true);},
+  closeMore(v,t,e){if(t.id==='sheetw'&&e.target!==t)return;more(false);},
+  per(){pop($('#pop').hidden);},
+  setper(v){pop(false);if(v==='oct'){S.close='oct';if(cur==='close')render(true);else location.hash='#close';}else if(cur==='close'){S.close='nov';render(true);}},
+  cc(v){S.cc=S.cc===v?null:v;render(true);},
+  cper(v){S.close=v;render(true);},
+  note(v){S.notes[+v]=1;if(S.notes.every(Boolean)){S.noteT=nowT();AUD.unshift(seal({when:S.noteT,who:ME,role:'Finance',kind:'Period',what:'Accepted 3 variance notes for November 2026'}));S.verify=0;toast('All 3 notes accepted. The accrual proposal is next.');}render(true);},
+  verify(){S.verify=1;render(true);setTimeout(()=>{let ok=true;for(let i=AUD.length-1;i>=0;i--){const e=AUD[i];if(hash(e.prev+e.when+e.who+e.what)!==e.h||(i<AUD.length-1&&e.prev!==AUD[i+1].h))ok=false;}S.verify=ok?2:0;if(cur==='audit')render(true);toast(ok?'Chain intact.':'The chain is broken.');},700);},
+  toast(v){toast(v);}
+};
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-a]');
+  if(!e.target.closest('.per'))pop(false);
+  if(t&&ACT[t.dataset.a])ACT[t.dataset.a](t.dataset.v,t,e);
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('#sheetw').hidden)more(false);if(!$('#pop').hidden){pop(false);$('#perbtn').focus();}}});
+window.addEventListener('hashchange',()=>{more.call&&($('#sheetw').hidden=true);render();});
+let rz,lw=window.innerWidth;window.addEventListener('resize',()=>{clearTimeout(rz);rz=setTimeout(()=>{if(window.innerWidth!==lw){lw=window.innerWidth;draw();}},120);});
+render();
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(draw);
+})();
+</script>
+</body>
+</html>
