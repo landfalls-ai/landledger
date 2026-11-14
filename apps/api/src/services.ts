@@ -14,6 +14,7 @@ import { Ingest, type IngestLog } from './ingest/runner.js';
 import { ClicklandClient, LandflowClient } from './ingest/sources.js';
 import { emitCostMetrics } from './metrics.js';
 import { RateCards } from './ratecards.js';
+import { SecretBox } from './secrets.js';
 import { Spend } from './spend.js';
 
 /** Everything the routes call. */
@@ -48,7 +49,8 @@ export function createServices(
 ): Services {
   const audit = new AuditLog(sql);
   const oidc = config.oidc ? new OidcClient(config.oidc, fetchImpl) : null;
-  const webhooks = new Webhooks(sql, audit, fetchImpl);
+  const box = config.secretKey ? new SecretBox(config.secretKey) : null;
+  const webhooks = new Webhooks(sql, audit, fetchImpl, box);
   const records = new Records(sql);
   const rateCards = new RateCards(sql, audit);
   const allocation = new Allocation(sql, audit);
@@ -81,7 +83,7 @@ export function createServices(
     sql,
     audit,
     keys: new Keys(sql, audit),
-    sessions: new Sessions(sql, config, audit, oidc),
+    sessions: new Sessions(sql, config, audit, oidc, box),
     dimensions: new Dimensions(sql),
     webhooks,
     periods: new Periods(sql, audit, webhooks, now),

@@ -3,6 +3,7 @@ import { buildApp } from './app.js';
 import { configFromEnv } from './config.js';
 import { createSql } from './db.js';
 import { createLogger } from './logger.js';
+import { sealLegacySecrets, SecretBox } from './secrets.js';
 import { createServices, startBackgroundJobs } from './services.js';
 import { stopTelemetry } from './telemetry.js';
 
@@ -12,6 +13,12 @@ const sql = createSql(config.postgresUrl);
 const logger = createLogger();
 const services = createServices(config, sql, fetch, logger);
 const app = await buildApp(services, { loggerInstance: logger });
+
+// Secrets written before they were sealed: sealed now (or, with no key, ID tokens dropped).
+const sealed = await sealLegacySecrets(sql, config.secretKey ? new SecretBox(config.secretKey) : null);
+if (sealed) app.log.info(`secrets at rest: ${sealed} legacy row(s) ${config.secretKey ? 'sealed' : 'cleared'}`);
+if (!config.secretKey)
+  app.log.warn('LANDLEDGER_SECRET_KEY is not set: sessions keep no ID token and webhooks cannot be created');
 
 const stopJobs = config.backgroundJobs
   ? startBackgroundJobs(services, (msg, err) => app.log.error({ err }, msg))

@@ -176,6 +176,8 @@ and never decides.
 - Requester ≠ approver, enforced in the API, not only in the console.
 - Rate cards, rules and policies change only through approved requests, effective-dated.
 - Periods lock; corrections post forward.
+- Secrets at rest: session ID tokens and webhook signing secrets are sealed with AES-256-GCM under
+  `LANDLEDGER_SECRET_KEY` (`apps/api/src/secrets.ts`); API keys and session cookies are stored as sha256 only.
 - The audit log is hash-chained (`sha256(previous_hash ‖ entry)`); `GET /api/audit/verify` walks it. A chain proves
   no entry changed, not that the newest weren't cut off, so its head is **anchored** outside the database every hour
   (`apps/api/src/anchors.ts`): an OpenTelemetry log record and span with `audit.seq` and `audit.hash` to Clickland,

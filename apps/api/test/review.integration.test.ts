@@ -10,6 +10,7 @@ import { createTestDatabase, integrationEnabled, type TestDatabase } from '@land
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { anchorAudit } from '../src/anchors.js';
 import { createSql, type Sql } from '../src/db.js';
+import { sealLegacySecrets, SecretBox, sessionAad, webhookAad } from '../src/secrets.js';
 import { RATE_CARD_V1, seed } from '../src/seed.js';
 import { createServices, type Services } from '../src/services.js';
 import { call, DANA, fakeSources, TAL, testConfig, YOAV } from './fakes.js';
@@ -348,5 +349,21 @@ describe.skipIf(!integrationEnabled('db'))("wave 1's review against Postgres", (
     const v = await services.audit.verify();
     expect(v).toMatchObject({ ok: false, truncated: true, checked: first!.seq, brokenAt: first!.seq + 1 });
     expect(v.reason).toMatch(new RegExp(`ends at entry ${first!.seq}, but entry ${second!.seq} was anchored`));
+  });
+
+  it('seals secrets stored in plaintext before, and without a key keeps no ID token', async () => {
+    await sql`INSERT INTO webhooks (id, url, secret, events, created_by) VALUES ('wh_old', 'http://x.test', 'whsec_old', ${['ping']}, 'test')`;
+    await sql`INSERT INTO sessions (id, user_id, expires_at, id_token) VALUES ('s_old', 'usr_tal', now() + interval '1 hour', 'eyJold')`;
+    const box = new SecretBox(Buffer.alloc(32, 7));
+    expect(await sealLegacySecrets(sql, box)).toBe(2);
+    const [w] = await sql`SELECT secret FROM webhooks WHERE id = 'wh_old'`;
+    const [s] = await sql`SELECT id_token FROM sessions WHERE id = 's_old'`;
+    expect(box.open(w!.secret, webhookAad('wh_old'))).toBe('whsec_old');
+    expect(box.open(s!.id_token, sessionAad('s_old'))).toBe('eyJold');
+    expect(await sealLegacySecrets(sql, box)).toBe(0); // once
+    await sql`INSERT INTO sessions (id, user_id, expires_at, id_token) VALUES ('s_old2', 'usr_tal', now() + interval '1 hour', 'eyJold2')`;
+    expect(await sealLegacySecrets(sql, null)).toBe(1);
+    const [cleared] = await sql`SELECT id_token FROM sessions WHERE id = 's_old2'`;
+    expect(cleared!.id_token).toBeNull();
   });
 });

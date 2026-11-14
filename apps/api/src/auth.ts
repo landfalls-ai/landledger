@@ -7,6 +7,7 @@ import type { Sql } from './db.js';
 import { ApiError } from './errors.js';
 import { newId, randomToken, sha256 } from './ids.js';
 import { type Identity, type OidcClient, pkcePair } from './oidc.js';
+import { isSealed, type SecretBox, sessionAad } from './secrets.js';
 import { actorOf, identify, meOf, type Principal, SESSION_COOKIE } from './principal.js';
 
 const LOGIN_COOKIE = 'll_login';
@@ -32,6 +33,8 @@ export class Sessions {
     private readonly config: Config,
     private readonly audit: AuditLog,
     private readonly oidc: OidcClient | null,
+    /** Seals the ID token kept for sign-out (secrets.ts); without it no ID token is kept. */
+    private readonly box: SecretBox | null = null,
   ) {}
 
   private client(): OidcClient {
@@ -80,6 +83,7 @@ export class Sessions {
     }
 
     const token = randomToken(32);
+    const sessionId = sha256(token);
     await this.sql.begin(async (tx) => {
       const [user] = await tx<{ id: string }[]>`
         INSERT INTO users (id, issuer, subject, email, name, roles, groups)
@@ -95,8 +99,9 @@ export class Sessions {
           ON CONFLICT (name) DO UPDATE SET last_seen_at = now(), role = EXCLUDED.role`;
       await tx`
         INSERT INTO sessions (id, user_id, expires_at, id_token, user_agent)
-        VALUES (${sha256(token)}, ${user!.id}, now() + make_interval(hours => ${this.config.sessionHours}),
-                ${identity.idToken}, ${input.userAgent?.slice(0, 300) ?? null})`;
+        VALUES (${sessionId}, ${user!.id}, now() + make_interval(hours => ${this.config.sessionHours}),
+                ${this.box ? this.box.seal(identity.idToken, sessionAad(sessionId)) : null},
+                ${input.userAgent?.slice(0, 300) ?? null})`;
       await this.audit.append(
         {
           actor: identity.email ?? identity.subject,
@@ -119,7 +124,18 @@ export class Sessions {
       const [row] = await this.sql<{ id_token: string | null }[]>`
         UPDATE sessions SET revoked_at = now() WHERE id = ${principal.sessionId} AND revoked_at IS NULL
         RETURNING id_token`;
-      idToken = row?.id_token ?? null;
+      const stored = row?.id_token ?? null;
+      // A sealed token opens with its own session id only; a token that won't open just leaves out the hint.
+      idToken =
+        stored && this.box && isSealed(stored)
+          ? (() => {
+              try {
+                return this.box.open(stored, sessionAad(principal.sessionId!));
+              } catch {
+                return null;
+              }
+            })()
+          : null;
       await this.audit.append({
         ...actorOf(principal),
         action: 'auth.signed_out',

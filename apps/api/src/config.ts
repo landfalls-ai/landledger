@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { parseEnv } from 'node:util';
 import { DEFAULT_PG_URL } from '@landledger/schema';
+import { parseSecretKey } from './secrets.js';
 
 /** Sign-in through Landbright: an OIDC relying party (authorization code + PKCE, client_secret_post). */
 export interface OidcConfig {
@@ -47,6 +48,11 @@ export interface Config {
   dockerSharesCluster: string | null;
   /** How often the audit chain's head is anchored outside the database (minutes; 0 turns it off). */
   auditAnchorMinutes: number;
+  /**
+   * LANDLEDGER_SECRET_KEY: seals session ID tokens and webhook secrets at rest (AES-256-GCM, secrets.ts). Null: no ID
+   * token is kept and webhooks can't be created.
+   */
+  secretKey: Buffer | null;
 }
 
 const expandHome = (path: string) => (path.startsWith('~/') ? `${homedir()}${path.slice(1)}` : path);
@@ -133,6 +139,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
       (env.LANDLEDGER_DOCKER_SHARES_CLUSTER ?? 'orbstack') === 'none'
         ? null
         : (env.LANDLEDGER_DOCKER_SHARES_CLUSTER ?? 'orbstack') || null,
+    secretKey: env.LANDLEDGER_SECRET_KEY ? parseSecretKey(env.LANDLEDGER_SECRET_KEY) : null,
     auditAnchorMinutes: (() => {
       const n = Number(env.LANDLEDGER_AUDIT_ANCHOR_MINUTES ?? '60');
       if (!Number.isInteger(n) || n < 0)

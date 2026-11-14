@@ -20,6 +20,7 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_SESSION_HOURS` | `8` | Session length |
 | `LANDLEDGER_DEV_AUTH` | `off` | `on`: calls with no session and no key act as a local developer (controller). Refused unless the API listens on loopback |
 | `LANDLEDGER_BOOTSTRAP_KEY` | unset | An admin key for scripts before anyone has signed in |
+| `LANDLEDGER_SECRET_KEY` | unset | 32 bytes, base64 or hex (`openssl rand -base64 32`), in the git-ignored `apps/api/.env.local`. Seals the ID token a session keeps for sign-out and each webhook's signing secret with AES-256-GCM, bound to their row (`enc:v1:…`). Unset: sessions keep no ID token (sign-out skips the hint) and webhooks can't be created. At start, rows from before are sealed (or, with no key, ID tokens dropped) |
 | `LANDLEDGER_BACKGROUND_JOBS` | on | `off` stops the webhook dispatcher and the session cleanup |
 | `LANDLEDGER_TELEMETRY` | `on` | `off` (or `OTEL_SDK_DISABLED=true`) stops traces, metrics and logs |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:24318` | Clickland's collector (OTLP/HTTP) |

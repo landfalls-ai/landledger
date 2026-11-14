@@ -32,6 +32,7 @@ const config = (over: Partial<Config> = {}): Config => ({
   ingestJobs: false,
   dockerSharesCluster: null,
   auditAnchorMinutes: 0,
+  secretKey: Buffer.alloc(32, 7),
   ...over,
 });
 
@@ -284,11 +285,15 @@ describe.skipIf(!integrationEnabled('db'))('the API against Postgres', () => {
   it('signs out: the session ends here and the browser goes to Landbright to end it there', async () => {
     const { session } = await signIn(TAL);
     const cookies = { ll_session: session!.value };
+    // The ID token kept for sign-out is sealed at rest (AES-256-GCM, bound to its session).
+    const tokens = await sql`SELECT id_token FROM sessions WHERE id_token IS NOT NULL`;
+    expect(tokens.length).toBeGreaterThan(0);
+    for (const t of tokens) expect(t.id_token).toMatch(/^enc:v1:/);
     const out = await app.inject({ method: 'POST', url: '/api/auth/logout', cookies });
     const redirect = new URL(out.json().redirect);
     expect(`${redirect.origin}${redirect.pathname}`).toBe(`${ISSUER}/session/end`);
     expect(redirect.searchParams.get('post_logout_redirect_uri')).toBe('http://localhost:4811/');
-    expect(redirect.searchParams.get('id_token_hint')).toBeTruthy();
+    expect(redirect.searchParams.get('id_token_hint')).toMatch(/^ey/); // the token itself, opened
     expect(cookieFrom(out.headers['set-cookie'], 'll_session')!.raw).toMatch(/Max-Age=0|Expires=Thu, 01 Jan 1970/);
     expect((await app.inject({ method: 'GET', url: '/api/auth/me', cookies })).statusCode).toBe(401);
   });
@@ -304,6 +309,9 @@ describe.skipIf(!integrationEnabled('db'))('the API against Postgres', () => {
       })
     ).json();
     expect(hook.secret).toMatch(/^whsec_/);
+    const [stored] = await sql`SELECT secret FROM webhooks WHERE id = ${hook.id}`;
+    expect(stored!.secret).toMatch(/^enc:v1:/); // sealed at rest; the signer opens it
+    expect(stored!.secret).not.toContain(hook.secret.slice(6));
     const ping = await app.inject({ method: 'POST', url: `/api/webhooks/${hook.id}/ping`, cookies: yoav });
     expect(ping.statusCode).toBe(202);
     expect(await services.webhooks.dispatchDue()).toBe(1);

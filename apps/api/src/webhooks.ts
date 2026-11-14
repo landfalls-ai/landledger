@@ -2,9 +2,10 @@ import type { WebhookEvent, WebhookInput } from '@landledger/contracts';
 import { createHmac, randomBytes } from 'node:crypto';
 import type { AuditLog } from './audit.js';
 import type { Sql, Tx } from './db.js';
-import { notFound } from './errors.js';
+import { ApiError, notFound } from './errors.js';
 import { newId } from './ids.js';
 import { actorOf, type Principal } from './principal.js';
+import { isSealed, type SecretBox, webhookAad } from './secrets.js';
 
 /** Standard Webhooks retry schedule: the wait after each failed attempt; after the last one the delivery fails. */
 export const RETRY_DELAYS_S = [5, 30, 120, 600, 1800];
@@ -44,7 +45,15 @@ const toView = (r: Row): WebhookView => ({
   createdAt: r.created_at.toISOString(),
 });
 
-type Due = { id: string; event_id: string; payload: unknown; attempts: number; url: string; secret: string };
+type Due = {
+  id: string;
+  event_id: string;
+  payload: unknown;
+  attempts: number;
+  url: string;
+  secret: string;
+  webhook_id: string;
+};
 
 /**
  * Webhooks out, Clickland's outbox pattern: `enqueue` writes one `outbox` row per subscriber inside the caller's
@@ -56,7 +65,16 @@ export class Webhooks {
     private readonly sql: Sql,
     private readonly audit: AuditLog,
     private readonly fetchImpl: typeof fetch = fetch,
+    /** Seals signing secrets at rest (secrets.ts); without it webhooks can't be created. */
+    private readonly box: SecretBox | null = null,
   ) {}
+
+  /** A stored secret as the signer needs it: sealed ones opened; a legacy plaintext one as is (sealed at start). */
+  private secretOf(webhookId: string, stored: string): string {
+    if (!isSealed(stored)) return stored;
+    if (!this.box) throw new Error('LANDLEDGER_SECRET_KEY is not set: sealed webhook secrets cannot be opened');
+    return this.box.open(stored, webhookAad(webhookId));
+  }
 
   async list(): Promise<WebhookView[]> {
     const rows = await this.sql<Row[]>`SELECT * FROM webhooks WHERE disabled_at IS NULL ORDER BY created_at DESC`;
@@ -65,12 +83,19 @@ export class Webhooks {
 
   /** The signing secret is returned only here, once. */
   async create(input: WebhookInput, by: Principal): Promise<WebhookView & { secret: string }> {
+    const box = this.box;
+    if (!box)
+      throw new ApiError(
+        'unavailable',
+        'Webhook secrets are sealed at rest: set LANDLEDGER_SECRET_KEY (openssl rand -base64 32) to create webhooks',
+      );
     const secret = `whsec_${randomBytes(24).toString('base64')}`;
     const actor = actorOf(by);
+    const id = newId('wh');
     return (await this.sql.begin(async (tx) => {
       const [row] = await tx<Row[]>`
         INSERT INTO webhooks (id, url, secret, events, description, created_by)
-        VALUES (${newId('wh')}, ${input.url}, ${secret}, ${input.events}, ${input.description}, ${actor.actor})
+        VALUES (${id}, ${input.url}, ${box.seal(secret, webhookAad(id))}, ${input.events}, ${input.description}, ${actor.actor})
         RETURNING *`;
       await this.audit.append(
         {
@@ -124,7 +149,7 @@ export class Webhooks {
         SELECT id FROM outbox WHERE status = 'pending' AND next_attempt_at <= now()
         ORDER BY next_attempt_at LIMIT ${limit} FOR UPDATE SKIP LOCKED
       ) AND w.id = o.webhook_id
-      RETURNING o.id, o.event_id, o.payload, o.attempts, w.url, w.secret`;
+      RETURNING o.id, o.event_id, o.payload, o.attempts, w.url, w.secret, w.id AS webhook_id`;
     await Promise.all(due.map((d) => this.send(d)));
     return due.length;
   }
@@ -134,6 +159,7 @@ export class Webhooks {
     const timestamp = Math.floor(Date.now() / 1000);
     let error: string | null = null;
     try {
+      const secret = this.secretOf(d.webhook_id, d.secret);
       const res = await this.fetchImpl(d.url, {
         method: 'POST',
         headers: {
@@ -141,7 +167,7 @@ export class Webhooks {
           'user-agent': 'Landledger-Webhooks/0.1',
           'webhook-id': d.event_id,
           'webhook-timestamp': String(timestamp),
-          'webhook-signature': signWebhook(d.secret, d.event_id, timestamp, body),
+          'webhook-signature': signWebhook(secret, d.event_id, timestamp, body),
         },
         body,
         redirect: 'manual',

@@ -23,6 +23,8 @@ export const testConfig = (over: Partial<Config> = {}): Config => ({
   ingestJobs: false,
   dockerSharesCluster: null,
   auditAnchorMinutes: 0,
+  // A fixed test key (never used outside tests).
+  secretKey: Buffer.alloc(32, 7),
   ...over,
 });
 
