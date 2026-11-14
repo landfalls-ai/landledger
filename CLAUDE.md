@@ -2,8 +2,9 @@
 
 The land family's cost subledger for technology and AI spend (see README.md). A pnpm + Nx monorepo: `apps/api`
 (Fastify), `apps/console` (React + Vite), `libs/money`, `libs/focus`, `libs/contracts`, `libs/schema`, `libs/tokens`;
-Postgres in `deploy/compose.infra.yml`. Wave 1's foundations are built (money, records, periods, sign-in, the shell);
-ingest, allocation and the money screens are next.
+Postgres in `deploy/compose.infra.yml`. Wave 1 "See the spend" is built: ingest from
+Landflow and Clickland (`apps/api/src/ingest/`, `libs/pricing`), rate card approval, allocation (`libs/allocation`),
+budgets, Overview, Explore and Budgets, exports, MCP and cost metrics to Clickland. Wave 2 (requests) is next.
 
 ## Read first
 

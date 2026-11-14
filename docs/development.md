@@ -46,8 +46,11 @@ and someone with no mapped group is turned away (`?signin_error=no_role`).
 |---|---|
 | Money | `libs/money/src/money.ts` (`Money`, `split`), `decimal.ts`, `units.ts` (`Rate`, `Quantity`); [money.md](money.md) |
 | Cost records | `libs/focus/src/columns.ts` (the catalogue), `check.ts`, `correct.ts` |
-| Tables | `libs/schema/migrations/0001_core.sql`; the runner in `libs/schema/src/index.ts` |
-| Wire contracts | `libs/contracts/src/index.ts` |
+| Ingest | `apps/api/src/ingest/` (`sources.ts` clients, `build.ts` records, `runner.ts` runs), `libs/pricing`, the CLI `apps/api/src/cli.ts`; [ingest.md](ingest.md) |
+| Allocation | `libs/allocation/src/index.ts` (engine), `apps/api/src/allocation.ts` (rule sets, generations, `DEV_RULES`); [allocation.md](allocation.md) |
+| Spend | `apps/api/src/spend.ts` (Overview, Explore, Budgets), `budgets.ts`, `export.ts`, `mcp.ts`, `metrics.ts`; console `routes/overview.tsx`, `explore.tsx`, `budgets.tsx`; [spend.md](spend.md) |
+| Tables | `libs/schema/migrations/0001_core.sql` … `0004_budgets.sql`; the runner in `libs/schema/src/index.ts` |
+| Wire contracts | `libs/contracts/src/index.ts`, `sources.ts` (Landflow and Clickland), `spend.ts` (the read views) |
 | API | `apps/api/src/app.ts` (routes), `auth.ts` + `oidc.ts` (sign-in), `principal.ts` (who is calling), `audit.ts` (hash chain), `ledger.ts` (periods, records), `webhooks.ts` (outbox) |
 | Console | `apps/console/src/router.tsx`, `nav.ts` (the navigation of [ui.md](ui.md)), `components/shell/`, `routes/` |
 
@@ -57,7 +60,7 @@ and someone with no mapped group is turned away (`?signin_error=no_role`).
   Products round half-even to the micro-unit; anything shown or posted rounds half away from zero ([money.md](money.md)).
 - **Migrations** are numbered `NNNN_name.sql`, applied in one transaction under an advisory lock, and never edited once
   shipped (the runner refuses a changed checksum): a change is a new file.
-- **Append only**: `cost_records`, `cost_record_keys`, `fx_rates`, `rate_lines`, `audit_log` refuse `UPDATE`, `DELETE`
+- **Append only**: `cost_records`, `cost_record_keys`, `fx_rates`, `rate_lines`, `audit_log`, `allocations`, `allocation_generations`, `budget_imports`, `budgets` refuse `UPDATE`, `DELETE`
   and `TRUNCATE` in the database; `periods`, `ingest_runs` and `rate_card_versions` only move forward.
 - **Routes** validate with zod (`parse`), answer errors as `{ error: { code, message } }`, check scopes with `need`,
   and write the audit log in the same transaction as the change.

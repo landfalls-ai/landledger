@@ -33,7 +33,7 @@ will move.
 | Claim | Source | Holds |
 |---|---|---|
 | Each AI call is an `ai.call` usage event with provider, model, operation, input and output tokens, the workflow, agent, execution and actor, and Landflow's cost estimate | `landflow-clickland/apps/web/src/lib/server/ai-usage/index.ts:174`-`:183` | yes |
-| Cache-read and cache-write tokens are **not** on the event, but are parts of `inputTokens` in `ai_usage` and the insights report | `index.ts:182`; `apps/web/src/lib/shared/ai-usage.ts:9`-`:15` | yes |
+| Cache-read and cache-write tokens were **not** on the event before b1a6883c (now `cacheRead`, `cacheWrite`), but are parts of `inputTokens` in `ai_usage` and the insights report | `index.ts:182`; `apps/web/src/lib/shared/ai-usage.ts:9`-`:15` | yes |
 | A long-context tier prices the whole request above a threshold; cache parts at cache prices; local providers (Ollama) cost nothing | `apps/web/src/lib/server/ai-usage/prices.ts:144`-`:152`, `:16`-`:29`, `:94` | yes |
 | The price table is readable: defaults and the instance's overrides | `docs/reference/api.md:119` (`GET /api/settings/ai-prices`) | yes [docs] |
 | Event ids are stable: `ue_<nanoid>` when written, `bf:<ai_usage id>` when backfilled | `apps/web/src/lib/server/usage/ledger.ts:150`; `usage/backfill.ts:49` | yes |
@@ -87,13 +87,14 @@ Until the route exists, `fake-clickland` serves this shape from fixtures, and th
    a mismatch fails the run.
 3. **Price each call** with the rate card version effective on the call's UTC day: look up the line by provider and
    model (exact, then the longest prefix, as Landflow does), choose the long-context tier when input exceeds it, and
-   price input (and, when the event carries them, cache read and cache write) and output separately. A model with no
-   line: Landflow's own `cost`, labelled `:landflow-estimate`.
+   price input (and, when the event carries them, cache read and cache write) and output separately (*Cache tokens*
+   below). A model with no line: Landflow's own `cost`, labelled `:landflow-estimate`.
 4. **Sum** per day × provider × model × workflow × agent × actor × meter × price line, keeping each call's exact
    product and rounding the sum half-even to micro-units once.
-5. **Cache adjustment** (until Landflow carries cache tokens per call): for each model, `GET /api/insights/ai-usage?
-   from=day&to=day` gives the day's cache-read and cache-write tokens; an `Adjustment` record per model moves those
-   tokens from input price to cache prices. It has no workflow (the report has none per model and day).
+5. **Cache adjustment**, for events without cache tokens only: for each model with such an event that day,
+   `GET /api/insights/ai-usage?from=day&to=day` gives the day's cache-read and cache-write tokens; an `Adjustment`
+   record per model and meter moves those tokens, less the ones already known from events that carry them, from input
+   price to cache prices. It has no workflow (the report has none per model and day).
 6. **Read Clickland**: one rollup call for the day; rows → per workload container and resource, allocated quantity ×
    rate; capacity → per cluster and resource, allocatable × rate; idle = capacity cost − Σ allocated cost. If idle
    would be negative, record it as is with a warning (OpenCost clamps to zero, `costmodel.go:2142`-`:2156`; Landledger
@@ -106,6 +107,23 @@ Until the route exists, `fake-clickland` serves this shape from fixtures, and th
 `landflow:insights:<day>:<model>:<meter>` (backfill and cache adjustment);
 `clickland:<day>:<cluster>:<namespace>/<kind>/<workload>/<container>:<resource>`;
 `clickland:<day>:<cluster>:idle:<resource>`.
+
+## Cache tokens (Landflow b1a6883c, 14 Nov 2026)
+
+Landflow's ledger-cache change (branch `backbone/ledger-cache`) adds integer `cacheRead` and `cacheWrite` to each
+`ai.call` event's attributes. Both are **parts of** `input`, so a call has three input buckets:
+
+| Bucket | Tokens | Price |
+|---|---|---|
+| Uncached input | `input − cacheRead − cacheWrite` | input |
+| Cache read | `cacheRead` | cache read |
+| Cache write | `cacheWrite` | cache write |
+
+The event's `cost` already prices cache at the cache prices, so `x_SourceCost` and Landledger's price agree when the
+rate card matches Landflow's table. Events written before the change have no such keys: a missing key is **unknown,
+not 0**. Those calls are priced with all input at the input price, and the daily per-model adjustment (step 5) is kept
+for them only; a model whose events that day all carry the keys gets no adjustment. Both kinds of event can fall on
+the same day; the adjustment then moves only the insights' cache tokens not already known from events.
 
 ## Decisions
 

@@ -1,7 +1,9 @@
 # Environment variables
 
-Every default is in `.env.example`; copy it to `.env` (git-ignored) to change one. The API and `pnpm db:*` read `.env`
-from the workspace root. Development credentials only.
+Every default is in `.env.example`; copy it to `.env` (git-ignored) to change one. The API, the ingest CLI and
+`pnpm db:*` read, without overriding what is already set, `.env.local` in the directory they start in, then
+`apps/api/.env.local`, `.env.local` and `.env` at the workspace root. Keys for the sources go in `apps/api/.env.local`
+(git-ignored). Development credentials only.
 
 | Variable | Default | What |
 |---|---|---|
@@ -22,4 +24,12 @@ from the workspace root. Development credentials only.
 | `LANDLEDGER_TELEMETRY` | `on` | `off` (or `OTEL_SDK_DISABLED=true`) stops traces, metrics and logs |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:24318` | Clickland's collector (OTLP/HTTP) |
 | `LANDLEDGER_ENV` | `local` | `deployment.environment.name` on telemetry |
+| `LANDLEDGER_LANDFLOW_URL`, `LANDLEDGER_LANDFLOW_KEY` | unset | Landflow's API and an `lf_…` key that reads usage, insights, prices, workflows and agents. Unset: no AI ingest |
+| `LANDLEDGER_LANDFLOW_SERVICE`, `LANDLEDGER_LANDFLOW_NAMESPACE` | `landflow-host`, `landflow-dev` | The service and namespace AI records are tagged with (where Landflow runs) |
+| `LANDLEDGER_CLICKLAND_URL`, `LANDLEDGER_CLICKLAND_KEY` | unset | Clickland's API and a key for `POST /api/usage/rollup`. Unset: no cluster ingest |
+| `LANDLEDGER_CLICKLAND_LABELS` | unset | Pod labels to ask the rollup for, comma-separated |
+| `LANDLEDGER_CLICKLAND_CONSOLE_URL` | `http://localhost:4711` | Where Explore's *Open in Clickland* links go |
+| `LANDLEDGER_INGEST` | on | `off` stops the hourly ingest tick |
+| `LANDLEDGER_COST_METRICS` | on | `off` stops sending `landledger.cost.*` metrics to Clickland |
+| `LANDLEDGER_COST_METRICS_ENDPOINT` | `${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics` | Where the cost metrics are posted (OTLP/HTTP JSON) |
 | `LANDLEDGER_INTEGRATION` | unset | Tests: a comma list of real services to test against (`db`, or `all`) |

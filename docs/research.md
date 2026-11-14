@@ -142,3 +142,13 @@ FOCUS export. The usage comes from Clickland and Landflow; the arithmetic is Lan
   grouped by attributes including `k8s.deployment.name`, as JSON numbers, with coverage: no requests, no allocated
   maximum, no node capacity, no labels. Spec 002 designs to the draft plus the additions D2 asks for, and tests against
   a fake until the real route exists.
+
+**Answered by wave 1 (14 November):**
+
+- Clickland's `POST /api/usage/rollup` now gives requested and allocated (per-sample max) CPU and memory per
+  container, node allocatable capacity per cluster, volume claims with capacity and whether they share the node's
+  filesystem, network bytes, and coverage per source. Owners and pod labels are still absent.
+- Landflow's `ai.call` events carry `cacheRead` and `cacheWrite` since b1a6883c (branch `backbone/ledger-cache`), as
+  parts of `input`. Older events lack them; spec 002's plan (*Cache tokens*) says how both are priced.
+- Storage: claims with their own capacity are priced in GB-months; OrbStack's claims share the node's disk and are
+  left in the node's cost, with a warning.

@@ -6,6 +6,10 @@
 | [architecture.md](architecture.md) | Processes, code map, data, jobs, the land family's interfaces, controls |
 | [development.md](development.md) | Setup, ports, commands, where each area's code starts, conventions, how to check a change |
 | [money.md](money.md) | Micro-units, the two rounding modes, splits, FX, records and corrections, periods |
+| [ingest.md](ingest.md) | Landflow's AI calls and Clickland's usage into priced records: runs, completeness, corrections, cache tokens, the CLI |
+| [rate-cards.md](rate-cards.md) | The rate card's lines, how a version is proposed and approved by a person, v1 on this machine |
+| [allocation.md](allocation.md) | Rules, first match, the shared pool and Unallocated, direct and spread layers, generations, the dev seed |
+| [spend.md](spend.md) | Overview, Explore, Budgets: the figures, the forecast, exports, the MCP tools, cost metrics in Clickland |
 | [reference/api.md](reference/api.md), [reference/env.md](reference/env.md) | Every route and every environment variable |
 | [ui.md](ui.md) | The console's screens and the rules they follow; `../ui/prototype.html` is the clickable version |
 | [research.md](research.md) | Wave 0's study on one page: what OpenCost and FOCUS 1.4 teach, what the sources give today, the decisions (D1–D15) and what is still open |

@@ -45,6 +45,9 @@ Each wave ends with something finance can use, checked live, with screenshots at
 - Sign-in through Landbright; roles from groups.
 - MCP: `spend_by`, `budget_status`; cost metrics to Clickland (its cost lens).
 - **Finance gets:** last month's AI and cluster cost per team against budget, a daily figure since, a file for Excel.
+- **Built 14 Nov 2026** ([ingest.md](ingest.md), [rate-cards.md](rate-cards.md), [allocation.md](allocation.md),
+  [spend.md](spend.md)). Not yet: rule set proposals with a preview, the insights-only backfill, recorded fixtures,
+  Approve buttons in the console (approvals are made from a person's signed-in session), invoiced figures.
 
 ### Wave 2 · Control the spend
 

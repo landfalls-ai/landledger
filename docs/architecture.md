@@ -30,7 +30,8 @@ apps/views          the MCP App view
 libs/contracts      zod schemas and types shared by everything (the API contract)
 libs/money          Money (bigint micro-units + ISO 4217 code), Decimal, Rate and Quantity, split, FX by date; no floats
 libs/focus          the 45 FOCUS 1.4 columns kept and the x_ columns, check(record), reverse and correct
-libs/allocation     the rules engine: selectors → cost center, team, product, P&L class, capitalisable
+libs/pricing        rate lookup by day, provider and model; priceAiCall (three input buckets, long context); priceCluster (allocated + idle)
+libs/allocation     the rules engine: selectors → cost center, team, product, P&L class, capitalisable; direct and spread layers
 libs/schema         Postgres migrations (append-only list)
 libs/tokens         @land/tokens, copied from Landflow with a drift test (as Clickland does)
 deploy/             compose (infra, fakes), Kubernetes later (namespace landledger-dev)
