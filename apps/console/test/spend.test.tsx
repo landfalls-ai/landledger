@@ -6,7 +6,14 @@ import { ME, mockApi, renderAt } from './render';
 
 afterEach(() => vi.unstubAllGlobals());
 
-const cc = (code: string, name: string, mtd: string, budget: string | null, forecast: string, state: string) => ({
+const cc = (
+  code: string,
+  name: string,
+  mtd: string,
+  budget: string | null,
+  forecast: string | null,
+  state: string,
+) => ({
   code,
   name,
   owner: null,
@@ -24,15 +31,33 @@ const OVERVIEW = {
   dayOfMonth: 14,
   daysInMonth: 30,
   currency: 'USD',
-  monthToDate: { total: '3.520000', estimated: '3.520000', invoiced: '0.000000', provisional: '3.520000' },
+  monthToDate: {
+    total: '3.520000',
+    estimated: '3.520000',
+    invoiced: '0.000000',
+    provisional: '3.520000',
+    corrections: '0.000000',
+  },
   forecast: {
+    status: 'ok',
     amount: '345.760000',
     low: '294.420000',
     high: '397.090000',
     basis: 'Run rate',
     perDay: { low: '18', mid: '21', high: '24' },
+    dataSince: '2026-11-01T00:00:00.000Z',
+    observedShare: '45.0',
+    sources: [
+      { source: 'clickland', since: '2026-11-01T00:00:00.000Z', fullDays: 7, observedHours: '168.0', perHour: '0.9' },
+    ],
   },
-  budget: { amount: '323.010000', version: 1, source: 'csv', importedAt: '2026-11-14T19:00:00.000Z' },
+  budget: {
+    amount: '323.010000',
+    versions: [1],
+    source: 'csv',
+    importedAt: '2026-11-14T19:00:00.000Z',
+    origin: 'dev-seed',
+  },
   leftAfterReservations: '319.490000',
   reserved: '0.000000',
   burn: [
@@ -119,6 +144,35 @@ describe('Overview', () => {
     expect(within(table).getAllByText('Over').length).toBeGreaterThan(0);
     expect(screen.getByText('27.9% attributed to a cost center')).toBeInTheDocument();
     expect(screen.getByText('Approved by yoav.bendavid@landbright.test')).toBeInTheDocument();
+    expect(within(screen.getByTestId('stat-budget')).getByText('dev seed')).toBeInTheDocument();
+  });
+
+  it('claims no forecast on a few hours of data: no amount, no range, no state', async () => {
+    const early = {
+      ...OVERVIEW,
+      forecast: {
+        status: 'insufficient',
+        amount: null,
+        low: null,
+        high: null,
+        basis:
+          'Not enough data yet: a forecast needs 3 full observed days of each source in the last 7 (clickland has 0)',
+        perDay: null,
+        dataSince: '2026-11-14T15:15:05.000Z',
+        observedShare: '0.7',
+        sources: [],
+      },
+      costCenters: [cc('SHARED-POOL', 'Shared pool', '2.510000', '240.000000', null, 'early')],
+    };
+    mockApi({ '/api/auth/me': [200, ME], '/api/overview': [200, early] });
+    renderAt('/overview');
+    const tile = await screen.findByTestId('stat-forecast');
+    expect(within(tile).getByText('Not enough data yet')).toBeInTheDocument();
+    expect(within(tile).getByText(/data since/i)).toBeInTheDocument();
+    expect(within(tile).queryByText(/over|under/)).toBeNull();
+    const table = screen.getByTestId('cost-centers');
+    expect(within(table).queryByText('At risk')).toBeNull();
+    expect(within(table).queryByText('On track')).toBeNull();
   });
 });
 
@@ -164,10 +218,10 @@ describe('Explore', () => {
 describe('Budgets', () => {
   it('shows budget against actual and opens a row for its months', async () => {
     const row = {
-      ...cc('CS-SUPPORT', 'Customer Support', '0.008600', '0.005000', '0.850000', 'over'),
-      available: '-0.003600',
-      variance: '0.845000',
-      variancePct: '16900.0',
+      ...cc('CS-SUPPORT', 'Customer Support', '1.200000', '1.000000', '1.400000', 'over'),
+      available: '-0.200000',
+      variance: '0.400000',
+      variancePct: '40.0',
       months: [{ month: '2026-10', budget: null, actual: '0.000000', locked: false }],
     };
     mockApi({
@@ -177,24 +231,26 @@ describe('Budgets', () => {
         {
           month: '2026-11',
           currency: 'USD',
-          version: {
-            version: 1,
-            source: 'csv',
-            fileName: 'budgets-2026-11.dev.csv',
-            importedAt: '2026-11-14T19:00:00.000Z',
-            importedBy: 'seed',
-            origin: 'dev-seed',
-            note: '',
-          },
+          versions: [
+            {
+              version: 2,
+              source: 'csv',
+              fileName: 'budgets-2026-11.dev.csv',
+              importedAt: '2026-11-14T20:30:00.000Z',
+              importedBy: 'seed',
+              origin: 'dev-seed',
+              note: '',
+            },
+          ],
           rows: [row],
           totals: {
-            budget: '0.005000',
-            actual: '0.008600',
+            budget: '1.000000',
+            actual: '1.200000',
             reserved: '0.000000',
-            available: '-0.003600',
-            forecast: '0.850000',
-            variance: '0.845000',
-            variancePct: '16900.0',
+            available: '-0.200000',
+            forecast: '1.400000',
+            variance: '0.400000',
+            variancePct: '40.0',
             state: 'over',
           },
         },
