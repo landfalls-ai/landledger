@@ -79,6 +79,11 @@ function Reservations({ code, month }: { code: string; month: string }) {
               {r.status === 'reserved' && r.consumed !== '0.000000' && `, ${usd(r.consumed)} used`}
               {r.note && ` · ${r.note}`}
             </small>
+            <small className="block text-t3" data-testid="consumption">
+              {r.consumption === 'none'
+                ? 'No match selector: real cost never consumes it; held in full until its month ends.'
+                : `Consumed by matched cost above ${usd(r.baselineDaily ?? '0')} a day, what already ran before approval.`}
+            </small>
           </span>
           <span className="figure whitespace-nowrap">{usd(r.status === 'reserved' ? r.remaining : r.amount)}</span>
         </div>

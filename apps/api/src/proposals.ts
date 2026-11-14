@@ -417,7 +417,20 @@ export class Proposals {
   }
 
   /** A version proposed before wave 2 has no request: raise one (the proposer is its requester), so it can be decided. */
-  async requestForVersion(type: 'rate_card_version' | 'rule_set_version', versionId: string): Promise<string> {
+  /**
+   * The request for a version proposed before approvals became requests, raised on first call. Only a signed-in person
+   * with `requests:write` calls it (the route checks); the request is the proposer's, and the audit log names the caller.
+   */
+  async requestForVersion(
+    type: 'rate_card_version' | 'rule_set_version',
+    versionId: string,
+    by: Principal,
+  ): Promise<string> {
+    if (by.kind !== 'person')
+      throw new ApiError(
+        'forbidden',
+        "A person signed in with Landbright raises a version's request; an API key doesn't",
+      );
     const existing = await this.requests.forChange(type, versionId);
     if (existing) return existing;
     const table = type === 'rate_card_version' ? 'rate_card_versions' : 'allocation_rule_set_versions';
@@ -455,9 +468,10 @@ export class Proposals {
           start: day(v.effective_from),
         },
         person,
+        by,
       ),
     );
-    await this.requests.submitById(id as string, { actor: u.email ?? u.id, actorKind: 'person' });
+    await this.requests.submitById(id as string, actorOf(by));
     return id as string;
   }
 }

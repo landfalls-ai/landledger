@@ -3,6 +3,7 @@ import {
   type ApiScope,
   type Me,
   type PrincipalKind,
+  RELAY_EXCLUDES,
   type Role,
   SCOPES_BY_ROLE,
 } from '@landledger/contracts';
@@ -27,6 +28,8 @@ export interface Principal {
   sessionId?: string;
   /** A person's Landbright subject (`sub`). */
   subject?: string;
+  /** A key's workflows: a `landflow_run` origin naming one of them is stored verified. */
+  boundWorkflowIds?: string[];
 }
 
 export const SESSION_COOKIE = 'll_session';
@@ -95,12 +98,31 @@ export async function identify(
         scopes: ['admin'],
       };
     if (KEY_PATTERN.test(key)) {
-      const [row] = await sql<{ id: string; name: string; scopes: ApiScope[] }[]>`
-        UPDATE api_keys SET last_used_at = now()
-        WHERE hash = ${sha256(key)} AND revoked_at IS NULL
-        RETURNING id, name, scopes`;
+      const [found] = await sql<{ id: string; scopes: ApiScope[] }[]>`
+        SELECT id, scopes FROM api_keys WHERE hash = ${sha256(key)} AND revoked_at IS NULL`;
+      // A relay key minted before the review of wave 2 may also raise requests or administer: refused until revoked.
+      if (found?.scopes.includes('decisions:relay') && found.scopes.some((s) => RELAY_EXCLUDES.includes(s)))
+        throw new ApiError(
+          'unauthorized',
+          'This key holds decisions:relay beside requests:write or admin, which is no longer allowed: an admin mints separate keys',
+          { reason: 'relay_key_scopes' },
+        );
+      const [row] = found
+        ? await sql<{ id: string; name: string; scopes: ApiScope[]; bound_workflow_ids: string[] }[]>`
+            UPDATE api_keys SET last_used_at = now() WHERE id = ${found.id} AND revoked_at IS NULL
+            RETURNING id, name, scopes, bound_workflow_ids`
+        : [];
       if (row)
-        return { kind: 'key', id: row.id, name: row.name, email: null, roles: [], groups: [], scopes: row.scopes };
+        return {
+          kind: 'key',
+          id: row.id,
+          name: row.name,
+          email: null,
+          roles: [],
+          groups: [],
+          scopes: row.scopes,
+          boundWorkflowIds: row.bound_workflow_ids,
+        };
     }
     throw new ApiError('unauthorized', 'The API key is not valid');
   }

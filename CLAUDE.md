@@ -4,7 +4,9 @@ The land family's cost subledger for technology and AI spend (see README.md). A 
 (Fastify), `apps/console` (React + Vite), `libs/money`, `libs/focus`, `libs/contracts`, `libs/schema`, `libs/tokens`;
 Postgres in `deploy/compose.infra.yml`. Wave 1 "See the spend" is built: ingest from
 Landflow and Clickland (`apps/api/src/ingest/`, `libs/pricing`), rate card approval, allocation (`libs/allocation`),
-budgets, Overview, Explore and Budgets, exports, MCP and cost metrics to Clickland. Wave 2 (requests) is next.
+budgets, Overview, Explore and Budgets, exports, MCP and cost metrics to Clickland. Wave 2 "Control the spend" is
+built and reviewed: requests, policies, decisions by people (console, or a Slack relay Landledger verifies),
+reservations, SCIM, the exceptions report (`docs/approvals.md`, `docs/identity.md`). Wave 3 is next.
 
 ## Read first
 

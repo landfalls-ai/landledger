@@ -190,6 +190,41 @@ export class OidcClient {
     return payload;
   }
 
+  /**
+   * A back-channel logout token (OpenID Connect Back-Channel Logout 1.0, section 2.6): signed by the issuer for this
+   * client, with `iat`, `jti`, the back-channel logout event, a `sub` (Landledger keeps no `sid`), and no `nonce`.
+   */
+  async verifyLogoutToken(token: string): Promise<{ sub: string; jti: string; sid: string | null }> {
+    const verify = async (refresh: boolean) =>
+      jwtVerify(token, await this.jwks(refresh), {
+        issuer: this.config.issuer,
+        audience: this.config.clientId,
+        clockTolerance: 30,
+        maxTokenAge: '10m',
+      });
+    let payload: JWTPayload;
+    try {
+      payload = (await verify(false)).payload;
+    } catch (e) {
+      if (!(e instanceof joseErrors.JWKSNoMatchingKey))
+        throw fail(`the logout token isn't valid (${(e as Error).message})`);
+      try {
+        payload = (await verify(true)).payload;
+      } catch (e2) {
+        throw fail(`the logout token isn't valid (${(e2 as Error).message})`);
+      }
+    }
+    const events = payload.events as Record<string, unknown> | undefined;
+    if (!events || typeof events !== 'object' || !('http://schemas.openid.net/event/backchannel-logout' in events))
+      throw fail('the logout token carries no back-channel logout event');
+    if ('nonce' in payload) throw fail('a logout token never carries a nonce');
+    if (typeof payload.jti !== 'string' || !payload.jti) throw fail('the logout token has no jti');
+    if (typeof payload.iat !== 'number') throw fail('the logout token has no iat');
+    if (typeof payload.sub !== 'string' || !payload.sub)
+      throw fail('the logout token names no sub: Landledger ends sessions by subject');
+    return { sub: payload.sub, jti: payload.jti, sid: typeof payload.sid === 'string' ? payload.sid : null };
+  }
+
   /** Where to send the browser to end the Landbright session too (RP-initiated logout), if Landbright offers it. */
   async endSessionUrl(idToken: string | null): Promise<string | null> {
     const d = await this.discovery().catch(() => null);

@@ -1,0 +1,2 @@
+# Landledger holidays: local dates (LANDLEDGER_TZ) that never count as business days for step deadlines.
+# One YYYY-MM-DD per line. Empty until Finance gives the list (docs/plan.md, Decisions).

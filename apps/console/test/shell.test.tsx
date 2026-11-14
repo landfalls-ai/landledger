@@ -41,7 +41,17 @@ describe('the shell', () => {
       within(sheet)
         .getAllByRole('link')
         .map((a) => a.textContent),
-    ).toEqual(['Budgets', 'Contracts', 'Agents', 'Month-end', 'Rates and rules', 'Audit log']);
+    ).toEqual([
+      'Budgets',
+      'Contracts',
+      'Agents',
+      'Month-end',
+      'Rates and rules',
+      'Audit log',
+      'Yoav Ben DavidFinance · controller',
+    ]);
+    // The person's row opens their profile (Link Slack).
+    expect(within(sheet).getByTitle('Your profile and Link Slack')).toHaveAttribute('href', '/profile');
     expect(within(sheet).getByRole('radiogroup', { name: 'Theme' })).toBeInTheDocument();
   });
 

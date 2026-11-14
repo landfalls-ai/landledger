@@ -14,13 +14,16 @@ export function Pill({
   tone = 'nu',
   children,
   className,
+  'data-testid': testId,
 }: {
   tone?: PillTone;
   children: ReactNode;
   className?: string;
+  'data-testid'?: string;
 }) {
   return (
     <span
+      data-testid={testId}
       className={cn(
         'inline-flex h-[22px] items-center gap-[5px] whitespace-nowrap rounded-[11px] border px-2 text-[12px] font-medium',
         tone === 'nu' && 'border-hair bg-nudim text-t2',
@@ -41,9 +44,20 @@ export function Pill({
 }
 
 /** A small mono tag: `estimated` (dashed) or `invoiced`, or any other label such as `dev seed`. */
-export function Tag({ children, dashed, className }: { children: ReactNode; dashed?: boolean; className?: string }) {
+export function Tag({
+  children,
+  dashed,
+  className,
+  'data-testid': testId,
+}: {
+  children: ReactNode;
+  dashed?: boolean;
+  className?: string;
+  'data-testid'?: string;
+}) {
   return (
     <span
+      data-testid={testId}
       className={cn(
         'inline-block whitespace-nowrap rounded-[4px] border border-acbd px-[5px] align-[1px] font-mono text-[10.5px] font-medium leading-4 text-t2',
         dashed && 'border-dashed',

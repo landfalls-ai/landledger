@@ -53,7 +53,7 @@ const ENDED: Partial<Record<RequestStatus, PillTone>> = {
 
 /** The step pill: a pending step is amber when it waits on you, grey otherwise; an ended request by its outcome. */
 export function stepTone(r: Pick<RequestSummary, 'status'>, mine: boolean): PillTone {
-  if (r.status === 'pending') return mine ? 'risk' : 'nu';
+  if (r.status === 'pending' || r.status === 'awaiting_confirmation') return mine ? 'risk' : 'nu';
   return ENDED[r.status] ?? 'nu';
 }
 
@@ -65,9 +65,15 @@ export function age(iso: string, now = Date.now()): string {
   return `${Math.round(s / 86_400)}d`;
 }
 
-/** `14 Nov, 10:42` in the browser's time zone. */
+/** `14 Nov, 10:42 GMT+2`: in the browser's time zone, which it names (review of wave 2: every time says its zone). */
 export const when = (iso: string) =>
-  new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  new Date(iso).toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
 
 /** The default thresholds' tier for an amount (docs/approvals.md): 0 automatic, 1 budget owner, 2 Finance, 3 CFO. */
 export function tierOf(thresholdAmount: string): number {

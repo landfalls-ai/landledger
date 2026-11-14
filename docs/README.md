@@ -9,7 +9,7 @@
 | [ingest.md](ingest.md) | Landflow's AI calls and Clickland's usage into priced records: runs, completeness, corrections, cache tokens, the CLI |
 | [rate-cards.md](rate-cards.md) | The rate card's lines, how a version is proposed and approved by a person, v1 on this machine |
 | [allocation.md](allocation.md) | Rules, first match, the shared pool and Unallocated, direct and spread layers, generations, the dev seed |
-| [approvals.md](approvals.md) | Requests, policies, decisions by people only, evidence snapshots, deadlines and escalation, reservations, rate card and rule set proposals with a preview, the exceptions report, webhooks |
+| [approvals.md](approvals.md) | Requests, confirmation, policies, cost center owners, decisions by people only (console, or a verified Slack relay), evidence snapshots and who saw them, deadlines and escalation, reservations, rate card and rule set proposals with a preview, the exceptions report and stored reports, the evidence pack, keys and webhooks |
 | [identity.md](identity.md) | Sign-in, roles from groups, effective groups, SCIM 2.0 after Clickland's, deactivation, `pnpm scim:token` |
 | [spend.md](spend.md) | Overview, Explore, Budgets: the figures, the forecast, exports, the MCP tools, cost metrics in Clickland |
 | [reference/api.md](reference/api.md), [reference/env.md](reference/env.md) | Every route and every environment variable |

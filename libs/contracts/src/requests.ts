@@ -792,8 +792,13 @@ export interface ExceptionRow {
   covered: Amount;
   uncovered: Amount;
   threshold: Amount;
-  /** The approved requests counted as cover. */
-  requests: { id: string; number: string; title: string; amount: Amount }[];
+  /** The month's budget for the cost center (none is 0): uncovered = actual − budget − covered. */
+  budget?: Amount | null;
+  /**
+   * The approved requests counted as cover: `amount` is what each covers, `covers` how (`match`: only the cost its
+   * selector matches, up to what it adds; `cost_center`: no selector, so its cost center up to what it adds).
+   */
+  requests: { id: string; number: string; title: string; amount: Amount; covers?: 'match' | 'cost_center' }[];
 }
 
 export interface ExceptionsReport {

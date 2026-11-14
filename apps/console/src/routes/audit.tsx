@@ -1,5 +1,6 @@
 import type { AuditEntry, AuditVerify } from '@landledger/contracts';
 import { useInfiniteQuery, useMutation } from '@tanstack/react-query';
+import { useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
 import { Card, CardBody } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,9 +20,25 @@ export function actionWords(action: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/** Who can do what: keys, roles, relay channels and links, owners. Shown beside the decisions they made possible. */
+export const isAccessChange = (a: string) =>
+  /^(api_key\.|scim\.user_|scim\.token_|relay_channel\.|person_link\.|cost_center\.owners_set|auth\.signed_in|auth\.backchannel_logout)/.test(
+    a,
+  );
+const isDecision = (a: string) =>
+  /^request\.(step_approved|step_rejected|approved|rejected|confirmed|declined|cancelled|expired|step_escalated)$/.test(
+    a,
+  );
+
 /** What the record names, from its data when it carries a title, a number or an outcome. */
 function detail(e: AuditEntry): string {
   const d = e.data as Record<string, unknown>;
+  if (e.action.startsWith('api_key.'))
+    return `${String(d.name ?? e.subjectId)}${Array.isArray(d.scopes) ? ` · ${(d.scopes as string[]).join(', ')}` : ''}`;
+  if (e.action === 'auth.signed_in' && Array.isArray(d.roles))
+    return `roles ${(d.roles as string[]).join(', ') || 'none'}${Array.isArray(d.groups) ? ` · groups ${(d.groups as string[]).join(', ')}` : ''}`;
+  if (d.relayed === true)
+    return `${e.subjectId} · step ${String(d.step)} · relayed from ${String(d.channel ?? 'a relay')} user ${String(d.externalUserId ?? '')} by key ${String(d.relayedBy ?? '').replace(/^key:/, '')}`;
   const bits = [d.number, d.title, d.outcome, d.costCenter]
     .filter((x): x is string | number => typeof x === 'string' || typeof x === 'number')
     .map(String);
@@ -34,6 +51,12 @@ const columns: Column<AuditEntry>[] = [
     cell: (e) => (
       <span>
         <b className="font-medium">{actionWords(e.action)}</b>
+        {(e.data as Record<string, unknown>).relayed === true && (
+          <Pill tone="risk" className="ml-1.5" data-testid="audit-relayed">
+            Relayed
+          </Pill>
+        )}
+        {isAccessChange(e.action) && <Pill className="ml-1.5">Access</Pill>}
         <span className="block break-words text-[12px] text-t3">{detail(e)}</span>
       </span>
     ),
@@ -75,7 +98,9 @@ export function AuditPage() {
     retry: quiet,
   });
   const verify = useMutation({ mutationFn: () => get<AuditVerify>('/api/audit/verify') });
-  const entries = pages.data?.pages.flatMap((p) => p.entries) ?? [];
+  const [only, setOnly] = useState(false);
+  const all = pages.data?.pages.flatMap((p) => p.entries) ?? [];
+  const entries = only ? all.filter((e) => isDecision(e.action) || isAccessChange(e.action)) : all;
   const total = pages.data?.pages[0]?.total ?? 0;
   const v = verify.data;
   return (
@@ -119,6 +144,19 @@ export function AuditPage() {
         <Button size="sm" disabled={verify.isPending} onClick={() => verify.mutate()}>
           <ShieldCheck className="size-3.5" />
           Verify chain
+        </Button>
+      </div>
+      <div className="mb-2.5 flex gap-1.5" role="group" aria-label="Show">
+        <Button size="sm" variant={only ? 'default' : 'primary'} onClick={() => setOnly(false)}>
+          Everything
+        </Button>
+        <Button
+          size="sm"
+          variant={only ? 'primary' : 'default'}
+          onClick={() => setOnly(true)}
+          data-testid="audit-decisions-access"
+        >
+          Decisions and access changes
         </Button>
       </div>
       <Card

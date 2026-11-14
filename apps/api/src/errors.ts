@@ -6,6 +6,7 @@ const STATUS: Record<ErrorCode, number> = {
   forbidden: 403,
   not_found: 404,
   conflict: 409,
+  unprocessable: 422,
   unavailable: 503,
   internal: 500,
 };

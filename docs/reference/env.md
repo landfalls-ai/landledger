@@ -21,8 +21,8 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_OIDC_CLIENT_SECRET` | unset | Overrides the file (tests) |
 | `LANDLEDGER_SESSION_HOURS` | `8` | Session length |
 | `LANDLEDGER_DEV_AUTH` | `off` | `on`: calls with no session and no key act as a local developer (controller). Refused unless the API listens on loopback |
-| `LANDLEDGER_BOOTSTRAP_KEY` | unset | An admin key for scripts before anyone has signed in |
-| `LANDLEDGER_SECRET_KEY` | unset | 32 bytes, base64 or hex (`openssl rand -base64 32`), in the git-ignored `apps/api/.env.local`. Seals the ID token a session keeps for sign-out and each webhook's signing secret with AES-256-GCM, bound to their row (`enc:v1:…`). Unset: sessions keep no ID token (sign-out skips the hint) and webhooks can't be created. At start, rows from before are sealed (or, with no key, ID tokens dropped) |
+| `LANDLEDGER_BOOTSTRAP_KEY` | unset | An admin key for first setup only: it mints keys until the first admin person (CFO or controller) has signed in, never after |
+| `LANDLEDGER_SECRET_KEY` | unset | 32 bytes, base64 or hex (`openssl rand -base64 32`), in the git-ignored `apps/api/.env.local`. Seals the ID token a session keeps for sign-out, each webhook's signing secret and each relay channel's signing secret with AES-256-GCM, bound to their row (`enc:v1:…`). Unset: sessions keep no ID token (sign-out skips the hint) and webhooks can't be created. At start, rows from before are sealed (or, with no key, ID tokens dropped) |
 | `LANDLEDGER_BACKGROUND_JOBS` | on | `off` stops the webhook dispatcher and the session cleanup |
 | `LANDLEDGER_TELEMETRY` | `on` | `off` (or `OTEL_SDK_DISABLED=true`) stops traces, metrics and logs |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:24318` | Clickland's collector (OTLP/HTTP) |
@@ -38,5 +38,7 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_COST_METRICS` | on | `off` stops sending `landledger.cost.*` metrics to Clickland |
 | `LANDLEDGER_COST_METRICS_ENDPOINT` | `${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics` | Where the cost metrics are posted (OTLP/HTTP JSON) |
 | `LANDLEDGER_STEP_DEADLINE_HOURS` | `24` | Business hours a pending approval step waits before it escalates (then as long again before the request expires); 1–720 |
-| `LANDLEDGER_BUSINESS_DAYS` | `mon-fri` | The days that count toward a deadline (whole UTC days): a range `mon-fri` or a list `sun,mon,tue,wed,thu` |
+| `LANDLEDGER_BUSINESS_DAYS` | `mon-fri` | The days that count toward a deadline, each whole in `LANDLEDGER_TZ`: a range `mon-fri` or a list `sun,mon,tue,wed,thu`. This machine: `sun-thu` (a default to confirm, `docs/plan.md`) |
+| `LANDLEDGER_TZ` | `UTC` | The IANA time zone business days are counted in (`Asia/Jerusalem` on this machine) |
+| `LANDLEDGER_HOLIDAYS_FILE` | `deploy/holidays.txt` | Dates that never count toward a deadline: one `YYYY-MM-DD` per line, `#` comments; `none` for no file. The file is empty for now |
 | `LANDLEDGER_INTEGRATION` | unset | Tests: a comma list of real services to test against (`db`, or `all`) |

@@ -71,6 +71,14 @@ Each wave ends with something finance can use, checked live, with screenshots at
   Finance in a visible Chrome; the requester refused. Not yet: the Landflow plugin's flows (built in Landflow,
   `clickland-integration`), Slack and email approvals through it, AI budgets written to Landflow's caps, a console
   form to raise a request.
+- **Review of wave 2, fixed 15 Nov 2026:** relays are verified by Landledger (Slack channels with sealed signing
+  secrets, people link their own Slack id, budget owner steps only, `decision.relayed`); keys minted only by a signed-in
+  admin person, a relay key holds no write, `webhooks:write` for a key's own subscriptions; requests a key raises in a
+  person's name wait for that person's confirmation; `createdBy` and `origin.verified`; automatic approvals counted per
+  month per cost center and agent, never while at risk; cost center owners and deputies; evidence served and fresh
+  within 30 minutes; consumption by increment; the first full month; exceptions against budget and what each match
+  selects, stored weekly with a hash; the evidence pack; back-channel logout; business days in a time zone with
+  holidays.
 
 ### Wave 3 · Plan and reconcile
 
@@ -78,6 +86,9 @@ Each wave ends with something finance can use, checked live, with screenshots at
 - Driver-based forecasts with a range; cost anomalies as Clickland alerts.
 - Agents: cost, outcomes and capacity freed, from Landflow and Clickland's Agent Value.
 - Contracts and renewals; the *tool or seat* flow with Landbright access requests.
+- A periodic access review: who holds which key (and its scopes and bound workflows), which Landbright group, which
+  relay link and which cost center ownership, confirmed by an admin person each quarter (review of wave 2).
+- FX rates, so requests and budgets in other currencies stop being refused (`422` until then).
 - **Finance gets:** AI cost tied to invoices, a forecast on calendar day 10, an alert the hour a cost jumps.
 
 ### Wave 4 · Month-end
@@ -132,3 +143,6 @@ The user said "start everything, don't wait for me", so the proposed defaults st
    against `fake-datarails` in wave 4.
 5. **Repository:** public in landfalls-ai, like the other land projects, scanned for secrets before every push.
 6. **Currency:** one reporting currency, USD.
+7. **Business days (15 Nov 2026, a default to confirm):** approval deadlines count Sunday to Thursday in
+   `Asia/Jerusalem` on this machine (`LANDLEDGER_BUSINESS_DAYS=sun-thu`, `LANDLEDGER_TZ=Asia/Jerusalem`); the code's
+   default stays Monday to Friday in UTC. The holiday list (`deploy/holidays.txt`) is empty until Finance gives one.

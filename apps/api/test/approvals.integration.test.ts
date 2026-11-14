@@ -99,6 +99,15 @@ describe.skipIf(!integrationEnabled('db'))('wave 2: requests, decisions, reserva
     await services.allocation.approve('rsv_main_1', principal('dana'));
     await services.ingest.run('clickland', '2026-11-15', 'manual', 'test');
     await services.allocation.allocatePending('2026-11');
+    // Review of wave 2: nothing is automatic while a cost center is at risk or over, so AI Agents and Data & ML get room
+    // for the automatic requests below (the seed's tiny dev budgets are over already).
+    await services.budgets.import(
+      {
+        csv: 'cost_center,month,amount,currency\nENG-AGENTS,2026-11,300.00,USD\nRND-DATA,2026-11,5000.00,USD\n',
+        note: 'test',
+      },
+      principal('dana'),
+    );
     const key = async (
       name: string,
       scopes: ('requests:write' | 'decisions:relay' | 'reservations:write' | 'read')[],
@@ -276,8 +285,9 @@ describe.skipIf(!integrationEnabled('db'))('wave 2: requests, decisions, reserva
     await expect(sql`UPDATE requests SET status = 'pending' WHERE id = ${live}`).rejects.toThrow(/forward/);
     await expect(sql`DELETE FROM decisions WHERE request_id = ${live}`).rejects.toThrow();
     expect((await as('avi', 'GET', '/api/audit/verify')).json()).toMatchObject({ ok: true });
-    // Landflow says it's in place.
-    const applied = await withKey(writeKey, 'POST', `/api/requests/${live}/applied`, {
+    // Only the key that raised it, its requester or an admin person says it's in place (review of wave 2): the requester.
+    expect((await withKey(writeKey, 'POST', `/api/requests/${live}/applied`, { note: 'x' })).statusCode).toBe(403);
+    const applied = await as('tal', 'POST', `/api/requests/${live}/applied`, {
       note: 'Node pool created',
       links: [{ label: 'PR', url: 'https://github.test/landflow/pull/9' }],
     });
@@ -346,25 +356,23 @@ describe.skipIf(!integrationEnabled('db'))('wave 2: requests, decisions, reserva
     ).toBe(400);
   });
 
-  it('takes a relayed decision only for a named person who may decide; a key alone, the developer and an agent never decide', async () => {
+  it('decides only as a signed-in person: an API key, the developer and an agent never decide (relays: review2 tests)', async () => {
     const r = await raise('tal', {
       costCenter: 'ENG-PRODUCT',
       title: 'Relay me',
       amount: { amount: '1200', currency: 'USD' },
     });
     const shown = (await withKey(relayKey, 'GET', `/api/requests/${r.id}`)).json();
-    const relay = (key: string, extra: Record<string, unknown>) =>
-      withKey(key, 'POST', `/api/requests/${r.id}/decisions`, {
+    // The old relay (a key naming a person) is gone: every key gets 403 on the decisions route.
+    for (const key of [writeKey, relayKey]) {
+      const res = await withKey(key, 'POST', `/api/requests/${r.id}/decisions`, {
         outcome: 'approve',
         evidenceSha256: shown.evidenceSha256,
         channel: 'slack',
-        ...extra,
+        person: { sub: 'sub-shira' },
       });
-    expect((await relay(writeKey, { person: { email: people.shira.email } })).statusCode).toBe(403);
-    expect((await relay(relayKey, {})).statusCode).toBe(400);
-    expect((await relay(relayKey, { person: { email: 'nobody@landbright.test' } })).statusCode).toBe(400);
-    expect((await relay(relayKey, { person: { sub: 'sub-tal' } })).statusCode).toBe(403);
-    expect((await relay(relayKey, { person: { email: people.yoav.email } })).statusCode).toBe(403);
+      expect(res.statusCode, res.body).toBe(403);
+    }
     await expect(
       services.requests.decide(
         r.id,
@@ -372,26 +380,23 @@ describe.skipIf(!integrationEnabled('db'))('wave 2: requests, decisions, reserva
         DEV_PRINCIPAL,
       ),
     ).rejects.toThrow(/local developer is not a person/);
-    // A signed-in person decides as themselves.
+    // A signed-in person decides as themselves, on evidence served to them.
     const other = await as('noa', 'POST', `/api/requests/${r.id}/decisions`, {
       outcome: 'approve',
       evidenceSha256: shown.evidenceSha256,
       person: { email: people.shira.email },
     });
-    expect(other.statusCode).toBe(403);
-    const ok = await relay(relayKey, { person: { sub: 'sub-shira' } });
-    expect(ok.statusCode, ok.body).toBe(201);
-    expect(ok.json().decision).toMatchObject({
-      via: 'relay',
-      relayedBy: 'landflow relay',
-      channel: 'slack',
-      person: { email: people.shira.email, sub: 'sub-shira' },
+    expect(other.statusCode, other.body).toBe(403);
+    // Evidence served to someone else (here, the key) is not evidence Noa saw: 409, reopen it.
+    const notShown = await as('noa', 'POST', `/api/requests/${r.id}/decisions`, {
+      outcome: 'approve',
+      evidenceSha256: shown.evidenceSha256,
     });
-    expect(ok.json().request.status).toBe('approved');
-    const [entry] = await sql`
-      SELECT actor, actor_kind, data FROM audit_log WHERE action = 'request.step_approved' AND subject_id = ${r.id}`;
-    expect(entry).toMatchObject({ actor: people.shira.email, actor_kind: 'person' });
-    expect(entry!.data).toMatchObject({ via: 'relay', relayedBy: 'key:landflow relay' });
+    expect(notShown.statusCode, notShown.body).toBe(409);
+    expect(notShown.json().error.message).toBe('The request changed or the evidence is stale; reopen it');
+    const ok = await decide('shira', r.id, 'approve');
+    expect(ok.statusCode, ok.body).toBe(201);
+    expect(ok.json().decision).toMatchObject({ via: 'console', person: { email: people.shira.email } });
   });
 
   it("lets an agent raise a request only with a sponsor, who can't decide it; MCP has no tool that decides", async () => {
@@ -424,6 +429,13 @@ describe.skipIf(!integrationEnabled('db'))('wave 2: requests, decisions, reserva
       sponsor: { email: people.noa.email },
     });
     expect(r.createdByKey).toBe('landflow requests');
+    // A key named the sponsor: it waits for Noa's confirmation before it enters the policy (review of wave 2).
+    expect(r).toMatchObject({ status: 'awaiting_confirmation', steps: [], confirmation: { status: 'waiting' } });
+    expect((await as('shira', 'POST', `/api/requests/${r.id}/confirm`, {})).statusCode).toBe(403);
+    const confirmed = await as('noa', 'POST', `/api/requests/${r.id}/confirm`, { comment: 'Yes, mine' });
+    expect(confirmed.statusCode, confirmed.body).toBe(200);
+    Object.assign(r, confirmed.json().request);
+    expect(r.status).toBe('pending');
     expect(r.steps[0].approvers.people.map((p: { email: string }) => p.email)).toEqual([people.shira.email]);
     const sponsor = await decide('noa', r.id, 'approve');
     expect(sponsor.statusCode).toBe(403);
@@ -467,8 +479,8 @@ describe.skipIf(!integrationEnabled('db'))('wave 2: requests, decisions, reserva
     expect(out.isError).toBeFalsy();
     expect(out.structuredContent.request).toMatchObject({
       createdVia: 'mcp',
-      origin: { type: 'mcp' },
-      status: 'pending',
+      origin: { type: 'mcp', verified: true },
+      status: 'awaiting_confirmation',
     });
     // The MCP's reserve needs reservations:write.
     const refused = await mcp({
@@ -535,7 +547,11 @@ describe.skipIf(!integrationEnabled('db'))('wave 2: requests, decisions, reserva
     expect(
       (await withKey(writeKey, 'POST', '/api/reservations', { requestId: live, month: '2027-03' })).statusCode,
     ).toBe(403);
-    const released = await withKey(reserveKey, 'POST', `/api/reservations/${feb.json().reservation.id}/release`, {
+    // Only the key that raised the request, its requester or an admin person releases (review of wave 2).
+    expect(
+      (await withKey(reserveKey, 'POST', `/api/reservations/${feb.json().reservation.id}/release`, {})).statusCode,
+    ).toBe(403);
+    const released = await as('tal', 'POST', `/api/reservations/${feb.json().reservation.id}/release`, {
       reason: 'plan changed',
     });
     expect(released.json().reservation).toMatchObject({ status: 'released', remaining: '0.000000' });
@@ -730,7 +746,9 @@ describe.skipIf(!integrationEnabled('db'))('wave 2: requests, decisions, reserva
     expect(row).toMatchObject({ month: '2026-11', threshold: '500.000000', covered: '60.000000' });
     expect(Number(row.actual)).toBeGreaterThan(560);
     expect(row.requests.map((q: { title: string }) => q.title)).toEqual(['A bigger node']);
-    expect(Number(row.uncovered)).toBeCloseTo(Number(row.actual) - Number(row.covered), 6);
+    // Uncovered = actual − budget − covered (review of wave 2).
+    expect(row.budget).toBe('300.000000');
+    expect(Number(row.uncovered)).toBeCloseTo(Number(row.actual) - 300 - Number(row.covered), 6);
     expect(report.unowned.map((u: { costCenter: string }) => u.costCenter)).toContain('SHARED-POOL');
     // ENG-PLATFORM's spend is covered by the approved $1,840 request: no exception.
     expect(report.rows.find((x: { costCenter: string }) => x.costCenter === 'ENG-PLATFORM')).toBeUndefined();

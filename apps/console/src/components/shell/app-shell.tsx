@@ -74,7 +74,12 @@ export function AppShell() {
 
 function Frame({ me }: { me: Me }) {
   const { pathname } = useLocation();
-  const title = pathname.startsWith('/approvals/') ? 'Request' : (pageOf(pathname)?.label ?? 'Landledger');
+  const title =
+    pathname.startsWith('/approvals/') || pathname.startsWith('/requests/')
+      ? 'Request'
+      : pathname === '/profile'
+        ? 'Your profile'
+        : (pageOf(pathname)?.label ?? 'Landledger');
   return (
     <div className="min-h-dvh md:grid md:grid-cols-[208px_minmax(0,1fr)]">
       <Sidebar me={me} />

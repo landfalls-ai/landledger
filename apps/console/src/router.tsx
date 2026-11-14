@@ -8,6 +8,7 @@ import { RequestPage } from './routes/request';
 import { BudgetsPage } from './routes/budgets';
 import { ExplorePage } from './routes/explore';
 import { OverviewPage } from './routes/overview';
+import { ProfilePage } from './routes/profile';
 import { RulesPage } from './routes/rules';
 import { SCREENS } from './routes/screens';
 
@@ -27,6 +28,7 @@ export const routes: RouteObject[] = [
       // Webhooks (request.step_pending) link to /requests/:id.
       { path: 'requests/:id', element: <RequestPage /> },
       { path: 'audit', element: <AuditPage /> },
+      { path: 'profile', element: <ProfilePage /> },
       ...SCREENS.filter((s) => !BUILT.has(s.path)).map((s) => ({
         path: s.path.slice(1),
         element: <Placeholder screen={s} />,

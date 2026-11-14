@@ -68,8 +68,9 @@ const Ext = ({ href, children }: { href: string; children: ReactNode }) => (
   </a>
 );
 
-function WhatAndWhy({ r }: { r: RequestView }) {
+function WhatAndWhy({ r, e }: { r: RequestView; e?: RequestDetail['evidence'] }) {
   const a = askedBy(r.requester);
+  const commitment = e?.commitment;
   return (
     <Card title="What and why" testId="what-and-why">
       <CardBody>
@@ -100,17 +101,47 @@ function WhatAndWhy({ r }: { r: RequestView }) {
               ? `Each month from ${r.start}${r.end ? ` to ${r.end}` : ', open-ended'}`
               : `Once, on ${r.start}`}
           </dd>
+          {commitment && (
+            <>
+              <dt className="text-[13px] text-t3">Commitment</dt>
+              <dd data-testid="commitment">
+                <b className="figure font-semibold">{usd(commitment.annualised, { whole: true })} a year</b>
+                <span className="block text-[12px] text-t3">
+                  {r.recurrence === 'monthly'
+                    ? r.end
+                      ? `${usd(commitment.monthly, { whole: true })} a month, ${commitment.window}`
+                      : `${usd(commitment.monthly, { whole: true })} a month, open-ended: counted as twelve months`
+                    : 'Once'}
+                </span>
+              </dd>
+            </>
+          )}
           {[r.origin, ...r.related].map((o, i) => (
             <div key={i} className="contents">
               <dt className="text-[13px] text-t3">{ORIGIN_LABEL[o.type]}</dt>
-              <dd className="min-w-0">{originText(o)}</dd>
+              <dd className="min-w-0">
+                {originText(o)}{' '}
+                {i === 0 && r.origin.verified === false && (
+                  <Tag dashed className="ml-1" data-testid="origin-unverified">
+                    as the caller said, not verified
+                  </Tag>
+                )}
+                {i > 0 && <Tag dashed>as the caller said</Tag>}
+              </dd>
             </div>
           ))}
-          {r.createdByKey && (
+          {r.createdBy && (
             <>
-              <dt className="text-[13px] text-t3">Sent by</dt>
-              <dd>
-                API key <span className="font-mono text-[12.5px]">{r.createdByKey}</span>
+              <dt className="text-[13px] text-t3">Raised by</dt>
+              <dd data-testid="created-by">
+                {r.createdBy.kind === 'key' ? (
+                  <>
+                    API key <span className="font-mono text-[12.5px]">{r.createdBy.name}</span>
+                  </>
+                ) : (
+                  r.createdBy.name
+                )}
+                <span className="block text-[12px] text-t3">Stamped by Landledger, not said by the caller</span>
               </dd>
             </>
           )}
@@ -158,19 +189,33 @@ const safe = (a: string) => {
   }
 };
 
-function Before({ label, now, after }: { label: string; now: string | null; after: string | null }) {
+function Before({
+  label,
+  now,
+  after,
+  nowWord = 'now',
+  afterWord = 'with this request',
+}: {
+  label: string;
+  now: string | null;
+  after: string | null;
+  nowWord?: string;
+  afterWord?: string;
+}) {
   const neg = after !== null && Decimal.parse(after).isNegative();
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 rounded-[10px] border border-hair bg-sf2 px-3 py-2.5 [&+&]:mt-2">
       <div>
-        <small className="block text-[12px] text-t3">{label} · now</small>
+        <small className="block text-[12px] text-t3">
+          {label} · {nowWord}
+        </small>
         <span className="figure text-[16px] font-semibold">{usd(now, { whole: true })}</span>
       </div>
       <span className="text-t3" aria-hidden>
         →
       </span>
       <div className="text-right">
-        <small className="block text-[12px] text-t3">with this request</small>
+        <small className="block text-[12px] text-t3">{afterWord}</small>
         <span className={cn('figure text-[16px] font-semibold', neg && 'text-rd')}>{usd(after, { whole: true })}</span>
       </div>
     </div>
@@ -183,15 +228,19 @@ function Evidence({ d }: { d: RequestDetail }) {
   const mine = requesterEvidence(r.evidence);
   const total = mine.lines.reduce((s, l) => s.plus(safe(l.amount) ?? '0'), Decimal.parse('0'));
   const month = monthLabel(e.month);
-  const over = e.stateWith === 'over';
+  const counted = r.status === 'approved' || r.status === 'applied';
+  const ffm = e.firstFullMonth ?? null;
+  const over = e.stateWith === 'over' || ffm?.stateWith === 'over';
   const forecastMsg =
     e.budget === null
       ? `${r.costCenter.code} has no budget for ${month}.`
-      : over
+      : e.stateWith === 'over'
         ? `With this request ${r.costCenter.code} goes over its ${month} budget.`
-        : e.stateNow === 'risk' || e.stateNow === 'over'
-          ? `${r.costCenter.code} is ${e.stateNow === 'over' ? 'over' : 'at risk'} in ${month} already.`
-          : `${r.costCenter.code} stays on track in ${month} with this request.`;
+        : ffm?.stateWith === 'over'
+          ? `With this request ${r.costCenter.code} goes over its ${monthLabel(ffm.month)} budget, the first full month.`
+          : e.stateNow === 'risk' || e.stateNow === 'over'
+            ? `${r.costCenter.code} is ${e.stateNow === 'over' ? 'over' : 'at risk'} in ${month} already.`
+            : `${r.costCenter.code} stays on track in ${month} with this request.`;
   return (
     <Card title="The evidence" testId="evidence">
       <CardBody>
@@ -230,8 +279,43 @@ function Evidence({ d }: { d: RequestDetail }) {
         )}
 
         <H3>Budget and forecast</H3>
-        <Before label={`Budget left · ${monthLabel(e.month).split(' ')[0]}`} now={e.leftNow} after={e.leftAfter} />
-        {e.forecastNow !== null && <Before label="Forecast" now={e.forecastNow} after={e.forecastWith} />}
+        <Before
+          label={`Budget left · ${monthLabel(e.month).split(' ')[0]}`}
+          now={e.leftNow}
+          after={e.leftAfter}
+          nowWord={counted ? 'without it' : 'now'}
+          afterWord={counted ? 'with its reservation' : 'with this request'}
+        />
+        {e.forecastNow !== null && (
+          <Before
+            label="Forecast"
+            now={e.forecastNow}
+            after={e.forecastWith}
+            nowWord={counted ? 'without it' : 'now'}
+            afterWord={counted ? 'with it' : 'with this request'}
+          />
+        )}
+        {ffm && (
+          <div className="mt-2" data-testid="first-full-month">
+            <Before
+              label={`Budget left · ${monthLabel(ffm.month).split(' ')[0]}, first full month`}
+              now={
+                ffm.budget === null
+                  ? null
+                  : Decimal.parse(ffm.leftAfter ?? '0')
+                      .plus(ffm.adds)
+                      .toString()
+              }
+              after={ffm.leftAfter}
+              nowWord={counted ? 'without it' : 'now'}
+              afterWord={counted ? 'with it' : 'with this request'}
+            />
+            <p className="mt-1.5 text-[12.5px] text-t3">
+              Adds {usd(ffm.adds)} in {monthLabel(ffm.month)}, its first whole month
+              {ffm.budget === null ? `; ${monthLabel(ffm.month)} has no budget yet.` : '.'}
+            </p>
+          </div>
+        )}
         <p className="mt-1.5 text-[12.5px] text-t3">
           Adds {usd(e.adds)} in {month}. Spent {usd(e.actual, { whole: true })} so far
           {e.reserved !== '0.000000' && `, ${usd(e.reserved, { whole: true })} reserved by approved requests`}.
@@ -241,6 +325,19 @@ function Evidence({ d }: { d: RequestDetail }) {
         <div className="mt-2.5">
           <Msg tone={over || e.stateNow === 'over' || e.stateNow === 'risk' ? 'warn' : undefined}>{forecastMsg}</Msg>
         </div>
+        {e.automaticThisMonth && e.automaticThisMonth.costCenter !== '0.000000' && (
+          <p className="mt-1.5 text-[12.5px] text-t3" data-testid="automatic-this-month">
+            Approved by policy on {r.costCenter.code} this month: {usd(e.automaticThisMonth.costCenter)}
+            {e.automaticThisMonth.agent && `; for this agent: ${usd(e.automaticThisMonth.agent)}`}. It counts toward the
+            automatic threshold.
+          </p>
+        )}
+        {e.rateCardChange && (
+          <p className="mt-1.5 text-[12.5px] text-t3">
+            The version’s {e.rateCardChange.lines} lines are frozen while it is decided: sha256{' '}
+            <span className="font-mono text-[12px]">{e.rateCardChange.linesSha256.slice(0, 16)}…</span>
+          </p>
+        )}
 
         {e.similar.length > 0 && (
           <>
@@ -348,10 +445,45 @@ function Path({ r, why }: { r: RequestView; why: string }) {
                     </Pill>
                   )}
                   <small className="block text-[12px] text-t3">{who(s)}</small>
+                  {(s.note ?? s.approvers.fallback) && (
+                    <small className="block text-[12px] text-warn" data-testid={`step-note-${s.position}`}>
+                      {s.note ?? s.approvers.fallback}
+                    </small>
+                  )}
                   {s.decision && (
                     <small className="block text-[12px] text-t3">
                       {s.decision.outcome === 'approve' ? 'Approved' : 'Rejected'} {when(s.decision.at)}
-                      {s.decision.via === 'relay' && ` via ${s.decision.channel ?? s.decision.relayedBy ?? 'relay'}`}
+                      {s.decision.via === 'relay' && (
+                        <>
+                          {' '}
+                          <Tag data-testid="relayed">
+                            relayed from{' '}
+                            {s.decision.relay?.kind === 'slack' || s.decision.channel === 'slack'
+                              ? 'Slack'
+                              : (s.decision.channel ?? 'a relay')}
+                          </Tag>
+                        </>
+                      )}
+                      {s.key === 'budget_owner' && s.decision.ownerRole === 'deputy' && (
+                        <>
+                          {' '}
+                          <Tag>deputy</Tag>
+                        </>
+                      )}
+                      {s.key === 'budget_owner' && s.decision.ownerRole === 'not_owner' && (
+                        <>
+                          {' '}
+                          <Tag dashed data-testid="not-owner">
+                            not the cost center’s owner
+                          </Tag>
+                        </>
+                      )}
+                    </small>
+                  )}
+                  {s.status === 'pending' && (s.approvers.serviceAccounts?.length ?? 0) > 0 && (
+                    <small className="block text-[12px] text-t3" data-testid={`service-accounts-${s.position}`}>
+                      Not approvers (service accounts in the group):{' '}
+                      {s.approvers.serviceAccounts.map((p) => p.email ?? p.name).join(', ')}
                     </small>
                   )}
                   {s.status === 'pending' && s.deadlineAt && (
@@ -371,6 +503,7 @@ function Path({ r, why }: { r: RequestView; why: string }) {
 }
 
 const ENDED_WORDS: Record<string, string> = {
+  awaiting_confirmation: 'Awaiting confirmation',
   approved: 'Approved',
   applied: 'Approved and applied',
   rejected: 'Rejected',
@@ -402,16 +535,10 @@ function Decide({ d }: { d: RequestDetail }) {
       void qc.invalidateQueries({ queryKey: ['requests'] });
     },
   });
-  const cancel = useMutation({
-    mutationFn: () => send('POST', `/api/requests/${r.id}/cancel`, { reason: 'Cancelled in the console' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['request', r.id] });
-      void qc.invalidateQueries({ queryKey: ['requests'] });
-    },
-  });
-
   let body: ReactNode;
-  if (r.status !== 'pending' && r.status !== 'draft') {
+  if (r.status === 'awaiting_confirmation') {
+    body = <Confirmation r={r} />;
+  } else if (r.status !== 'pending' && r.status !== 'draft') {
     const last = lastDecision(r);
     body = (
       <>
@@ -434,6 +561,12 @@ function Decide({ d }: { d: RequestDetail }) {
               >
                 sha256 {last.evidenceSha256.slice(0, 16)}…
               </a>
+            </>
+          )}
+          {r.confirmation?.status === 'declined' && (
+            <>
+              <br />
+              Declined by {r.confirmation.person.name}: “{r.confirmation.reason}”
             </>
           )}
           {r.reservations.length > 0 && (
@@ -542,14 +675,153 @@ function Decide({ d }: { d: RequestDetail }) {
     );
   }
   return (
-    <Card title="Decide" testId="decide">
+    <Card title={r.status === 'awaiting_confirmation' ? 'Confirm' : 'Decide'} testId="decide">
+      <CardBody>{body}</CardBody>
+    </Card>
+  );
+}
+
+/**
+ * A request a key raised naming a person waits for that person (review of wave 2): they confirm it (it enters the
+ * policy) or decline it (cancelled), from their own session. Everyone else sees who it waits on.
+ */
+export function Confirmation({ r, compact }: { r: RequestView; compact?: boolean }) {
+  const qc = useQueryClient();
+  const [reason, setReason] = useState('');
+  const [declining, setDeclining] = useState(false);
+  const done = () => {
+    void qc.invalidateQueries({ queryKey: ['request', r.id] });
+    void qc.invalidateQueries({ queryKey: ['requests'] });
+  };
+  const confirm = useMutation({
+    mutationFn: () => send('POST', `/api/requests/${r.id}/confirm`, {}),
+    onSuccess: done,
+  });
+  const decline = useMutation({
+    mutationFn: () => send('POST', `/api/requests/${r.id}/decline`, { reason }),
+    onSuccess: done,
+  });
+  const c = r.confirmation;
+  const by = r.createdBy?.kind === 'key' ? `API key ${r.createdBy.name}` : (r.createdBy?.name ?? 'An API key');
+  if (!r.you.canConfirm)
+    return (
+      <Msg testId="awaiting-confirmation">
+        {by} raised this naming <b className="font-semibold">{c?.person.name ?? 'a person'}</b>. It waits for them to
+        confirm it from their own session before anyone decides it.
+      </Msg>
+    );
+  const error = confirm.error ?? decline.error;
+  return (
+    <div data-testid="confirm-card">
+      <Msg tone="warn">
+        <b className="font-semibold">{by} raised this in your name.</b>{' '}
+        {r.requester.kind === 'agent'
+          ? `It says you sponsor ${r.requester.agent.name}.`
+          : 'It says you are asking for it.'}{' '}
+        Nobody decides it until you confirm it; decline it if you didn’t ask for it.
+      </Msg>
+      {!compact && (
+        <p className="mt-2 text-[12.5px] text-t3">
+          {usd(r.amount.amount)} {perLabel(r)} for {r.costCenter.code}
+          {r.origin.verified === false && ', from an origin the key gave and Landledger hasn’t verified'}.
+        </p>
+      )}
+      {declining && (
+        <>
+          <label htmlFor={`why-${r.id}`} className="mb-1 mt-2.5 block text-[12px] text-t3">
+            Why you decline it
+          </label>
+          <textarea
+            id={`why-${r.id}`}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+            className="w-full rounded-[10px] border border-bd bg-sf px-3 py-2 text-[14px] text-t1 outline-none focus:border-t2"
+          />
+        </>
+      )}
+      <div className="mt-2.5 grid grid-cols-[2fr_1fr] gap-2">
+        <Button
+          variant="primary"
+          size="lg"
+          disabled={confirm.isPending || declining}
+          onClick={() => confirm.mutate()}
+          data-testid="confirm"
+        >
+          Confirm, it’s mine
+        </Button>
+        <Button
+          variant="danger"
+          size="lg"
+          disabled={decline.isPending || (declining && reason.trim().length < 3)}
+          onClick={() => (declining ? decline.mutate() : setDeclining(true))}
+          data-testid="decline"
+        >
+          Decline
+        </Button>
+      </div>
+      {error && (
+        <p className="mt-2 text-[12.5px] text-rd" role="alert">
+          {error.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Away from Approve and Reject: cancel (asked twice) and the evidence pack. */
+function Manage({ r }: { r: RequestView }) {
+  const qc = useQueryClient();
+  const [sure, setSure] = useState(false);
+  const cancel = useMutation({
+    mutationFn: () => send('POST', `/api/requests/${r.id}/cancel`, { reason: 'Cancelled in the console' }),
+    onSuccess: () => {
+      setSure(false);
+      void qc.invalidateQueries({ queryKey: ['request', r.id] });
+      void qc.invalidateQueries({ queryKey: ['requests'] });
+    },
+  });
+  return (
+    <Card title="This request" testId="manage">
       <CardBody>
-        {body}
-        {r.you.canCancel && (
-          <Button size="sm" className="mt-3" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
-            Cancel this request
-          </Button>
-        )}
+        <p className="text-[13px] text-t2">
+          The evidence pack has the request, every snapshot shown and to whom, the decisions, the audit entries and the
+          chain’s proof.{' '}
+          <a
+            href={`/api/requests/${r.id}/evidence-pack?format=html`}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+            data-testid="evidence-pack"
+          >
+            Open it
+          </a>{' '}
+          ·{' '}
+          <a href={`/api/requests/${r.id}/evidence-pack`} className="underline underline-offset-2">
+            JSON
+          </a>
+        </p>
+        {r.you.canCancel &&
+          (sure ? (
+            <div
+              className="mt-3 rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px]"
+              data-testid="cancel-confirm"
+            >
+              Cancel {r.number}? Nobody can decide it after this, and it can’t be reopened.
+              <div className="mt-2 flex gap-2">
+                <Button size="sm" variant="danger" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+                  Yes, cancel it
+                </Button>
+                <Button size="sm" onClick={() => setSure(false)}>
+                  Keep it
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button size="sm" className="mt-3" onClick={() => setSure(true)} data-testid="cancel">
+              Cancel this request…
+            </Button>
+          ))}
         {cancel.error && <p className="mt-2 text-[12.5px] text-rd">{cancel.error.message}</p>}
       </CardBody>
     </Card>
@@ -588,7 +860,7 @@ export function RequestPage() {
   const d = detail.data;
   const r = d.request;
   const pending = r.status === 'pending';
-  const tone = stepTone(r, pending && r.you.canDecide);
+  const tone = stepTone(r, (pending && r.you.canDecide) || !!r.you.canConfirm);
   const stepLabel = pending
     ? `Step ${r.currentStep} of ${r.steps.length} · ${r.steps.find((s) => s.position === r.currentStep)?.label ?? ''}`
     : (ENDED_WORDS[r.status] ?? r.status);
@@ -620,8 +892,9 @@ export function RequestPage() {
       </div>
       <div className="grid gap-3.5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start">
         <div className="flex min-w-0 flex-col gap-3.5">
-          <WhatAndWhy r={r} />
+          <WhatAndWhy r={r} e={d.evidence} />
           <Evidence d={d} />
+          <Manage r={r} />
         </div>
         <div className="flex min-w-0 flex-col gap-3.5">
           <Path r={r} why={d.evidence.why} />

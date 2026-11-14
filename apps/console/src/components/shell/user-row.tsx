@@ -1,5 +1,6 @@
 import type { Me } from '@landledger/contracts';
 import { LogOut } from 'lucide-react';
+import { Link } from 'react-router';
 import { initials, roleLine, signOut } from '@/lib/auth';
 
 /** The signed-in person: initials, name, "Finance · controller", and sign out. */
@@ -12,12 +13,12 @@ export function UserRow({ me }: { me: Me }) {
       >
         {initials(me.user.name)}
       </span>
-      <div className="min-w-0 flex-1 leading-tight">
+      <Link to="/profile" className="min-w-0 flex-1 leading-tight hover:underline" title="Your profile and Link Slack">
         <b className="block truncate text-[13px] font-semibold text-t1">{me.user.name}</b>
         <small className="block truncate text-[11.5px] text-t3" title={me.user.email ?? undefined}>
           {roleLine(me)}
         </small>
-      </div>
+      </Link>
       {me.kind === 'person' && (
         <button
           type="button"

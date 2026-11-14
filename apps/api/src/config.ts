@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { parseEnv } from 'node:util';
 import { DEFAULT_PG_URL } from '@landledger/schema';
+import { fileURLToPath } from 'node:url';
+import { readHolidays } from './business-hours.js';
 import { parseSecretKey } from './secrets.js';
 
 /** Sign-in through Landbright: an OIDC relying party (authorization code + PKCE, client_secret_post). */
@@ -55,8 +57,25 @@ export interface Config {
   secretKey: Buffer | null;
   /** Business hours a pending step waits before it escalates (LANDLEDGER_STEP_DEADLINE_HOURS, default 24). */
   stepDeadlineHours: number;
-  /** The business days (0 Sunday … 6 Saturday, UTC) deadlines count (LANDLEDGER_BUSINESS_DAYS, default Mon–Fri). */
+  /** The business days (0 Sunday … 6 Saturday, in `timeZone`) deadlines count (LANDLEDGER_BUSINESS_DAYS, default Mon–Fri). */
   businessDays: number[];
+  /** The time zone business days are counted in, and times are shown in (LANDLEDGER_TZ, default UTC). */
+  timeZone: string;
+  /** Local dates that never count as business days (LANDLEDGER_HOLIDAYS_FILE, default deploy/holidays.txt). */
+  holidays: Set<string>;
+}
+
+/** deploy/holidays.txt in the workspace (src/ and dist/ sit at the same depth). */
+export const DEFAULT_HOLIDAYS_FILE = fileURLToPath(new URL('../../../deploy/holidays.txt', import.meta.url));
+
+/** An IANA time zone Intl knows, or throws. */
+export function parseTimeZone(value: string): string {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return value;
+  } catch {
+    throw new Error(`LANDLEDGER_TZ: "${value}" is not a time zone (Asia/Jerusalem, UTC)`);
+  }
 }
 
 const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -175,6 +194,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
       return n;
     })(),
     businessDays: parseBusinessDays(env.LANDLEDGER_BUSINESS_DAYS ?? 'mon-fri'),
+    timeZone: parseTimeZone(env.LANDLEDGER_TZ ?? 'UTC'),
+    holidays: readHolidays(
+      env.LANDLEDGER_HOLIDAYS_FILE === 'none'
+        ? null
+        : expandHome(env.LANDLEDGER_HOLIDAYS_FILE ?? DEFAULT_HOLIDAYS_FILE),
+    ),
     auditAnchorMinutes: (() => {
       const n = Number(env.LANDLEDGER_AUDIT_ANCHOR_MINUTES ?? '60');
       if (!Number.isInteger(n) || n < 0)

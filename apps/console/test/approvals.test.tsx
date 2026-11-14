@@ -168,3 +168,126 @@ describe('words', () => {
     expect(whenWords({ ...base, when: { always: true } })).toBe('Always');
   });
 });
+
+describe('review of wave 2 on the request page', () => {
+  const KEY = { kind: 'key', id: 'key_1', name: 'landflow' };
+  it('asks the named person to confirm a request a key raised in their name, or decline it with a reason', async () => {
+    const fetchMock = mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/requests/req_1': [
+        200,
+        {
+          request: {
+            ...request({ canDecide: false, canConfirm: true }, 'awaiting_confirmation'),
+            steps: [],
+            currentStep: null,
+            createdBy: KEY,
+            origin: { type: 'landflow_run', workflowId: 'wf_1', executionId: 'ex_1', verified: false },
+            confirmation: { person: TAL, status: 'waiting', at: null, reason: '' },
+          },
+          evidence,
+          evidenceSha256: SHA,
+        },
+      ],
+      '/api/requests/req_1/confirm': [200, {}],
+      '/api/requests/req_1/decline': [200, {}],
+    });
+    renderAt('/approvals/req_1');
+    const card = await screen.findByTestId('confirm-card');
+    expect(card).toHaveTextContent('API key landflow raised this in your name.');
+    expect(screen.getByTestId('origin-unverified')).toBeInTheDocument();
+    expect(screen.getByTestId('created-by')).toHaveTextContent('API key landflow');
+    expect(screen.queryByTestId('approve')).toBeNull();
+    // Decline needs a reason first.
+    await userEvent.click(screen.getByTestId('decline'));
+    expect(screen.getByTestId('decline')).toBeDisabled();
+    await userEvent.type(screen.getByLabelText('Why you decline it'), 'Not mine');
+    await userEvent.click(screen.getByTestId('decline'));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([p]) => p === '/api/requests/req_1/decline')).toBe(true));
+    const [, init] = fetchMock.mock.calls.find(([p]) => p === '/api/requests/req_1/decline')!;
+    expect(JSON.parse(String(init!.body))).toEqual({ reason: 'Not mine' });
+  });
+
+  it('marks a relayed decision and one by someone not the owner; shows the commitment and the first full month', async () => {
+    const decided = {
+      ...step(1, 'budget_owner', 'Budget owner', 'approved', ['Budget Owners']),
+      decision: {
+        id: 'dec_1',
+        step: 1,
+        stepKey: 'budget_owner',
+        outcome: 'approve',
+        comment: '',
+        person: SHIRA,
+        at: '2026-11-16T10:00:00.000Z',
+        evidenceSha256: SHA,
+        via: 'relay',
+        relayedBy: 'landflow relay',
+        channel: 'slack',
+        relay: { channelId: 'rch_1', kind: 'slack', externalUserId: 'U_SHIRA' },
+        ownerRole: 'not_owner',
+      },
+    };
+    mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/requests/req_1': [
+        200,
+        {
+          request: {
+            ...request({ canDecide: false, canCancel: true }, 'approved'),
+            steps: [decided],
+            currentStep: null,
+            createdBy: { kind: 'person', id: TAL.id, name: TAL.name },
+            origin: { type: 'console', verified: true },
+            confirmation: null,
+          },
+          evidence: {
+            ...evidence,
+            firstFullMonth: {
+              month: '2026-12',
+              adds: '1840.000000',
+              budget: '1000.000000',
+              reserved: '0.000000',
+              leftAfter: '-840.000000',
+              stateWith: 'over',
+            },
+            commitment: { monthly: '1840.000000', annualised: '22080.000000', window: 'open-ended' },
+            automaticThisMonth: { costCenter: '0.000000', agent: null },
+            rateCardChange: null,
+          },
+          evidenceSha256: SHA,
+        },
+      ],
+    });
+    renderAt('/approvals/req_1');
+    expect(await screen.findByTestId('relayed')).toHaveTextContent('relayed from Slack');
+    expect(screen.getByTestId('not-owner')).toBeInTheDocument();
+    expect(screen.getByTestId('commitment')).toHaveTextContent('$22,080 a year');
+    expect(screen.getByTestId('commitment')).toHaveTextContent('open-ended');
+    expect(screen.getByTestId('first-full-month')).toHaveTextContent('first full month');
+    // On an approved request "now" means without it: the two figures differ by its reservation.
+    expect(within(screen.getByTestId('evidence')).getAllByText(/without it/).length).toBeGreaterThan(0);
+    // Cancel sits apart from the decision and asks first.
+    await userEvent.click(within(screen.getByTestId('manage')).getByTestId('cancel'));
+    expect(screen.getByTestId('cancel-confirm')).toHaveTextContent('Cancel R-1?');
+    expect(screen.getByTestId('evidence-pack')).toHaveAttribute(
+      'href',
+      '/api/requests/req_1/evidence-pack?format=html',
+    );
+  });
+
+  it('lets a person link their own Slack id on their profile', async () => {
+    const fetchMock = mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/me/links': [200, { links: [] }],
+    });
+    renderAt('/profile');
+    const input = await screen.findByLabelText(/Slack member ID/);
+    await userEvent.type(input, 'u_tal');
+    await userEvent.click(screen.getByTestId('link-slack-submit'));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([p, init]) => p === '/api/me/links' && init?.method === 'POST')).toBe(true),
+    );
+    const [, init] = fetchMock.mock.calls.find(([p, i]) => p === '/api/me/links' && i?.method === 'POST')!;
+    expect(JSON.parse(String(init!.body))).toEqual({ kind: 'slack', externalId: 'U_TAL' });
+  });
+});

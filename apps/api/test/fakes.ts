@@ -25,6 +25,8 @@ export const testConfig = (over: Partial<Config> = {}): Config => ({
   auditAnchorMinutes: 0,
   stepDeadlineHours: 24,
   businessDays: [1, 2, 3, 4, 5],
+  timeZone: 'UTC',
+  holidays: new Set(),
   // A fixed test key (never used outside tests).
   secretKey: Buffer.alloc(32, 7),
   ...over,

@@ -184,6 +184,16 @@ export class RateCards {
       const [v] = await tx<VersionRow[]>`SELECT * FROM rate_card_versions WHERE id = ${versionId} FOR UPDATE`;
       if (!v) throw notFound('Rate card version');
       if (v.approved_at) throw new ApiError('conflict', `Version ${v.version} is approved: its lines never change`);
+      // Review of wave 2: once the version's request exists its lines are frozen (the request's evidence hashes them).
+      const [req] = await tx<{ id: string }[]>`
+        SELECT id FROM requests WHERE change->>'type' = 'rate_card_version' AND change->>'versionId' = ${versionId}
+        LIMIT 1`;
+      if (req)
+        throw new ApiError(
+          'conflict',
+          `Version ${v.version} is under request ${req.id}: its lines are frozen. Propose a new version to change them`,
+          { requestId: req.id },
+        );
       const [{ max }] =
         (await tx`SELECT coalesce(max(position), 0) AS max FROM rate_lines WHERE version_id = ${versionId}`) as unknown as [
           { max: number },

@@ -115,5 +115,24 @@ export async function fakeLandbright(options: { claimsInIdToken?: boolean; audie
     return { code, state: p.get('state')!, iss: ISSUER };
   }
 
-  return { fetchImpl, authorize, calls };
+  /** A back-channel logout token for a subject, as Landbright would post it (OIDC Back-Channel Logout 1.0). */
+  async function logoutToken(
+    sub: string,
+    over: { jti?: string; events?: unknown; nonce?: string; audience?: string } = {},
+  ) {
+    return new SignJWT({
+      events: over.events ?? { 'http://schemas.openid.net/event/backchannel-logout': {} },
+      ...(over.nonce ? { nonce: over.nonce } : {}),
+    })
+      .setProtectedHeader({ alg: 'RS256', kid: 'k1', typ: 'logout+jwt' })
+      .setIssuer(ISSUER)
+      .setAudience(over.audience ?? CLIENT_ID)
+      .setSubject(sub)
+      .setJti(over.jti ?? randomBytes(8).toString('hex'))
+      .setIssuedAt()
+      .setExpirationTime('2m')
+      .sign(privateKey);
+  }
+
+  return { fetchImpl, authorize, calls, logoutToken };
 }

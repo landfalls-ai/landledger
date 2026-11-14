@@ -100,20 +100,27 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 - **The `landledger` plugin** (TypeScript SDK, like the `clickland` plugin; HTTP, gRPC, broker and MCP):
   - **Landledger** node: Budget → Check, Cost → Query, Request → Create / Get, Reservation → Create / Release,
     Period → Status. Usable as an AI tool, so agents can check a budget before they act.
-  - **Landledger Trigger**: an app webhook for `request.step_pending`, `request.decided`, `budget.at_risk`,
-    `cost.anomaly` and `period.closing`.
-  - A knowledge kind: an agent asks "why is ENG-AGENTS over?" and gets the drivers with links.
+  - **Landledger Trigger**: an app webhook for what Landledger sends today: `request.created`,
+    `request.needs_confirmation`, `request.step_pending`, `decision.relayed`, `request.decided`, `request.applied`,
+    `budget.at_risk`, `report.exceptions`, `period.closing`, `audit.anchor` (subscribed with a `webhooks:write` key,
+    which sees only its own subscriptions). Planned, not sent yet: `cost.anomaly` (wave 3, with Clickland's alerts).
+  - Planned, not built: a knowledge kind (an agent asks "why is ENG-AGENTS over?" and gets the drivers with links).
 - **Approvals.** Landledger owns the request, the policy and the decision. Landflow carries the conversation:
   1. A flow (infra change, AI budget, tool) creates the request and waits on `request.decided`.
   2. Landledger sends `request.step_pending` naming the step's approvers.
   3. A Landflow flow posts the card in Slack or Teams, or a signed email link; the phone's "Needs you" works too.
-  4. A button press comes back to Landflow, which relays it as `POST /api/requests/:id/decisions` with a key
-     scoped `decisions:relay` and the person's Landbright identity. Landledger checks that the person is in the
-     step's group and isn't the requester, then records it. People can also decide in Landledger's console.
-- **Agents request; people decide.** No API key, MCP tool or agent token can decide. The relay scope only carries a
-  person's decision, and the MCP server exposes no decide tool.
-- **Caps follow budgets.** An approved AI budget writes the matching cap through Landflow's
-  `PUT /api/settings/ai-caps` and the agent's limits, so the hard stop and the budget agree.
+  4. A Slack button press comes back to Landflow, which forwards the **raw interaction** (body, `X-Slack-Signature`,
+     `X-Slack-Request-Timestamp`) to `POST /api/relays/slack` with a key that holds `decisions:relay` and nothing that
+     writes. Landledger verifies the signature with the relay channel's own signing secret, the team and the app, maps
+     the Slack user to the person who linked it from their own session, and decides as that person with every check a
+     console decision has. A relay decides only a budget owner's step, never Finance's or the CFO's. People can also
+     decide in Landledger's console.
+- **Agents request; people decide.** No API key, MCP tool or agent token can decide. A relay key can't forge a press
+  (it doesn't hold the signing secret) or name a person; a request a key raises in a person's name waits for that
+  person to confirm it. The MCP server exposes no decide tool.
+- **Caps follow budgets (planned, Landflow's side).** An approved AI budget is meant to write the matching cap through
+  Landflow (its AI caps setting and the agent's limits), so the hard stop and the budget agree; Landledger sends
+  `request.decided`, and the write is Landflow's flow. Landledger has no `PUT /api/settings/ai-caps` of its own.
 
 ### Clickland: the eyes
 

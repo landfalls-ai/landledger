@@ -24,12 +24,19 @@ import {
   ReservationsQuery,
   ReserveInput,
   RuleSetProposalInput,
+  ConfirmInput,
+  CostCenterOwnersInput,
+  DeclineInput,
+  PersonLinkInput,
+  RelayChannelInput,
+  SlackRelayInput,
 } from '@landledger/contracts';
 import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { registerAuthRoutes } from './auth.js';
 import { ApiError } from './errors.js';
+import { evidencePackHtml } from './evidence-pack.js';
 import { toCsv, toXlsx, type Sheet } from './export.js';
 import { createMcpServer } from './mcp.js';
 import { registerScim } from './scim.js';
@@ -84,6 +91,7 @@ const PUBLIC = new Set([
   '/api/auth/oidc/callback',
   '/api/auth/logout',
   '/api/auth/me',
+  '/api/auth/backchannel-logout',
 ]);
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -168,7 +176,7 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
   app.get('/api/audit', async (r) => (need(r, 'read'), audit.list(parse(AuditQuery, r.query))));
   app.get('/api/audit/verify', async (r) => (need(r, 'read'), audit.verify()));
 
-  // API keys --------------------------------------------------------------------------------------------------------
+  // API keys: only a signed-in admin person mints one (the bootstrap key only until the first admin person exists) ----
   app.get('/api/keys', async (r) => (need(r, 'admin'), { keys: await keys.list() }));
   app.post('/api/keys', async (r, reply) => {
     need(r, 'admin');
@@ -201,25 +209,30 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
   });
   await registerScim(app, services.scim, services.scimTokens);
 
-  // Webhooks out ----------------------------------------------------------------------------------------------------
-  app.get('/api/webhooks', async (r) => (need(r, 'admin'), { webhooks: await webhooks.list() }));
+  // Webhooks out: a `webhooks:write` key manages its own subscriptions; an admin person all of them ------------------
+  const hooks = (r: FastifyRequest) =>
+    need(r, r.principal.kind === 'key' && !r.principal.scopes.includes('admin') ? 'webhooks:write' : 'admin');
+  app.get('/api/webhooks', async (r) => (hooks(r), { webhooks: await webhooks.list(r.principal) }));
   app.post('/api/webhooks', async (r, reply) => {
-    need(r, 'admin');
+    hooks(r);
     return reply.status(201).send(await webhooks.create(parse(WebhookInput, r.body), r.principal));
   });
   app.delete('/api/webhooks/:id', async (r, reply) => {
-    need(r, 'admin');
+    hooks(r);
     await webhooks.delete(parse(Id, r.params).id, r.principal);
     return reply.status(204).send();
   });
-  app.get(
-    '/api/webhooks/:id/deliveries',
-    async (r) => (need(r, 'admin'), { deliveries: await webhooks.deliveries(parse(Id, r.params).id) }),
-  );
+  app.get('/api/webhooks/:id/deliveries', async (r) => {
+    hooks(r);
+    const id = parse(Id, r.params).id;
+    await webhooks.own(id, r.principal);
+    return { deliveries: await webhooks.deliveries(id) };
+  });
   /** Sends a `ping` to one webhook through the outbox, to check the receiver and its signature check. */
   app.post('/api/webhooks/:id/ping', async (r, reply) => {
-    need(r, 'admin');
+    hooks(r);
     const id = parse(Id, r.params).id;
+    await webhooks.own(id, r.principal);
     const result = await sql.begin((tx) => webhooks.enqueue(tx, 'ping', { webhookId: id }, id));
     if (result.deliveries === 0) throw new ApiError('not_found', 'Webhook not found, or it takes no ping');
     return reply.status(202).send(result);
@@ -250,9 +263,15 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
   // Rate cards: approval (people only) and the AI lines from Landflow's price table ---------------------------------
   const VersionId = z.object({ id: z.string().min(1).max(100) });
   // Approving a version is a request now (wave 2): the route answers 409 with the version's request to decide.
+  // Raising it is a write: a signed-in person with requests:write; read and auditor get 403, and the audit names the caller.
   const foldedIntoRequests = (type: 'rate_card_version' | 'rule_set_version') => async (r: FastifyRequest) => {
-    need(r, 'read');
-    const requestId = await services.proposals.requestForVersion(type, parse(VersionId, r.params).id);
+    need(r, 'requests:write');
+    if (r.principal.kind !== 'person')
+      throw new ApiError(
+        'forbidden',
+        "A person signed in with Landbright raises a version's request; an API key doesn't",
+      );
+    const requestId = await services.proposals.requestForVersion(type, parse(VersionId, r.params).id, r.principal);
     throw new ApiError(
       'conflict',
       `Approving a ${type === 'rate_card_version' ? 'rate card' : 'rule set'} version is a request now: decide request ${requestId} with POST /api/requests/${requestId}/decisions`,
@@ -354,6 +373,8 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
   const Sha = z.object({ id: z.string().min(1).max(100), sha256: z.string().regex(/^[0-9a-f]{64}$/) });
   const ReleaseInput = z.object({ reason: z.string().trim().max(1000).default('') });
   const viaOf = (r: FastifyRequest) => (r.principal.kind === 'person' ? 'session' : 'key') as 'session' | 'key';
+  const EvidencePackQuery = z.object({ format: z.enum(['json', 'html']).default('json') });
+  const CodeParam = z.object({ code: z.string().min(1).max(100) });
   const aPerson = (r: FastifyRequest, what: string) => {
     if (r.principal.kind !== 'person')
       throw new ApiError(
@@ -373,6 +394,27 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
     const { id, sha256 } = parse(Sha, r.params);
     return requests.storedSnapshot(id, sha256);
   });
+  app.get('/api/requests/:id/evidence-pack', async (r, reply) => {
+    need(r, 'read');
+    const pack = await requests.evidencePack(parse(Id, r.params).id, r.principal);
+    if (parse(EvidencePackQuery, r.query).format === 'html')
+      return reply
+        .header('content-type', 'text/html; charset=utf-8')
+        .header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'")
+        .send(evidencePackHtml(pack));
+    return pack;
+  });
+  // Confirmation: a request a key raised naming a person waits for that person, in their own session.
+  app.post('/api/requests/:id/confirm', async (r) => {
+    need(r, 'read');
+    const { comment } = parse(ConfirmInput, r.body ?? {});
+    return { request: await requests.confirm(parse(Id, r.params).id, comment, r.principal) };
+  });
+  app.post('/api/requests/:id/decline', async (r) => {
+    need(r, 'read');
+    const { reason } = parse(DeclineInput, r.body ?? {});
+    return { request: await requests.decline(parse(Id, r.params).id, reason, r.principal) };
+  });
   app.get(
     '/api/requests/:id/decisions',
     async (r) => (need(r, 'read'), { decisions: await requests.decisions(parse(Id, r.params).id) }),
@@ -386,12 +428,52 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
     const { reason } = parse(CancelInput, r.body ?? {});
     return { request: await requests.cancel(parse(Id, r.params).id, reason, r.principal) };
   });
-  // A decision is a person's: their session, or a decisions:relay key naming them (checked in Requests.decide).
+  // A decision is a person's, from their own session (Requests.decide refuses keys: relays use /api/relays/slack).
   app.post('/api/requests/:id/decisions', async (r, reply) => {
-    need(r, r.principal.kind === 'key' ? 'decisions:relay' : 'read');
+    need(r, 'read');
     return reply
       .status(201)
       .send(await requests.decide(parse(Id, r.params).id, parse(DecisionInput, r.body), r.principal));
+  });
+  // A relay: the raw Slack interaction; Landledger verifies it and decides as the person who linked that Slack user.
+  app.post('/api/relays/slack', async (r, reply) => {
+    need(r, 'decisions:relay');
+    return reply.status(201).send(await requests.relay(parse(SlackRelayInput, r.body), r.principal));
+  });
+  app.get('/api/relay-channels', async (r) => {
+    need(r, 'admin');
+    aPerson(r, 'manages relay channels');
+    return { channels: await services.relayChannels.list() };
+  });
+  app.post('/api/relay-channels', async (r, reply) => {
+    need(r, 'admin');
+    aPerson(r, 'registers a relay channel');
+    return reply.status(201).send(await services.relayChannels.create(parse(RelayChannelInput, r.body), r.principal));
+  });
+  app.delete('/api/relay-channels/:id', async (r, reply) => {
+    need(r, 'admin');
+    aPerson(r, 'disables a relay channel');
+    await services.relayChannels.disable(parse(Id, r.params).id, r.principal);
+    return reply.status(204).send();
+  });
+  app.get('/api/me/links', async (r) => (need(r, 'read'), { links: await services.links.list(r.principal) }));
+  app.post('/api/me/links', async (r, reply) => {
+    need(r, 'read');
+    return reply.status(201).send(await services.links.create(parse(PersonLinkInput, r.body), r.principal));
+  });
+  app.delete('/api/me/links/:id', async (r, reply) => {
+    need(r, 'read');
+    await services.links.remove(parse(Id, r.params).id, r.principal);
+    return reply.status(204).send();
+  });
+  app.get('/api/cost-centers/:code/owners', async (r) => {
+    need(r, 'read');
+    return services.owners.view(parse(CodeParam, r.params).code);
+  });
+  app.put('/api/cost-centers/:code/owners', async (r) => {
+    need(r, 'admin');
+    aPerson(r, 'maps cost center owners');
+    return services.owners.set(parse(CodeParam, r.params).code, parse(CostCenterOwnersInput, r.body), r.principal);
   });
   app.post('/api/requests/:id/applied', async (r) => {
     need(r, 'requests:write');
@@ -407,8 +489,9 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
     const { reservation, created } = await reservations.reserve(parse(ReserveInput, r.body), r.principal);
     return reply.status(created ? 201 : 200).send({ reservation });
   });
+  // Release: the key that raised the request, its requester or sponsor, or an admin person (Reservations.release).
   app.post('/api/reservations/:id/release', async (r) => {
-    need(r, 'reservations:write');
+    need(r, r.principal.kind === 'person' ? 'read' : 'reservations:write');
     const { reason } = parse(ReleaseInput, r.body ?? {});
     return { reservation: await reservations.release(parse(Id, r.params).id, reason, r.principal) };
   });
@@ -444,6 +527,15 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
   });
 
   app.get('/api/exceptions', async (r) => (need(r, 'read'), exceptions.report(parse(ExceptionsQuery, r.query))));
+  const ReportsQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).default(20) });
+  app.get(
+    '/api/exceptions/reports',
+    async (r) => (need(r, 'read'), { reports: await exceptions.reports(parse(ReportsQuery, r.query).limit) }),
+  );
+  app.get(
+    '/api/exceptions/reports/:id',
+    async (r) => (need(r, 'read'), exceptions.storedReport(parse(Id, r.params).id)),
+  );
 
   // MCP (stateless Streamable HTTP, Clickland's pattern): spend_by and budget_status -------------------------------------
   app.post('/api/mcp', async (request, reply) => {

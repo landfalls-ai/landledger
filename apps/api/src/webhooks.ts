@@ -1,4 +1,4 @@
-import type { WebhookEvent, WebhookInput } from '@landledger/contracts';
+import type { WebhookEvent, WebhookInput, WebhookView } from '@landledger/contracts';
 import { createHmac, randomBytes } from 'node:crypto';
 import type { AuditLog } from './audit.js';
 import type { Sql, Tx } from './db.js';
@@ -19,14 +19,7 @@ export function signWebhook(secret: string, id: string, timestamp: number, body:
   return `v1,${createHmac('sha256', key).update(`${id}.${timestamp}.${body}`).digest('base64')}`;
 }
 
-export interface WebhookView {
-  id: string;
-  url: string;
-  events: WebhookEvent[];
-  description: string;
-  createdBy: string;
-  createdAt: string;
-}
+export type { WebhookView };
 
 type Row = {
   id: string;
@@ -34,6 +27,7 @@ type Row = {
   events: WebhookEvent[];
   description: string;
   created_by: string;
+  created_by_key: string | null;
   created_at: Date;
 };
 const toView = (r: Row): WebhookView => ({
@@ -42,8 +36,15 @@ const toView = (r: Row): WebhookView => ({
   events: r.events,
   description: r.description,
   createdBy: r.created_by,
+  createdByKey: r.created_by_key,
   createdAt: r.created_at.toISOString(),
 });
+
+/**
+ * Who sees which subscriptions (review of wave 2): an admin person (or the local developer) every one; a key, even
+ * one with `admin`, only those it created (`webhooks:write`).
+ */
+const seesAll = (by: Principal) => by.kind !== 'key' && by.kind !== 'bootstrap' && by.scopes.includes('admin');
 
 type Due = {
   id: string;
@@ -76,9 +77,19 @@ export class Webhooks {
     return this.box.open(stored, webhookAad(webhookId));
   }
 
-  async list(): Promise<WebhookView[]> {
-    const rows = await this.sql<Row[]>`SELECT * FROM webhooks WHERE disabled_at IS NULL ORDER BY created_at DESC`;
+  async list(by: Principal): Promise<WebhookView[]> {
+    const all = seesAll(by);
+    const rows = await this.sql<Row[]>`
+      SELECT * FROM webhooks WHERE disabled_at IS NULL AND (${all} OR created_by_key = ${by.id})
+      ORDER BY created_at DESC`;
     return rows.map(toView);
+  }
+
+  /** 404 unless the caller may see this subscription. */
+  async own(id: string, by: Principal): Promise<void> {
+    const [row] = await this.sql<{ created_by_key: string | null }[]>`
+      SELECT created_by_key FROM webhooks WHERE id = ${id} AND disabled_at IS NULL`;
+    if (!row || (!seesAll(by) && row.created_by_key !== by.id)) throw notFound('Webhook');
   }
 
   /** The signing secret is returned only here, once. */
@@ -94,8 +105,9 @@ export class Webhooks {
     const id = newId('wh');
     return (await this.sql.begin(async (tx) => {
       const [row] = await tx<Row[]>`
-        INSERT INTO webhooks (id, url, secret, events, description, created_by)
-        VALUES (${id}, ${input.url}, ${box.seal(secret, webhookAad(id))}, ${input.events}, ${input.description}, ${actor.actor})
+        INSERT INTO webhooks (id, url, secret, events, description, created_by, created_by_key)
+        VALUES (${id}, ${input.url}, ${box.seal(secret, webhookAad(id))}, ${input.events}, ${input.description},
+                ${actor.actor}, ${by.kind === 'key' ? by.id : null})
         RETURNING *`;
       await this.audit.append(
         {
@@ -103,7 +115,7 @@ export class Webhooks {
           action: 'webhook.created',
           subjectType: 'webhook',
           subjectId: row!.id,
-          data: { url: input.url, events: input.events },
+          data: { url: input.url, events: input.events, ...(by.kind === 'key' ? { key: by.id } : {}) },
         },
         tx,
       );
@@ -112,6 +124,7 @@ export class Webhooks {
   }
 
   async delete(id: string, by: Principal): Promise<void> {
+    await this.own(id, by);
     await this.sql.begin(async (tx) => {
       const rows =
         await tx`UPDATE webhooks SET disabled_at = now() WHERE id = ${id} AND disabled_at IS NULL RETURNING id`;

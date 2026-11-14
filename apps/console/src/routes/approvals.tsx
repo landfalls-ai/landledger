@@ -170,6 +170,11 @@ const exceptionColumns: Column<ExceptionsReport['rows'][number]>[] = [
     ),
   },
   { header: 'Spent', numeric: true, cell: (e) => usd(e.actual, { whole: true }) },
+  {
+    header: 'Budget',
+    numeric: true,
+    cell: (e) => (e.budget ? usd(e.budget, { whole: true }) : <span className="text-t3">None</span>),
+  },
   { header: 'Covered by requests', numeric: true, cell: (e) => usd(e.covered, { whole: true }) },
   {
     header: 'Not covered',
@@ -192,7 +197,7 @@ function Exceptions() {
       title="Spend no request covers"
       sub={
         report.data
-          ? `${monthLabel(report.data.from)}${report.data.to !== report.data.from ? ` to ${monthLabel(report.data.to)}` : ''}: spend above a cost center’s automatic threshold with no approved request behind it. Sent to Finance weekly.`
+          ? `${monthLabel(report.data.from)}${report.data.to !== report.data.from ? ` to ${monthLabel(report.data.to)}` : ''}: spend beyond budget that no approved request covers (a request covers only what its match selects), above a cost center’s automatic threshold. Stored and sent to Finance weekly.`
           : 'The weekly exceptions report'
       }
       action={
@@ -200,13 +205,25 @@ function Exceptions() {
           <CopyButton
             tsv={() =>
               toTsv(
-                ['Month', 'Cost center', 'Name', 'Owner', 'Spent', 'Covered', 'Not covered', 'Threshold', 'Requests'],
+                [
+                  'Month',
+                  'Cost center',
+                  'Name',
+                  'Owner',
+                  'Spent',
+                  'Budget',
+                  'Covered',
+                  'Not covered',
+                  'Threshold',
+                  'Requests',
+                ],
                 rows.map((e) => [
                   e.month,
                   e.costCenter,
                   e.name,
                   e.owner ?? '',
                   e.actual,
+                  e.budget ?? '',
                   e.covered,
                   e.uncovered,
                   e.threshold,
@@ -239,9 +256,15 @@ function Exceptions() {
 /** Approvals (docs/ui.md, `#approvals`): waiting on you, then what you raised, then what was decided. */
 export function ApprovalsPage() {
   const waiting = useRequests('waiting');
+  const confirm = useRequests('confirm');
   const mine = useRequests('mine');
   const decided = useRequests('decided');
-  const all = [...(waiting.data?.requests ?? []), ...(mine.data?.requests ?? []), ...(decided.data?.requests ?? [])];
+  const all = [
+    ...(confirm.data?.requests ?? []),
+    ...(waiting.data?.requests ?? []),
+    ...(mine.data?.requests ?? []),
+    ...(decided.data?.requests ?? []),
+  ];
   const unique = [...new Map(all.map((r) => [r.id, r])).values()];
   const error = waiting.error ?? mine.error ?? decided.error;
   return (
@@ -254,6 +277,16 @@ export function ApprovalsPage() {
         {unique.length > 0 && <CopyButton tsv={() => tsvOf(unique)} />}
       </div>
       {error && <p className="mb-3 text-[13px] text-rd">{error.message}</p>}
+      {(confirm.data?.requests.length ?? 0) > 0 && (
+        <Section
+          title="Raised in your name: confirm or decline"
+          rows={confirm.data?.requests ?? []}
+          mine
+          empty=""
+          loading={confirm.isLoading}
+          testId="box-confirm"
+        />
+      )}
       <Section
         title="Waiting on you"
         rows={waiting.data?.requests ?? []}

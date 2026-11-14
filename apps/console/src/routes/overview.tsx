@@ -22,10 +22,18 @@ const share = (part: string, whole: string) => {
 /** Needs you: requests waiting on the signed-in person, newest first (docs/ui.md, Overview). */
 function NeedsYou() {
   const q = useRequests('waiting');
-  const rows = q.data?.requests ?? [];
+  const c = useRequests('confirm');
+  const confirm = c.data?.requests ?? [];
+  const rows = [...confirm, ...(q.data?.requests ?? [])];
   if (rows.length === 0) return null;
+  const sub = [
+    confirm.length ? `${confirm.length} raised in your name, to confirm` : null,
+    q.data?.requests.length ? `${q.data.requests.length} waiting on your decision` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   return (
-    <Card title="Needs you" sub={`${rows.length} waiting on your decision`} testId="needs-you">
+    <Card title="Needs you" sub={sub} testId="needs-you">
       <ul>
         {rows.slice(0, 4).map((r) => (
           <li key={r.id} className="border-t border-hair first:border-t-0">

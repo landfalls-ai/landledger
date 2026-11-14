@@ -16,6 +16,8 @@ import { emitCostMetrics } from './metrics.js';
 import { RateCards } from './ratecards.js';
 import { Scim, ScimTokens } from './scim.js';
 import { Exceptions } from './exceptions.js';
+import { CostCenterOwners } from './owners.js';
+import { PersonLinks, RelayChannels } from './relays.js';
 import { Policies } from './policies.js';
 import { Proposals } from './proposals.js';
 import { Requests } from './requests.js';
@@ -46,6 +48,9 @@ export interface Services {
   requests: Requests;
   proposals: Proposals;
   exceptions: Exceptions;
+  owners: CostCenterOwners;
+  links: PersonLinks;
+  relayChannels: RelayChannels;
   landflow: LandflowClient | null;
   log: IngestLog;
   fetchImpl: typeof fetch;
@@ -93,6 +98,9 @@ export function createServices(
   });
   const policies = new Policies(sql);
   const reservations = new Reservations(sql, audit, spend, now);
+  const owners = new CostCenterOwners(sql, audit);
+  const links = new PersonLinks(sql, audit);
+  const relayChannels = new RelayChannels(sql, audit, box, now);
   const requests = new Requests(
     sql,
     audit,
@@ -104,6 +112,9 @@ export function createServices(
     allocation,
     config,
     now,
+    owners,
+    links,
+    relayChannels,
   );
   // A rate card or rule set approved through its request: re-price every day from its first, or rebuild open months.
   requests.afterApplied = async (change, info) => {
@@ -116,7 +127,7 @@ export function createServices(
       });
   };
   const proposals = new Proposals(sql, audit, spend, allocation, requests, now);
-  const exceptions = new Exceptions(sql, audit, webhooks, spend, policies, now);
+  const exceptions = new Exceptions(sql, audit, webhooks, spend, policies, now, budgets, config.consoleUrl);
   return {
     config,
     sql,
@@ -139,6 +150,9 @@ export function createServices(
     requests,
     proposals,
     exceptions,
+    owners,
+    links,
+    relayChannels,
     landflow,
     log,
     fetchImpl,

@@ -217,6 +217,36 @@ export class Sessions {
     return (await this.oidc?.endSessionUrl(idToken)) ?? `${this.config.consoleUrl}/`;
   }
 
+  /**
+   * Back-channel logout (OpenID Connect Back-Channel Logout 1.0): Landbright posts a signed logout token when a person
+   * signs out there or is disabled; every session of that person here ends. Each token (`jti`) is taken once.
+   */
+  async backchannelLogout(token: string): Promise<{ sessions: number }> {
+    const { sub, jti, sid } = await this.client().verifyLogoutToken(token);
+    return this.sql.begin(async (tx) => {
+      const fresh =
+        await tx`INSERT INTO logout_tokens (jti, sub) VALUES (${jti}, ${sub}) ON CONFLICT DO NOTHING RETURNING 1`;
+      if (!fresh.length) throw new ApiError('bad_request', 'This logout token was already used (jti)');
+      const ended = await tx<{ user_id: string }[]>`
+        UPDATE sessions SET revoked_at = now()
+        WHERE revoked_at IS NULL AND user_id IN (SELECT id FROM users WHERE subject = ${sub})
+        RETURNING user_id`;
+      const [u] = await tx<{ id: string; email: string | null }[]>`SELECT id, email FROM users WHERE subject = ${sub}`;
+      await this.audit.append(
+        {
+          actor: 'landbright',
+          actorKind: 'system',
+          action: 'auth.backchannel_logout',
+          subjectType: 'user',
+          subjectId: u?.id ?? sub,
+          data: { sub, sid, sessions: ended.length, person: u?.email ?? null },
+        },
+        tx,
+      );
+      return { sessions: ended.length };
+    });
+  }
+
   /** Forgets sign-ins that never came back and sessions long expired. */
   async cleanup(): Promise<number> {
     const a = await this.sql`DELETE FROM auth_requests WHERE expires_at < now()`;
@@ -280,6 +310,27 @@ export function registerAuthRoutes(app: FastifyInstance, deps: { sql: Sql; confi
     const principal = await identify(sql, config, { sessionToken: request.cookies[SESSION_COOKIE] }).catch(() => null);
     const redirect = await sessions.logout(principal);
     return reply.clearCookie(SESSION_COOKIE, cookieBase).send({ redirect });
+  });
+
+  // OpenID Connect Back-Channel Logout 1.0: Landbright posts `logout_token` (form-encoded); 200 when the person's
+  // sessions here are ended, 400 with `invalid_request` when the token doesn't verify. Register this path with Landbright.
+  if (!app.hasContentTypeParser('application/x-www-form-urlencoded'))
+    app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) =>
+      done(null, Object.fromEntries(new URLSearchParams(body as string))),
+    );
+  app.post('/api/auth/backchannel-logout', async (request, reply) => {
+    const token = (request.body as { logout_token?: unknown } | null)?.logout_token;
+    reply.header('cache-control', 'no-store');
+    if (typeof token !== 'string' || !token)
+      return reply.status(400).send({ error: 'invalid_request', error_description: 'logout_token is missing' });
+    try {
+      await sessions.backchannelLogout(token);
+      return reply.status(200).send();
+    } catch (error) {
+      request.log.warn({ err: error }, 'back-channel logout refused');
+      const message = error instanceof Error ? error.message : 'the logout token is not valid';
+      return reply.status(400).send({ error: 'invalid_request', error_description: message });
+    }
   });
 
   app.get('/api/auth/me', async (request) => {

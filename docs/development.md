@@ -60,9 +60,10 @@ test fails on any table that doesn't.
 | Ingest | `apps/api/src/ingest/` (`sources.ts` clients, `build.ts` records, `runner.ts` runs), `libs/pricing`, the CLI `apps/api/src/cli.ts`; [ingest.md](ingest.md) |
 | Allocation | `libs/allocation/src/index.ts` (engine), `apps/api/src/allocation.ts` (rule sets, generations, `DEV_RULES`); [allocation.md](allocation.md) |
 | Spend | `apps/api/src/spend.ts` (Overview, Explore, Budgets), `budgets.ts`, `export.ts`, `mcp.ts`, `metrics.ts`; console `routes/overview.tsx`, `explore.tsx`, `budgets.tsx`; [spend.md](spend.md) |
-| Tables | `libs/schema/migrations/0001_core.sql` … `0004_budgets.sql`; the runner in `libs/schema/src/index.ts` |
+| Tables | `libs/schema/migrations/0001_core.sql` … `0011_review_wave2.sql`; the runner in `libs/schema/src/index.ts` |
 | Wire contracts | `libs/contracts/src/index.ts`, `sources.ts` (Landflow and Clickland), `spend.ts` (the read views) |
 | API | `apps/api/src/app.ts` (routes), `auth.ts` + `oidc.ts` (sign-in), `principal.ts` (who is calling), `audit.ts` (hash chain), `anchors.ts` (its head, out to Clickland and webhooks), `ledger.ts` (periods, records), `webhooks.ts` (outbox) |
+| Approvals | `apps/api/src/requests.ts` (raise, confirm, path, evidence, decide, relay, expire), `relays.ts` (Slack channels, person links), `owners.ts` (cost center owners and deputies), `reservations.ts`, `exceptions.ts`, `evidence-pack.ts`, `business-hours.ts`, `policies.ts`, `proposals.ts`; migrations `0010_requests.sql`, `0011_review_wave2.sql`; console `routes/approvals.tsx`, `request.tsx`, `profile.tsx`, `audit.tsx`; tests `apps/api/test/approvals.integration.test.ts`, `review2.integration.test.ts`; [approvals.md](approvals.md) |
 | Console | `apps/console/src/router.tsx`, `nav.ts` (the navigation of [ui.md](ui.md)), `components/shell/`, `routes/` |
 
 ## Conventions
@@ -71,7 +72,7 @@ test fails on any table that doesn't.
   Products round half-even to the micro-unit; anything shown or posted rounds half away from zero ([money.md](money.md)).
 - **Migrations** are numbered `NNNN_name.sql`, applied in one transaction under an advisory lock, and never edited once
   shipped (the runner refuses a changed checksum): a change is a new file.
-- **Append only**: `cost_records`, `cost_record_keys`, `fx_rates`, `rate_lines`, `audit_log`, `audit_anchors`, `allocations`, `allocation_generations`, `budget_imports`, `budgets`, `version_notes`, `invoice_estimate_links`, `cost_center_codes` refuse `UPDATE`, `DELETE`
+- **Append only**: `cost_records`, `cost_record_keys`, `fx_rates`, `rate_lines`, `audit_log`, `audit_anchors`, `allocations`, `allocation_generations`, `budget_imports`, `budgets`, `version_notes`, `invoice_estimate_links`, `cost_center_codes`, `decisions`, `evidence_snapshots`, `evidence_serves`, `cost_center_owners`, `exception_reports` refuse `UPDATE`, `DELETE`
   and `TRUNCATE` in the database; `periods`, `ingest_runs` and `rate_card_versions` only move forward.
 - **Routes** validate with zod (`parse`), answer errors as `{ error: { code, message } }`, check scopes with `need`,
   and write the audit log in the same transaction as the change.

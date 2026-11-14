@@ -31,7 +31,29 @@ Scopes per role: CFO and controller `read`, `requests:write`, `admin`; FP&A, bud
   (`signin_error=inactive`) until SCIM reactivates them. A `DELETE` also hides them and removes their memberships; the
   row stays, so their decisions and audit entries keep naming them. Pushing the same person again brings back the
   same id.
-- A decision checks the person is active when it is made, for a session and for a relay.
+- A decision checks the person is active when it is made, for a session and for a relay. A relay also needs someone
+  **current**: SCIM-managed, or signed in to Landledger within 7 days.
+
+## Back-channel logout
+
+`POST /api/auth/backchannel-logout` (OpenID Connect Back-Channel Logout 1.0; public, form-encoded `logout_token`).
+Landbright posts a logout token signed with its JWKS for client `landledger-local` when a person signs out there or is
+disabled; Landledger checks the issuer, audience, `iat` (at most 10 minutes old), the back-channel logout event, a `sub`
+(it keeps no `sid`), no `nonce`, and takes each `jti` once (`logout_tokens`), then ends **every session of that person**
+and audits `auth.backchannel_logout`. It answers `200`, or `400 { error: "invalid_request" }`, with
+`Cache-Control: no-store`.
+
+Register with Landbright as the client's `backchannel_logout_uri`: `http://localhost:4811/api/auth/backchannel-logout`
+(through the console's proxy, as the redirect URI is), or `http://127.0.0.1:4810/api/auth/backchannel-logout` straight
+to the API. Code: `Sessions.backchannelLogout` in `apps/api/src/auth.ts`, `OidcClient.verifyLogoutToken`.
+
+## Links to relay channels
+
+A person links their own Slack user id on their profile page (`/profile`, Link Slack; `POST /api/me/links`), from
+their own session only: a key, the local developer or another person can't. One Slack id belongs to one person; a
+person has one link per kind (a new one replaces theirs). Links are append only with a `removed_at`, audited
+`person_link.created` and `person_link.removed`. A relay channel maps a press to the person through it
+([approvals.md](approvals.md#relays-slack)).
 
 ## SCIM
 

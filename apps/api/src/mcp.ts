@@ -13,7 +13,6 @@ import {
   PersonRef,
   RequestBox,
   RequestKind,
-  RequestOrigin,
 } from '@landledger/contracts';
 import { type CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -81,7 +80,6 @@ export const CreateRequestTool = z.object({
   start: z.iso.date().optional(),
   end: z.iso.date().optional(),
   evidence: z.record(z.string(), z.unknown()).default({}).describe('lines, basis, links, match (a selector)'),
-  origin: RequestOrigin.optional().describe('Where it comes from (default: mcp)'),
   agent: AgentRef.optional().describe('The agent asking; then sponsor is required'),
   sponsor: PersonRef.optional().describe('The person who answers for the agent (Landbright sub or email)'),
   person: PersonRef.optional().describe('Or: the person asking, when no agent is'),
@@ -217,7 +215,7 @@ export function createMcpServer(services: Services, principal: Principal): McpSe
     {
       title: 'Get a spend request',
       description:
-        "One request with its steps (who may decide each), decisions, reservations and Landledger's evidence (budget, actual, reserved, left now and after, forecast, why this path). A person decides in the Landledger console, or through a relay that names them; this tool never decides.",
+        "One request with its steps (who may decide each), decisions, reservations and Landledger's evidence (budget, actual, reserved, left now and after, forecast, why this path). A person decides in the Landledger console, or in a relay channel they linked themselves to; this tool never decides.",
       inputSchema: GetRequestInput,
     },
     async (a) => {
@@ -240,7 +238,7 @@ export function createMcpServer(services: Services, principal: Principal): McpSe
     {
       title: 'Raise a spend request',
       description:
-        'Raises a spend request for a person to decide. An agent names itself (agent) and its sponsor, the person who answers for it; or name the person asking. Below the policy threshold it is approved by policy at once and reserved; otherwise it waits on the budget owner, Finance or the CFO. Returns the request and its path.',
+        'Raises a spend request for a person to decide. An agent names itself (agent) and its sponsor, the person who answers for it; or name the person asking. From a key, that person first confirms it in the Landledger console (status awaiting_confirmation). Then, below the policy threshold (counting what policy approved this month), it is approved by policy and reserved; otherwise it waits on the budget owner, Finance or the CFO. Its origin is always mcp. Returns the request and its path.',
       inputSchema: CreateRequestTool,
     },
     async (a) => {
@@ -263,7 +261,8 @@ export function createMcpServer(services: Services, principal: Principal): McpSe
         start: a.start,
         end: a.end,
         evidence: a.evidence,
-        origin: a.origin ?? { type: 'mcp' },
+        // Always mcp, stamped with the caller (createdBy): MCP can't say where a request came from.
+        origin: { type: 'mcp' },
         requester,
         idempotencyKey: a.idempotencyKey,
       });

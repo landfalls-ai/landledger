@@ -193,3 +193,40 @@ describe('Standard Webhooks', () => {
     ).toBe('v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=');
   });
 });
+
+describe('business calendar (review of wave 2): days, time zone and holidays', () => {
+  it('counts Sunday to Thursday in Asia/Jerusalem: Thursday 15:00 local plus 24 hours is Sunday 15:00 local', async () => {
+    const { addBusinessHours } = await import('../src/business-hours.js');
+    const { parseBusinessDays } = await import('../src/config.js');
+    const days = parseBusinessDays('sun-thu');
+    expect(days).toEqual([0, 1, 2, 3, 4]);
+    // Thursday 19 November 2026, 15:00 in Jerusalem is 13:00 UTC (UTC+2 in November).
+    const due = addBusinessHours(new Date('2026-11-19T13:00:00Z'), 24, { days, timeZone: 'Asia/Jerusalem' });
+    expect(due.toISOString()).toBe('2026-11-22T13:00:00.000Z');
+    // A holiday on Sunday 22 November moves it to Monday.
+    const later = addBusinessHours(new Date('2026-11-19T13:00:00Z'), 24, {
+      days,
+      timeZone: 'Asia/Jerusalem',
+      holidays: new Set(['2026-11-22']),
+    });
+    expect(later.toISOString()).toBe('2026-11-23T13:00:00.000Z');
+  });
+
+  it('reads LANDLEDGER_TZ and a holidays file, and refuses a bad one', async () => {
+    const { readHolidays } = await import('../src/business-hours.js');
+    const dir = mkdtempSync(join(tmpdir(), 'll-holidays-'));
+    const file = join(dir, 'holidays.txt');
+    writeFileSync(file, '# Israel 2026\n2026-09-12 # Rosh Hashanah\n\n2026-09-21\n');
+    expect([...readHolidays(file)]).toEqual(['2026-09-12', '2026-09-21']);
+    expect(readHolidays(join(dir, 'missing.txt')).size).toBe(0);
+    writeFileSync(file, 'tomorrow\n');
+    expect(() => readHolidays(file)).toThrow(/not a date/);
+    const config = configFromEnv({
+      LANDLEDGER_TZ: 'Asia/Jerusalem',
+      LANDLEDGER_BUSINESS_DAYS: 'sun-thu',
+      LANDLEDGER_HOLIDAYS_FILE: 'none',
+    } as never);
+    expect(config).toMatchObject({ timeZone: 'Asia/Jerusalem', businessDays: [0, 1, 2, 3, 4] });
+    expect(() => configFromEnv({ LANDLEDGER_TZ: 'Mars/Olympus' } as never)).toThrow(/LANDLEDGER_TZ/);
+  });
+});
