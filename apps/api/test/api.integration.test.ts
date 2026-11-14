@@ -24,6 +24,11 @@ const config = (over: Partial<Config> = {}): Config => ({
   oidc: oidcConfig,
   oidcProblem: null,
   backgroundJobs: false,
+  landflow: null,
+  clickland: null,
+  clicklandConsoleUrl: 'http://localhost:4711',
+  costMetricsEndpoint: null,
+  ingestJobs: false,
   ...over,
 });
 
@@ -62,7 +67,7 @@ describe.skipIf(!integrationEnabled('db'))('the API against Postgres', () => {
     };
     services = createServices(config(), sql, fetchImpl);
     app = await buildApp(services);
-    expect(await seed(sql)).toBe(8);
+    expect(await seed(sql)).toBe(11);
   });
   afterAll(async () => {
     await app?.close();
@@ -95,7 +100,7 @@ describe.skipIf(!integrationEnabled('db'))('the API against Postgres', () => {
   it('answers health with the migrations applied', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ status: 'ok', postgres: 'ok', migrations: 1 });
+    expect(res.json()).toMatchObject({ status: 'ok', postgres: 'ok', migrations: 4 });
   });
 
   it('asks a stranger to sign in, and says sign-in is available', async () => {

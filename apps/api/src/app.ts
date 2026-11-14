@@ -1,14 +1,31 @@
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
-import { type ApiScope, ApiKeyInput, Month, RecordsQuery, WebhookInput } from '@landledger/contracts';
-import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import {
+  type ApiScope,
+  ApiKeyInput,
+  BudgetImportInput,
+  DIMENSION_LABEL,
+  IngestRunInput,
+  IngestRunsQuery,
+  Month,
+  MonthQuery,
+  RecordsQuery,
+  SpendQuery,
+  WebhookInput,
+} from '@landledger/contracts';
+import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
+import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { registerAuthRoutes } from './auth.js';
 import { ApiError } from './errors.js';
+import { toCsv, toXlsx, type Sheet } from './export.js';
+import { createMcpServer } from './mcp.js';
 import { identify, type Principal, requireScope, SESSION_COOKIE } from './principal.js';
 import type { Services } from './services.js';
 
-export const VERSION = '0.1.0';
+import { VERSION } from './version.js';
+
+export { VERSION };
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -18,6 +35,8 @@ declare module 'fastify' {
 
 export interface AppOptions {
   logger?: boolean;
+  /** A logger to use (main.ts passes the one ingest logs to, so both reach Clickland). */
+  loggerInstance?: FastifyBaseLogger;
 }
 
 /** Validates a body, query or params object; the first problem becomes a 400 that names its path. */
@@ -50,7 +69,13 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 export async function buildApp(services: Services, options: AppOptions = {}): Promise<FastifyInstance> {
   const { config, sql, audit, keys, dimensions, webhooks, periods, records } = services;
-  const app = Fastify({ logger: options.logger ?? false, bodyLimit: 1024 * 1024, trustProxy: true });
+  const app = (options.loggerInstance
+    ? Fastify({ loggerInstance: options.loggerInstance, bodyLimit: 2 * 1024 * 1024, trustProxy: true })
+    : Fastify({
+        logger: options.logger ?? false,
+        bodyLimit: 2 * 1024 * 1024,
+        trustProxy: true,
+      })) as unknown as FastifyInstance;
   await app.register(cookie);
   await app.register(cors, { origin: [config.consoleUrl], credentials: true });
   app.decorateRequest('principal', null as unknown as Principal);
@@ -156,6 +181,150 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
     if (result.deliveries === 0) throw new ApiError('not_found', 'Webhook not found, or it takes no ping');
     return reply.status(202).send(result);
   });
+
+  // Ingest (spec 002) ------------------------------------------------------------------------------------------------
+  const { ingest, rateCards, allocation, budgets, spend } = services;
+  app.get(
+    '/api/ingest/runs',
+    async (r) => (need(r, 'read'), { runs: await ingest.list(parse(IngestRunsQuery, r.query)) }),
+  );
+  app.post('/api/ingest/run', async (r, reply) => {
+    need(r, 'ingest');
+    const input = parse(IngestRunInput, r.body);
+    const day = input.day ?? today();
+    const sources = input.source === 'all' ? ingest.sources() : [input.source];
+    if (!sources.length)
+      throw new ApiError('unavailable', 'No source is configured (LANDLEDGER_LANDFLOW_* or LANDLEDGER_CLICKLAND_*)');
+    const by = r.principal.email ?? r.principal.name;
+    const runs = [];
+    for (const s of sources) runs.push(await ingest.run(s, day, 'manual', by));
+    return reply.status(201).send({ runs });
+  });
+
+  // Rate cards: approval (people only) and the AI lines from Landflow's price table ---------------------------------
+  const VersionId = z.object({ id: z.string().min(1).max(100) });
+  app.post('/api/rate-cards/versions/:id/approve', async (r) => {
+    need(r, 'admin');
+    return rateCards.approve(parse(VersionId, r.params).id, r.principal);
+  });
+  app.post('/api/rate-cards/versions/:id/ai-lines', async (r, reply) => {
+    need(r, 'admin');
+    if (!services.landflow) throw new ApiError('unavailable', 'Landflow is not configured');
+    const added = await rateCards.importAiLines(
+      parse(VersionId, r.params).id,
+      await services.landflow.prices(),
+      r.principal.email ?? r.principal.name,
+    );
+    return reply.status(201).send({ added });
+  });
+
+  // Allocation (spec 003) ----------------------------------------------------------------------------------------------
+  app.get('/api/allocation/rule-sets', async (r) => (need(r, 'read'), { versions: await allocation.versions() }));
+  app.post('/api/allocation/rule-sets/versions/:id/approve', async (r) => {
+    need(r, 'admin');
+    return allocation.approve(parse(VersionId, r.params).id, r.principal);
+  });
+  app.post('/api/allocation/rebuild/:month', async (r, reply) => {
+    need(r, 'admin');
+    if (r.principal.kind !== 'person' && r.principal.kind !== 'dev')
+      throw new ApiError('forbidden', 'A person rebuilds allocations; an API key never does');
+    const month = parse(MonthParam, r.params).month;
+    return reply
+      .status(201)
+      .send(await allocation.rebuild(month, 'rebuilt by hand', r.principal.email ?? r.principal.name));
+  });
+
+  // Budgets (spec 003) -------------------------------------------------------------------------------------------------
+  app.get('/api/budgets', async (r) => (need(r, 'read'), spend.budgetsView(parse(MonthQuery, r.query).month)));
+  app.post('/api/budgets/import', async (r, reply) => {
+    need(r, 'admin');
+    return reply.status(201).send(await budgets.import(parse(BudgetImportInput, r.body), r.principal));
+  });
+
+  // Spend: Overview, Explore and exports -------------------------------------------------------------------------------
+  app.get('/api/overview', async (r) => (need(r, 'read'), spend.overview(parse(MonthQuery, r.query).month)));
+  app.get('/api/spend', async (r) => (need(r, 'read'), spend.spend(parse(SpendQuery, r.query))));
+  const ExportQuery = SpendQuery.extend({ format: z.enum(['csv', 'xlsx']).default('csv') });
+  app.get('/api/spend/export', async (r, reply) => {
+    need(r, 'read');
+    const q = parse(ExportQuery, r.query);
+    const res = await spend.spend(q);
+    const label = DIMENSION_LABEL[res.by];
+    const n = (s: string | null) => (s === null ? '' : { number: s });
+    const groups: Sheet = {
+      name: `By ${label.toLowerCase()}`,
+      header: [
+        label,
+        'Detail',
+        'Estimated (USD)',
+        'Invoiced (USD)',
+        'Total (USD)',
+        'Share (%)',
+        'Window before (USD)',
+        'Provisional (USD)',
+      ],
+      rows: res.groups.map((g) => [
+        g.label,
+        g.sub ?? '',
+        n(g.estimated),
+        n(g.invoiced),
+        n(g.total),
+        n(g.share),
+        n(g.previous),
+        n(g.provisional),
+      ]),
+    };
+    groups.rows.push([
+      'Total',
+      '',
+      n(res.total.estimated),
+      n(res.total.invoiced),
+      n(res.total.total),
+      { number: '100.0' },
+      n(res.total.previous),
+      n(res.total.provisional),
+    ]);
+    const daily: Sheet = {
+      name: 'Daily',
+      header: ['Day', ...res.daily.series.map((s) => s.label)],
+      rows: res.daily.days.map((d, i) => [d, ...res.daily.series.map((s) => ({ number: s.values[i]! }))]),
+    };
+    const name = `landledger-spend-${res.by}-${res.from}-to-${res.to}${res.layer === 'spread' ? '-spread' : ''}`;
+    if (q.format === 'xlsx')
+      return reply
+        .header('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        .header('content-disposition', `attachment; filename="${name}.xlsx"`)
+        .send(toXlsx([groups, daily]));
+    return reply
+      .header('content-type', 'text/csv; charset=utf-8')
+      .header('content-disposition', `attachment; filename="${name}.csv"`)
+      .send(toCsv(groups));
+  });
+
+  // MCP (stateless Streamable HTTP, Clickland's pattern): spend_by and budget_status -------------------------------------
+  app.post('/api/mcp', async (request, reply) => {
+    need(request, 'read');
+    const server = createMcpServer(spend, request.principal);
+    const transport = new NodeStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    reply.hijack();
+    reply.raw.on('close', () => {
+      void transport.close();
+      void server.close();
+    });
+    await server.connect(transport);
+    await transport.handleRequest(request.raw, reply.raw, request.body);
+  });
+  const noSessions = async (_r: FastifyRequest, reply: { status: (n: number) => { send: (b: unknown) => unknown } }) =>
+    reply.status(405).send({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Landledger’s MCP server is stateless: POST only' },
+      id: null,
+    });
+  app.get('/api/mcp', noSessions);
+  app.delete('/api/mcp', noSessions);
 
   return app;
 }

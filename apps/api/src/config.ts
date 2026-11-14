@@ -30,6 +30,16 @@ export interface Config {
   oidcProblem: string | null;
   /** Off in tests: the outbox dispatcher and the cleanup loop. */
   backgroundJobs: boolean;
+  /** Landflow (AI usage), read with an owner or admin `lf_` key; null until both are set. */
+  landflow: { url: string; key: string; service: string; namespace: string } | null;
+  /** Clickland (resource usage, and where cost metrics go), read with a `usage:read` key; null until both are set. */
+  clickland: { url: string; key: string; labels: string[] } | null;
+  /** Clickland's console, for links to a service's page. */
+  clicklandConsoleUrl: string;
+  /** Where cost metrics are sent (OTLP over HTTP, JSON); null turns them off. */
+  costMetricsEndpoint: string | null;
+  /** Ingest every hour (and cost metrics every few minutes) when background jobs run; LANDLEDGER_INGEST=off stops it. */
+  ingestJobs: boolean;
 }
 
 const expandHome = (path: string) => (path.startsWith('~/') ? `${homedir()}${path.slice(1)}` : path);
@@ -85,5 +95,32 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
     oidc,
     oidcProblem,
     backgroundJobs: env.LANDLEDGER_BACKGROUND_JOBS !== 'off',
+    landflow:
+      env.LANDLEDGER_LANDFLOW_URL && env.LANDLEDGER_LANDFLOW_KEY
+        ? {
+            url: env.LANDLEDGER_LANDFLOW_URL.replace(/\/$/, ''),
+            key: env.LANDLEDGER_LANDFLOW_KEY,
+            service: env.LANDLEDGER_LANDFLOW_SERVICE ?? 'landflow-host',
+            namespace: env.LANDLEDGER_LANDFLOW_NAMESPACE ?? 'landflow-dev',
+          }
+        : null,
+    clickland:
+      env.LANDLEDGER_CLICKLAND_URL && env.LANDLEDGER_CLICKLAND_KEY
+        ? {
+            url: env.LANDLEDGER_CLICKLAND_URL.replace(/\/$/, ''),
+            key: env.LANDLEDGER_CLICKLAND_KEY,
+            labels: (env.LANDLEDGER_CLICKLAND_LABELS ?? '')
+              .split(',')
+              .map((l) => l.trim())
+              .filter(Boolean),
+          }
+        : null,
+    clicklandConsoleUrl: (env.LANDLEDGER_CLICKLAND_CONSOLE_URL ?? 'http://localhost:4711').replace(/\/$/, ''),
+    costMetricsEndpoint:
+      env.LANDLEDGER_COST_METRICS === 'off'
+        ? null
+        : (env.LANDLEDGER_COST_METRICS_ENDPOINT ??
+          `${(env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://127.0.0.1:24318').replace(/\/$/, '')}/v1/metrics`),
+    ingestJobs: env.LANDLEDGER_INGEST !== 'off',
   };
 }
