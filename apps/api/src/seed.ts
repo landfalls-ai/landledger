@@ -23,6 +23,7 @@ import { AuditLog } from './audit.js';
 import { Budgets } from './budgets.js';
 import { readFileSync } from 'node:fs';
 import { createSql, type Sql } from './db.js';
+import { sha256 } from './ids.js';
 
 export const RATE_CARD_ID = 'rc_internal';
 export const RATE_CARD_V1 = 'rcv_internal_1';
@@ -86,14 +87,15 @@ export const DEV_COST_CENTERS = [
 ] as const;
 
 /**
- * DEVELOPMENT SEED DATA: budgets for November 2026. This machine's real costs are small (about USD 20 a day, most of it
- * the cluster's idle capacity), so the amounts are picked against the real figures of 14 Nov 2026 to show each state:
- * the shared pool and Data & ML forecast over budget (at risk), CS-SUPPORT's deliberately tiny budget already spent
- * (over), the rest on track. Not anyone's real budget.
+ * DEVELOPMENT SEED DATA: budgets for November 2026, picked against this machine's real costs once Docker stopped being
+ * counted twice (14 Nov 2026, about USD 0.68 an hour, 16 a day, four fifths of it the cluster's idle capacity in the
+ * shared pool): each cost center's month projected from its first five observed hours, with room to spare for most;
+ * Platform and Data & ML a little under their projection, so they show at risk once the forecast has three full days.
+ * Not anyone's real budget. The seed imports this file again (as a new budget version) whenever its contents change.
  */
 export const DEV_BUDGETS_CSV = new URL('../seed/budgets-2026-11.dev.csv', import.meta.url);
 export const DEV_BUDGETS_NOTE =
-  "DEVELOPMENT SEED DATA: picked against this machine's real costs (about USD 20 a day) so each budget state shows; not a real budget.";
+  "DEVELOPMENT SEED DATA: picked against this machine's real costs (about USD 16 a day, mostly the shared pool's idle capacity); not a real budget.";
 
 export async function seed(sql: Sql, log: (line: string) => void = () => {}): Promise<number> {
   const audit = new AuditLog(sql);
@@ -170,11 +172,16 @@ export async function seed(sql: Sql, log: (line: string) => void = () => {}): Pr
     // DEVELOPMENT SEED DATA: allocation rule set v1 (spec 003) as a proposal; a person approves it.
     added += await new Allocation(sql, audit).seedDevRules(tx);
   });
-  // DEVELOPMENT SEED DATA: November 2026's budgets (seed/budgets-2026-11.dev.csv), imported once as budget v1.
-  const [{ n }] = (await sql`SELECT count(*)::int AS n FROM budget_imports`) as unknown as [{ n: number }];
+  // DEVELOPMENT SEED DATA: November 2026's budgets (seed/budgets-2026-11.dev.csv), imported when this version of the
+  // file hasn't been (a changed file is a new budget version; the old one stays in the history).
+  const csv = readFileSync(DEV_BUDGETS_CSV, 'utf8');
+  const [{ n }] =
+    (await sql`SELECT count(*)::int AS n FROM budget_imports WHERE checksum = ${sha256(csv)}`) as unknown as [
+      { n: number },
+    ];
   if (n === 0) {
     await new Budgets(sql, audit).import(
-      { csv: readFileSync(DEV_BUDGETS_CSV, 'utf8'), fileName: 'budgets-2026-11.dev.csv', note: DEV_BUDGETS_NOTE },
+      { csv, fileName: 'budgets-2026-11.dev.csv', note: DEV_BUDGETS_NOTE },
       { actor: 'seed' },
       'dev-seed',
     );

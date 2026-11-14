@@ -690,9 +690,13 @@ export class Spend {
       m.set(d, Math.max(0, Math.min(ms, DAY_MS)));
       hours.set(r.source, m);
     }
+    // Data since: the first sample a run saw. A Clickland run that saw nothing (before collection started) doesn't
+    // count; Landflow's events are final when written, so a run's day counts even when it had no calls.
     const first = await this.sql<{ source: string; since: Date }[]>`
-      SELECT source, min(coalesce(observed_from, day::timestamptz)) AS since FROM ingest_runs
-      WHERE outcome = 'succeeded' AND source IN ('landflow', 'clickland') GROUP BY source`;
+      SELECT source, min(CASE WHEN source = 'landflow' THEN coalesce(observed_from, day::timestamptz) ELSE observed_from END) AS since
+      FROM ingest_runs
+      WHERE outcome = 'succeeded' AND source IN ('landflow', 'clickland')
+      GROUP BY source HAVING min(CASE WHEN source = 'landflow' THEN coalesce(observed_from, day::timestamptz) ELSE observed_from END) IS NOT NULL`;
     return { hours, since: new Map(first.map((r) => [r.source, r.since.toISOString()])) };
   }
 

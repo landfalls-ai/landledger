@@ -57,8 +57,17 @@ export function ownerUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string {
 export async function setAppPassword(ownerUrl: string, password: string): Promise<void> {
   const sql = postgres(ownerUrl, { onnotice: () => {}, max: 1 });
   try {
-    // ALTER ROLE takes no bind parameters: the password is quoted as a literal.
-    await sql.unsafe(`ALTER ROLE ${APP_ROLE} LOGIN PASSWORD '${password.replace(/'/g, "''")}'`);
+    // ALTER ROLE takes no bind parameters: the password is quoted as a literal. The role is the server's, so two
+    // databases set up at once (parallel test files) can race on it: try again.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await sql.unsafe(`ALTER ROLE ${APP_ROLE} LOGIN PASSWORD '${password.replace(/'/g, "''")}'`);
+        return;
+      } catch (error) {
+        if (attempt >= 5 || !/concurrently updated/.test((error as Error).message)) throw error;
+        await new Promise((r) => setTimeout(r, 50 * attempt));
+      }
+    }
   } finally {
     await sql.end();
   }

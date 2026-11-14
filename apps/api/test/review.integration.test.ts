@@ -89,8 +89,18 @@ describe.skipIf(!integrationEnabled('db'))("wave 1's review against Postgres", (
   });
 
   it('reprices every day from a retroactive rate card’s effective date, not only the last seven', async () => {
+    // 1 November: Clickland wasn't collecting yet. The run succeeds with nothing, and observes nothing.
+    sources.state.clickland = 'empty';
+    expect(await services.ingest.run('clickland', '2026-11-01', 'manual', 'test')).toMatchObject({
+      outcome: 'succeeded',
+      observedFrom: null,
+    });
+    sources.state.clickland = 'fixture';
     for (const r of await services.ingest.backfill('clickland', '2026-11-02', 'test'))
       expect(r.outcome).toBe('succeeded');
+    // Data since: the first sample seen, not the first run.
+    const ov = await services.spend.overview('2026-11');
+    expect(ov.forecast.sources.find((s) => s.source === 'clickland')?.since).toBe('2026-11-02T00:00:00.000Z');
     // 24 core-hours a day at USD 0.034, Docker and pods and idle together.
     expect(await net('clickland', '2026-11-02', 'cpu')).toBe('816000');
     // Version 2 doubles the CPU price from 2 November, proposed by Tal, who added its lines; Yoav approves.

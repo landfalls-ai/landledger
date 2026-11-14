@@ -7,20 +7,33 @@ Clickland. Code: `apps/api/src/spend.ts` (reads), `budgets.ts`, `export.ts`, `mc
 
 ## Figures
 
-- **Month to date**: ledger records of the month (the newest allocation generation) plus today's provisional rows.
-  Every figure is labelled *estimated* (usage × the rate card) or *invoiced*; wave 1 has estimates only.
-- **Forecast**: month to date plus a run rate for the days left. The run rate is the mean of the last 7 days' cost per
-  day; a Clickland day that was only partly observed counts as cost per observed hour × 24 (observed hours from the
-  ingest runs). The range is the lowest and highest of those days (±15% with a single day).
-- **States** per cost center: *over* when month to date is above budget, *at risk* when the forecast is, *on track*
-  otherwise, *no budget* without one.
+- **A month is what is booked in it.** Month views (Overview, Explore with `month=`, Budgets, the exports, MCP, the
+  metrics' month) select records by `BillingPeriodStart`, so a locked month's figures never move. A late change to a
+  locked month is booked in the open month as `ChargeClass = Correction` and shown there on its own line,
+  **Corrections to locked months** (`CORRECTIONS`), never inside a cost center; opening it (filter
+  `costCenter:CORRECTIONS`) shows whose it is. A `from`/`to` range instead selects by charge day (`basis: charge`):
+  the usage of those days as corrected, wherever it was booked. Results say which (`basis: billing | charge`).
+- **Month to date**: ledger records booked in the month (the newest allocation generation) plus provisional rows.
+  Every figure is labelled _estimated_ (usage × the rate card) or _invoiced_; wave 1 has estimates only, and an
+  estimate an invoice line replaces is never added to it ([money.md](money.md#estimated-and-invoiced)).
+- **Forecast**: month to date plus a run rate for the hours left. The run rate is per source: Σ cost ÷ Σ observed hours
+  over the last 7 days (today included; observed hours come from each day's newest run: the window Clickland's samples
+  covered, Landflow's whole day), summed across sources, so a partial day weighs by its hours. With fewer than **3 full
+  observed days** (23 hours or more) of any source in those 7, there is no forecast: the tile says _Not enough data
+  yet_, with _data since_ the newest source's first sample, and no range or state is claimed. The range is the lowest
+  and highest full day's rate per hour, summed across sources.
+- **States** per cost center: _over_ when month to date is above budget; with a forecast, _at risk_ when it is over
+  budget and _on track_ otherwise; without one, _early_ (no claim yet); _no budget_ without a budget. The month's line
+  says how much of the budget is used and how much of the month has been observed, not how much has passed.
+- **P&L classes**: the shared pool (idle capacity, before it is spread) is its own class, _Shared pool_; _Not
+  classified_ is only what the rules sent nowhere.
 - **Left after reservations**: budget less month to date less reservations (none until wave 2).
 
 ## Overview (`GET /api/overview?month=`)
 
 Four figures (month to date, forecast with its range, budget, left), the daily burn against the budget line, where the
 figures come from (attribution: direct, shared pool, unallocated; the rate card and its approver; the last runs), the
-cost centers with a budget bar and state, and the split by category and by P&L class. *Copy* puts a table on the
+cost centers with a budget bar and state, and the split by category and by P&L class. _Copy_ puts a table on the
 clipboard as tab-separated text for Excel.
 
 ## Explore (`GET /api/spend`)
@@ -48,9 +61,16 @@ database refuses it too), and every code must be in `cost_center_codes` (the cos
 The screen: budget, actual, reserved, available, forecast, variance and state per cost center (a table on desktop,
 cards on a phone); a row opens to its owner, source and months.
 
-**The dev seed** (`apps/api/seed/budgets-2026-11.dev.csv`, origin `dev-seed`, labelled *DEVELOPMENT SEED DATA, not a
-real budget*): November 2026 figures picked against this machine's real spend so every state shows: shared pool 200,
-AI Agents 60, Platform 40, Product Engineering 10, Data & ML 8, Internal IT 5, Customer Support 0.005.
+The Overview's budget tile names the versions it is drawn from (each cost center's newest import that names it) and
+carries a _dev seed_ badge when any of them is development seed data.
+
+**The dev seed** (`apps/api/seed/budgets-2026-11.dev.csv`, origin `dev-seed`, labelled _DEVELOPMENT SEED DATA, not a
+real budget_): November 2026, picked against this machine's real spend once Docker stopped being counted twice (about
+USD 0.68 an hour, four fifths of it idle capacity in the shared pool), each cost center's month projected from its
+first observed hours: shared pool 240, AI Agents 20, Platform 18, Data & ML 9, Product Engineering 5, Internal IT 5,
+Customer Support 1. Platform and Data & ML sit a little under their projection, so they show _at risk_ once the
+forecast has three full days. `pnpm db:seed` imports the file again, as a new version, whenever it changes (the first
+dev seed, with Customer Support at USD 0.005, is budget v1 in the live history).
 
 ## MCP (`POST /api/mcp`)
 
