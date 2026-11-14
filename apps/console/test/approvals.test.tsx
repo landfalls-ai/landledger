@@ -189,6 +189,74 @@ describe('a request', () => {
     expect(screen.getByTestId('agent-buys')).toHaveTextContent('about 21.3 outcomes a month');
   });
 
+  it('shows a seat request’s seats on its contract, and warns when none is left (spec 010)', async () => {
+    mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/requests/req_1': [
+        200,
+        {
+          request: request({}),
+          evidence: {
+            ...evidence,
+            seat: {
+              contractId: 'con_linear',
+              vendor: 'Linear',
+              product: 'Business',
+              renewalDate: '2027-01-01',
+              paid: 40,
+              used: 40,
+              reserved: 0,
+              leftNow: 0,
+              leftAfter: -1,
+              seatPrice: '20.000000',
+              contractSeatPrice: '20.000000',
+              note: 'No seat left: this one is beyond the 40 paid',
+            },
+          },
+          evidenceSha256: SHA,
+        },
+      ],
+    });
+    renderAt('/approvals/req_1');
+    const seat = await screen.findByTestId('seat-evidence');
+    expect(seat).toHaveTextContent('A seat on Linear Business');
+    expect(seat).toHaveTextContent('Left after this-1');
+    expect(seat).toHaveTextContent('No seat left');
+  });
+
+  it('shows a contract request’s total value and term, and that it reserves no money (spec 009)', async () => {
+    mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/requests/req_2': [
+        200,
+        {
+          request: {
+            ...request({}),
+            id: 'req_2',
+            kind: 'contract',
+            contract: {
+              vendor: 'Datadog',
+              product: 'Pro',
+              tcv: '30000.000000',
+              termMonths: 12,
+              start: '2026-12-01',
+              seats: 10,
+              noticeDays: 30,
+              autoRenew: true,
+            },
+          },
+          evidence,
+          evidenceSha256: SHA,
+        },
+      ],
+    });
+    renderAt('/approvals/req_2');
+    const terms = await screen.findByTestId('contract-terms');
+    expect(terms).toHaveTextContent(/Datadog · Pro: \$30,000(\.00)? over/);
+    expect(terms).toHaveTextContent('12 months from 2026-12-01, 10 seats');
+    expect(terms).toHaveTextContent('never money');
+  });
+
   it('tells the requester they can’t decide their own request, and who has it', async () => {
     mockApi({
       '/api/auth/me': [200, ME],

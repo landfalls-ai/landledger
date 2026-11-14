@@ -83,7 +83,9 @@ One request:
 ## Contracts (`#contracts`)
 
 Vendor contracts and subscriptions: vendor, product, cost center, annual value, seats used of seats paid, term,
-renewal date, notice date. Renewals inside their notice window come first.
+renewal date, notice date. Renewals inside their notice window come first, and each shows in Overview's Needs you.
+The controller and the CFO import a CSV here. A seat request's page shows the contract's seats (paid, used, reserved,
+left now and after); a contract request's shows its total value and term ([contracts.md](contracts.md)).
 
 ## Agents (`#agents`)
 

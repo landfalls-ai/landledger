@@ -1,0 +1,3 @@
+vendor,product,cost_center,tcv,currency,term_start,term_end,seats_paid,seats_used,renewal_date,notice_days,auto_renew,landbright_app
+Linear,Business,ENG-PRODUCT,9600.00,USD,2026-01-01,2026-12-31,40,34,2027-01-01,30,true,linear
+Notion,Team,GA-IT,4800.00,USD,2026-06-01,2027-05-31,30,22,2027-06-01,60,true,notion

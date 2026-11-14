@@ -79,3 +79,51 @@ export function AgentEconomicsCard({ d }: { d: RequestDetail }) {
     </Card>
   );
 }
+
+/** A contract request's terms (spec 009), or a seat request's contract and seats (spec 010). */
+export function ContractOrSeatCard({ d }: { d: RequestDetail }) {
+  const c = d.request.contract;
+  const s = d.evidence.seat;
+  if (!c && !s) return null;
+  if (c)
+    return (
+      <Card title="The contract" testId="contract-terms">
+        <CardBody>
+          <p className="text-[14px] text-t1">
+            {c.vendor} · {c.product}: {usd(c.tcv)} over {c.termMonths} months from {c.start}
+            {c.seats ? `, ${c.seats} seats` : ''}.
+          </p>
+          <p className="mt-1 text-[12.5px] text-t3">
+            Approved for its total contract value and term. It reserves seats, never money: approval records the
+            contract{c.contractId ? ' as a new version of the one it renews' : ''}, renewing after {c.termMonths} months
+            with {c.noticeDays} days’ notice.
+          </p>
+        </CardBody>
+      </Card>
+    );
+  return (
+    <Card title={`A seat on ${s!.vendor} ${s!.product}`} testId="seat-evidence">
+      <CardBody>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[14px] sm:grid-cols-4">
+          {[
+            ['Seats paid', String(s!.paid)],
+            ['Used · reserved', `${s!.used} · ${s!.reserved}`],
+            ['Left now', String(s!.leftNow)],
+            ['Left after this', String(s!.leftAfter)],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <div className="text-[11.5px] text-t3">{label}</div>
+              <div className="figure font-medium text-t1">{value}</div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 text-[12.5px] text-t3">
+          {usd(s!.seatPrice)} a seat a month
+          {s!.contractSeatPrice ? ` (the contract works out at ${usd(s!.contractSeatPrice)})` : ''}; renews{' '}
+          {s!.renewalDate}.
+        </p>
+        {s!.note && <p className="mt-1.5 text-[13px] text-warn">{s!.note}.</p>}
+      </CardBody>
+    </Card>
+  );
+}

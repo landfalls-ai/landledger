@@ -330,3 +330,86 @@ describe('Agents (spec 008)', () => {
     expect(screen.getByTestId('clickland-note')).toHaveTextContent('Compute is not attributed');
   });
 });
+
+const contract = (over: object) => ({
+  id: 'con_linear',
+  version: 1,
+  vendor: 'Linear',
+  product: 'Business',
+  costCenter: { code: 'ENG-PRODUCT', name: 'Product engineering' },
+  tcv: '9600.000000',
+  annualValue: '9600.000000',
+  termStart: '2026-01-01',
+  termEnd: '2026-12-31',
+  termMonths: 12,
+  seats: { paid: 40, used: 34, reserved: 1, left: 5 },
+  seatPrice: '20.000000',
+  renewalDate: '2027-01-01',
+  noticeDays: 30,
+  noticeDate: '2026-12-02',
+  autoRenew: true,
+  landbrightApp: 'linear',
+  inNoticeWindow: true,
+  daysToNotice: 16,
+  origin: 'dev-fixture',
+  requestId: null,
+  importedBy: 'Yoav Ben-David',
+  importedAt: '2026-11-16T09:00:00.000Z',
+  ...over,
+});
+
+const CONTRACTS = {
+  today: '2026-11-16',
+  windowDays: 30,
+  contracts: [
+    contract({}),
+    contract({
+      id: 'con_notion',
+      vendor: 'Notion',
+      product: 'Team',
+      costCenter: { code: 'GA-IT', name: 'IT' },
+      tcv: '4800.000000',
+      annualValue: '4800.000000',
+      seats: { paid: 30, used: 22, reserved: 0, left: 8 },
+      seatPrice: '13.333333',
+      renewalDate: '2027-06-01',
+      noticeDate: '2027-04-02',
+      noticeDays: 60,
+      inNoticeWindow: false,
+      daysToNotice: 137,
+      landbrightApp: 'notion',
+    }),
+  ],
+  totals: { annualValue: '14400.000000', tcv: '14400.000000', seatsPaid: 70, seatsUsed: 56 },
+};
+
+describe('Contracts (spec 009)', () => {
+  it('puts a renewal inside its notice window first, with seats, and lets the controller import', async () => {
+    mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/requests': [200, { requests: [], counts: { waiting: 0, mine: 0, decided: 0 } }],
+      '/api/contracts': [200, CONTRACTS],
+    });
+    renderAt('/contracts');
+    const due = await screen.findByTestId('renewals-due');
+    const linear = within(due).getByTestId('contract-Linear');
+    expect(linear).toHaveTextContent('Notice in 16 days');
+    expect(linear).toHaveTextContent('34 of 40');
+    expect(linear).toHaveTextContent('5 left, 1 reserved · $20.00 a seat a month');
+    expect(linear).toHaveTextContent('dev fixture');
+    const rest = screen.getByTestId('contracts-rest');
+    expect(within(rest).getByTestId('contract-Notion')).toHaveTextContent('Renews');
+    expect(screen.getByLabelText('Contracts CSV')).toBeInTheDocument();
+  });
+
+  it('hides the import from someone who is neither the controller nor the CFO', async () => {
+    mockApi({
+      '/api/auth/me': [200, { ...ME, user: { ...ME.user, roles: ['engineer'] } }],
+      '/api/requests': [200, { requests: [], counts: { waiting: 0, mine: 0, decided: 0 } }],
+      '/api/contracts': [200, CONTRACTS],
+    });
+    renderAt('/contracts');
+    await screen.findByTestId('renewals-due');
+    expect(screen.queryByLabelText('Contracts CSV')).not.toBeInTheDocument();
+  });
+});

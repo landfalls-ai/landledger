@@ -707,4 +707,178 @@ describe.skipIf(!integrationEnabled('db'))('wave 3: plan and reconcile', () => {
       }
     });
   });
+  // 009 Contracts and 010 seats ------------------------------------------------------------------------------------------
+
+  describe('contracts and seats (specs 009, 010)', () => {
+    const contractsCsv = readFileSync(new URL('../fixtures/contracts/contracts-2026.dev.csv', import.meta.url), 'utf8');
+    const outbox = async (type: string) =>
+      (
+        await sql<{ data: Record<string, unknown> }[]>`
+          SELECT payload->'data' AS data FROM outbox WHERE event_type = ${type} ORDER BY created_at, id`
+      ).map((r) => r.data);
+    /** People approve each pending step in turn, each on the evidence they were shown. */
+    const approveThrough = async (id: string) => {
+      for (let i = 0; i < 5; i++) {
+        const shown = (await as('dana', 'GET', `/api/requests/${id}`)).json();
+        if (shown.request.status !== 'pending') return shown.request;
+        const step = shown.request.steps.find((x: { status: string }) => x.status === 'pending');
+        const emails: string[] = step.approvers.people.map((p: { email: string }) => p.email);
+        const who = (Object.keys(people) as Who[]).find((w) => w !== 'tal' && emails.includes(people[w].email))!;
+        const mine = (await as(who, 'GET', `/api/requests/${id}`)).json();
+        const res = await as(who, 'POST', `/api/requests/${id}/decisions`, {
+          outcome: 'approve',
+          evidenceSha256: mine.evidenceSha256,
+          step: mine.request.currentStep,
+        });
+        expect(res.statusCode, res.body).toBe(201);
+      }
+      return (await as('dana', 'GET', `/api/requests/${id}`)).json().request;
+    };
+    let linear = '';
+
+    it('imports contracts by a controller, renewals inside the notice window first; a key, an auditor and EUR are refused', async () => {
+      await services.webhooks.create(
+        {
+          url: 'https://receiver.test/hook',
+          events: ['contract.renewal_due', 'request.decided'],
+          description: 'test',
+        } as never,
+        principal('dana'),
+      );
+      expect((await as('avi', 'POST', '/api/contracts/import', { csv: contractsCsv })).statusCode).toBe(403);
+      const key = await app.inject({
+        method: 'POST',
+        url: '/api/contracts/import',
+        headers: { authorization: `Bearer ${readKey}` },
+        payload: { csv: contractsCsv },
+      });
+      expect(key.statusCode).toBe(403);
+      const eur = await as('yoav', 'POST', '/api/contracts/import', {
+        csv: contractsCsv.replace(',USD,2026-06-01', ',EUR,2026-06-01'),
+      });
+      expect(eur.statusCode).toBe(422);
+      const res = await as('yoav', 'POST', '/api/contracts/import', { csv: contractsCsv, origin: 'dev-fixture' });
+      expect(res.statusCode, res.body).toBe(201);
+      const list = res.json();
+      expect(
+        list.contracts.map((c: { vendor: string; inNoticeWindow: boolean }) => [c.vendor, c.inNoticeWindow]),
+      ).toEqual([
+        ['Linear', true],
+        ['Notion', false],
+      ]);
+      const l = list.contracts[0];
+      linear = l.id;
+      expect(l).toMatchObject({
+        version: 1,
+        annualValue: '9600.000000',
+        seats: { paid: 40, used: 34, reserved: 0, left: 6 },
+        seatPrice: '20.000000',
+        noticeDate: '2026-12-02',
+        daysToNotice: 16,
+        origin: 'dev-fixture',
+        importedBy: people.yoav.email,
+      });
+      // Imported again: a new version, the same contract.
+      const again = (
+        await as('yoav', 'POST', '/api/contracts/import', { csv: contractsCsv, origin: 'dev-fixture' })
+      ).json();
+      expect(again.contracts[0]).toMatchObject({ id: linear, version: 2 });
+      expect(await services.contracts.renewalAlerts()).toBe(1);
+      expect(await services.contracts.renewalAlerts()).toBe(0);
+      const due = await outbox('contract.renewal_due');
+      expect(due.map((d) => (d.contract as { vendor: string }).vendor)).toEqual(['Linear']);
+    });
+
+    it('gives Landflow a Landbright app’s contract, its seat price and seats left', async () => {
+      const res = await as('avi', 'GET', '/api/contracts/seats?landbrightApp=linear');
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json()).toMatchObject({ seatPrice: '20.000000', left: 6, contract: { id: linear } });
+      expect((await as('avi', 'GET', '/api/contracts/seats?landbrightApp=figma')).statusCode).toBe(404);
+    });
+
+    it('reserves a seat at approval, moves it to used when applied, and says what is left', async () => {
+      const body = {
+        kind: 'tool_or_seat',
+        title: 'Linear seat for Tal',
+        costCenter: 'ENG-PRODUCT',
+        recurrence: 'monthly',
+        start: '2026-11-16',
+        seat: { contractId: linear, seats: 1, seatPrice: '20' },
+      };
+      const wrong = await as('tal', 'POST', '/api/requests', { ...body, amount: { amount: '25.00', currency: 'USD' } });
+      expect(wrong.statusCode).toBe(400);
+      expect(wrong.json().error.message).toMatch(/seats × seat price a month: 1 × 20 = 20\.000000/);
+      const res = await as('tal', 'POST', '/api/requests', { ...body, amount: { amount: '20.00', currency: 'USD' } });
+      expect(res.statusCode, res.body).toBe(201);
+      const id = res.json().request.id;
+      const shown = (await as('shira', 'GET', `/api/requests/${id}`)).json();
+      expect(shown.evidence.seat).toMatchObject({
+        paid: 40,
+        used: 34,
+        reserved: 0,
+        leftNow: 6,
+        leftAfter: 5,
+        note: null,
+      });
+      const r = await approveThrough(id);
+      expect(r.status).toBe('approved');
+      expect(r.seat).toMatchObject({ contractId: linear, seats: 1, status: 'reserved', vendor: 'Linear' });
+      const decided = (await outbox('request.decided')).find((d) => (d.request as { id: string }).id === id)!;
+      expect((decided.request as { seat: { status: string } }).seat.status).toBe('reserved');
+      expect((await services.contracts.view(linear)).seats).toMatchObject({ used: 34, reserved: 1, left: 5 });
+      const applied = await as('tal', 'POST', `/api/requests/${id}/applied`, { note: 'Landbright granted' });
+      expect(applied.statusCode, applied.body).toBe(200);
+      expect(applied.json().request.seat.status).toBe('applied');
+      expect((await services.contracts.view(linear)).seats).toMatchObject({ used: 35, reserved: 0, left: 5 });
+    });
+
+    it('approves a contract for its TCV and term (owner, Finance, CFO above $25,000), reserving seats, not money', async () => {
+      const terms = { vendor: 'Datadog', product: 'Pro', tcv: '30000', termMonths: 12, start: '2026-12-01', seats: 10 };
+      const base = { kind: 'contract', title: 'Datadog Pro, one year', costCenter: 'ENG-PLATFORM', contract: terms };
+      expect(
+        (
+          await as('tal', 'POST', '/api/requests', {
+            ...base,
+            recurrence: 'once',
+            amount: { amount: '2500', currency: 'USD' },
+          })
+        ).statusCode,
+      ).toBe(400);
+      expect(
+        (
+          await as('tal', 'POST', '/api/requests', {
+            ...base,
+            recurrence: 'monthly',
+            amount: { amount: '30000', currency: 'USD' },
+          })
+        ).statusCode,
+      ).toBe(400);
+      const res = await as('tal', 'POST', '/api/requests', {
+        ...base,
+        recurrence: 'once',
+        amount: { amount: '30000', currency: 'USD' },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      const created = res.json().request;
+      expect(created).toMatchObject({ automatic: false, contract: { vendor: 'Datadog', termMonths: 12 } });
+      expect(created.steps.map((s: { key: string }) => s.key)).toEqual(['budget_owner', 'finance', 'cfo']);
+      const r = await approveThrough(created.id);
+      expect(r.status).toBe('approved');
+      const [{ n }] =
+        (await sql`SELECT count(*)::int AS n FROM reservations WHERE request_id = ${created.id}`) as unknown as [
+          { n: number },
+        ];
+      expect(n).toBe(0);
+      const dd = (await services.contracts.list()).contracts.find((c) => c.vendor === 'Datadog')!;
+      expect(dd).toMatchObject({
+        origin: 'request',
+        requestId: created.id,
+        tcv: '30000.000000',
+        termStart: '2026-12-01',
+        termEnd: '2027-11-30',
+        renewalDate: '2027-12-01',
+        seats: { paid: 10, used: 0, reserved: 0, left: 10 },
+      });
+    });
+  });
 });

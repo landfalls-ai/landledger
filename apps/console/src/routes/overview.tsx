@@ -1,7 +1,7 @@
 import type { CostCenterLine, Overview } from '@landledger/contracts';
 import { Decimal } from '@landledger/money';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, ChevronRight, Database, Gauge, Scale } from 'lucide-react';
+import { Activity, ChevronRight, Database, FileText, Gauge, Scale } from 'lucide-react';
 import { Link } from 'react-router';
 import { BudgetBar, BurnChart, SplitBar } from '@/components/spend/charts';
 import { YearAhead } from '@/components/spend/year-ahead';
@@ -15,6 +15,7 @@ import { toTsv } from '@/lib/copy';
 import { dayLabel, monthLabel, num, usd } from '@/lib/format';
 import { amountWords, perLabel, useRequests } from '@/lib/requests';
 import { RULE_LABEL, useOpenAnomalies } from './anomalies';
+import { useContracts } from './contracts';
 
 const share = (part: string, whole: string) => {
   const w = Decimal.parse(whole);
@@ -26,13 +27,15 @@ function NeedsYou() {
   const q = useRequests('waiting');
   const c = useRequests('confirm');
   const an = useOpenAnomalies().data?.anomalies ?? [];
+  const due = (useContracts().data?.contracts ?? []).filter((c) => c.inNoticeWindow);
   const confirm = c.data?.requests ?? [];
   const rows = [...confirm, ...(q.data?.requests ?? [])];
-  if (rows.length === 0 && an.length === 0) return null;
+  if (rows.length === 0 && an.length === 0 && due.length === 0) return null;
   const sub = [
     confirm.length ? `${confirm.length} raised in your name, to confirm` : null,
     q.data?.requests.length ? `${q.data.requests.length} waiting on your decision` : null,
     an.length ? `${an.length} open ${an.length === 1 ? 'anomaly' : 'anomalies'}` : null,
+    due.length ? `${due.length} renewal${due.length === 1 ? '' : 's'} to decide` : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -46,6 +49,22 @@ function NeedsYou() {
                 <b className="font-medium">{r.title}</b>
                 <small className="block text-[12px] text-t3">
                   +{amountWords(r.amount.amount)} {perLabel(r)} · {r.costCenter.code} · {r.stepLabel}
+                </small>
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-t3" />
+            </Link>
+          </li>
+        ))}
+        {due.slice(0, 2).map((c) => (
+          <li key={c.id} className="border-t border-hair first:border-t-0" data-testid="needs-you-renewal">
+            <Link to={`/contracts?id=${c.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-acdim">
+              <FileText className="size-4 shrink-0 text-warn" />
+              <span className="min-w-0 flex-1 text-[14px]">
+                <b className="font-medium">
+                  Renewal: {c.vendor} {c.product}
+                </b>
+                <small className="block text-[12px] text-t3">
+                  Notice by {c.noticeDate} ({c.daysToNotice} days) · {usd(c.annualValue)} a year
                 </small>
               </span>
               <ChevronRight className="size-4 shrink-0 text-t3" />

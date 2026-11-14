@@ -6,6 +6,7 @@
 import {
   AcknowledgeInput,
   AgentsQuery,
+  ContractImportInput,
   AnomaliesQuery,
   type ApiScope,
   ForecastQuery,
@@ -83,5 +84,18 @@ export function registerWave3(
   app.get('/api/agents', async (r) => {
     need(r, 'read');
     return services.agents.view(parse(AgentsQuery, r.query).month);
+  });
+
+  // 009 Contracts and 010 seats ------------------------------------------------------------------------------------------
+  const SeatsQuery = z.object({ landbrightApp: z.string().trim().min(1).max(200) });
+  app.get('/api/contracts', async (r) => (need(r, 'read'), services.contracts.list()));
+  app.get('/api/contracts/seats', async (r) => {
+    need(r, 'read');
+    return services.contracts.seatsFor(parse(SeatsQuery, r.query).landbrightApp);
+  });
+  app.get('/api/contracts/:id', async (r) => (need(r, 'read'), services.contracts.view(parse(Id, r.params).id)));
+  app.post('/api/contracts/import', async (r, reply) => {
+    need(r, 'admin');
+    return reply.status(201).send(await services.contracts.import(parse(ContractImportInput, r.body), r.principal));
   });
 }

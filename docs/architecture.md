@@ -55,7 +55,8 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 | `policies` | thresholds and ordered steps per request kind and cost center, approvers by Landbright group | a change is a request |
 | `decisions` | step, person, approve or reject, comment, the hash of the evidence they saw | append only |
 | `reservations` | budget reserved by an approved request until real cost arrives | reserved → consumed or released |
-| `contracts` | vendor, product, cost center, value, seats, term, renewal and notice dates | versioned |
+| `contract_versions` | vendor, product, cost center, TCV, term, seats, renewal and notice dates, the Landbright app, origin ([contracts.md](contracts.md)) | append only; the newest version wins |
+| `seat_reservations`, `contract_alerts` | seats a seat request holds on a contract; a renewal notice sent once per contract and renewal date | reserved → applied or released; append only |
 | `invoices`, `reconciliations` | provider invoices and how estimated usage matched them | append only |
 | `invoice_estimate_links` | an invoice line and the estimates it replaces, by the estimate's source key | append only; reads never add a linked estimate to its invoice ([money.md](money.md#estimated-and-invoiced)) |
 | `cost_center_codes` | every cost center code, plus `SHARED-POOL` and `UNALLOCATED` | append only; allocations and budgets reference it |
@@ -74,6 +75,7 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 | reconcile | on invoice import | matches invoices to estimated usage per provider and month; appends `invoiced` records and the differences |
 | expire | hour | moves request steps past their deadline to escalation; consumes or releases reservations |
 | exceptions | week | lists spend above a threshold that no approved request covers |
+| renewals | hour | sends `contract.renewal_due` for contracts that entered their notice window |
 | emit | minute | sends cost metrics to Clickland over OTLP; delivers the outbox |
 
 ## How it meets the land family
@@ -103,7 +105,7 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
   - **Landledger Trigger**: an app webhook for what Landledger sends today: `request.created`,
     `request.needs_confirmation`, `request.step_pending`, `decision.relayed`, `request.decided`, `request.applied`,
     `budget.at_risk`, `report.exceptions`, `period.closing`, `audit.anchor` (subscribed with a `webhooks:write` key,
-    which sees only its own subscriptions). Wave 3 adds `cost.anomaly` and `approval.anomaly` ([anomalies.md](anomalies.md)); a cost anomaly is also an OTel log record that Clickland's alert rule counts.
+    which sees only its own subscriptions). Wave 3 adds `cost.anomaly` and `approval.anomaly` ([anomalies.md](anomalies.md)); a cost anomaly is also an OTel log record that Clickland's alert rule counts. And `contract.renewal_due`; `request.decided` carries a seat request's seats for Landflow's tool-or-seat flow ([contracts.md](contracts.md), [integrations.md](integrations.md#tool-or-seat-spec-010)).
   - Planned, not built: a knowledge kind (an agent asks "why is ENG-AGENTS over?" and gets the drivers with links).
 - **Approvals.** Landledger owns the request, the policy and the decision. Landflow carries the conversation:
   1. A flow (infra change, AI budget, tool) creates the request and waits on `request.decided`.

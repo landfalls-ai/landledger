@@ -64,6 +64,7 @@ import { newId, sha256 } from './ids.js';
 import type { Policies, PolicyInEffect } from './policies.js';
 import { actorOf, type Principal } from './principal.js';
 import type { Allocation } from './allocation.js';
+import type { Contracts } from './contracts.js';
 import type { RateCards } from './ratecards.js';
 import { isServiceLike, type CostCenterOwners } from './owners.js';
 import type { PersonLinks, RelayChannels } from './relays.js';
@@ -262,6 +263,8 @@ export class Requests {
 
   /** Spec 008: an agent's month (cost per outcome, what a raise buys), for an AI budget request's evidence. */
   agentEconomics: ((agentId: string, month: string, monthly: Money) => Promise<AgentEconomics | null>) | null = null;
+  /** Specs 009 and 010: contracts made by approval, and the seats a seat request reserves. */
+  contracts: Contracts | null = null;
 
   constructor(
     private readonly sql: Sql,
@@ -473,7 +476,16 @@ export class Requests {
     if (!cc) throw new ApiError('bad_request', `No cost center ${input.costCenter}`);
     const money = Money.parse(input.amount.amount, input.amount.currency);
     if (money.isZero()) throw new ApiError('bad_request', 'A request is for an amount above zero');
-    const start = input.start ?? this.now().toISOString().slice(0, 10);
+    if ((input.contract || input.seat) && this.contracts)
+      await this.contracts.checkTerms({
+        kind: input.kind,
+        recurrence: input.recurrence,
+        amount: money,
+        contract: input.contract,
+        seat: input.seat,
+      });
+    const contractStart = input.kind === 'contract' && input.contract ? input.contract.start : null;
+    const start = input.start ?? contractStart ?? this.now().toISOString().slice(0, 10);
     const end = input.end ?? (input.recurrence === 'once' ? start : null);
     if (end && end < start) throw new ApiError('bad_request', 'end is on or after start');
     const id = newId('req');
@@ -485,7 +497,7 @@ export class Requests {
                                 evidence, origin, related, requester_kind, requester_id, agent_id, agent_name,
                                 agent_system, sponsor_id, created_via, created_by_key, idempotency_scope, idempotency_key,
                                 created_by_kind, created_by_id, created_by_name, origin_verified,
-                                idempotency_body_sha256, confirm_person_id, confirm_status)
+                                idempotency_body_sha256, confirm_person_id, confirm_status, contract, seat)
           VALUES (${id}, ${input.kind}, ${input.title}, ${input.note ?? ''}, ${input.costCenter},
                   ${money.micros.toString()}, ${money.currency}, ${input.recurrence}, ${start}, ${end},
                   ${tx.json((input.evidence ?? {}) as never)}, ${tx.json(origin as never)},
@@ -493,7 +505,8 @@ export class Requests {
                   ${who.agent?.name ?? null}, ${who.agent?.system ?? null}, ${who.sponsorId}, ${via},
                   ${by.kind === 'key' ? by.name : null}, ${input.idempotencyKey ? scope : null},
                   ${input.idempotencyKey ?? null}, ${createdBy.kind}, ${createdBy.id}, ${createdBy.name}, ${verified},
-                  ${input.idempotencyKey ? bodySha : null}, ${confirmPerson}, ${confirmPerson ? 'waiting' : null})`;
+                  ${input.idempotencyKey ? bodySha : null}, ${confirmPerson}, ${confirmPerson ? 'waiting' : null},
+                  ${input.contract ? tx.json(input.contract as never) : null}, ${input.seat ? tx.json(input.seat as never) : null})`;
         await this.audit.append(
           {
             ...actor,
@@ -754,7 +767,11 @@ export class Requests {
       const summary = async () => (await this.summaries([await this.rowIn(tx, id)], null, tx))[0]!;
       if (path.automatic) {
         await tx`UPDATE requests SET status = 'approved', decided_at = ${now}, closed_by = 'policy' WHERE id = ${id}`;
-        const held = await this.reservations.reserveApprovedIn(tx, { ...r, status: 'approved' }, 'policy');
+        const held =
+          r.kind === 'contract'
+            ? []
+            : await this.reservations.reserveApprovedIn(tx, { ...r, status: 'approved' }, 'policy');
+        if (this.contracts && (r.contract || r.seat)) await this.contracts.approvedIn(tx, r, null);
         await this.audit.append(
           {
             actor: 'policy',
@@ -1216,7 +1233,12 @@ export class Requests {
           },
           tx,
         );
-      } else held = await this.reservations.reserveApprovedIn(tx, { ...r, status: 'approved' }, actor.actor);
+      } else {
+        // A contract reserves seats, never its TCV as money (spec 009); a seat request reserves both (spec 010).
+        if (r.kind !== 'contract')
+          held = await this.reservations.reserveApprovedIn(tx, { ...r, status: 'approved' }, actor.actor);
+        if (this.contracts && (r.contract || r.seat)) await this.contracts.approvedIn(tx, r, deciderId);
+      }
       const [summary] = await this.summaries([await this.rowIn(tx, id)], null, tx);
       await this.event(tx, 'request.decided', {
         request: summary,
@@ -1388,6 +1410,7 @@ export class Requests {
         },
         tx,
       );
+      if (this.contracts) await this.contracts.appliedIn(tx, r);
       const [summary] = await this.summaries([await this.rowIn(tx, id)], null, tx);
       await this.event(tx, 'request.applied', { request: summary, note: input.note ?? '', links: input.links ?? [] });
     });
@@ -1611,7 +1634,7 @@ export class Requests {
           : null,
       change: r.change,
       contract: r.contract,
-      seat: null,
+      seat: this.contracts ? await this.contracts.seatViewIn(tx, r) : null,
       automatic: r.automatic,
       policy: r.policy_id ? { id: r.policy_id, version: p?.version ?? 0, reason: r.policy_reason ?? '' } : null,
       createdAt: r.created_at.toISOString(),
@@ -1872,6 +1895,7 @@ export class Requests {
         ? `${noBudgetWords(r.cost_center, { month, budget: budget ? amount(budget) : null, firstFullMonth } as LedgerEvidence)}: a month with no budget is never on track, so this request is not automatic and Finance decides it (docs/plan.md, decision 8)`
         : null,
       committed: cc?.committed ?? amount(Money.zero(U)),
+      ...(r.seat && this.contracts ? { seat: await this.contracts.seatEvidence(r).catch(() => null) } : {}),
       ...(r.kind === 'ai_budget' && r.agent_id && this.agentEconomics
         ? {
             agentEconomics: await this.agentEconomics(r.agent_id, month, Money.ofMicros(r.amount_micros, U)).catch(

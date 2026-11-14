@@ -26,6 +26,7 @@ import { SecretBox } from './secrets.js';
 import { Spend } from './spend.js';
 import { Agents, AgentValueClient } from './agents.js';
 import { Anomalies } from './anomalies.js';
+import { Contracts } from './contracts.js';
 import { Invoices } from './invoices.js';
 
 /** Everything the routes call. */
@@ -57,6 +58,7 @@ export interface Services {
   invoices: Invoices;
   anomalies: Anomalies;
   agents: Agents;
+  contracts: Contracts;
   landflow: LandflowClient | null;
   log: IngestLog;
   fetchImpl: typeof fetch;
@@ -146,6 +148,15 @@ export function createServices(
     config.landflow?.service ?? 'landflow-host',
     now,
   );
+  const contracts = new Contracts(
+    sql,
+    audit,
+    webhooks,
+    spend,
+    { windowDays: config.renewalWindowDays ?? 30, consoleUrl: config.consoleUrl },
+    now,
+  );
+  requests.contracts = contracts;
   // Spec 008: an AI budget request's evidence shows its agent's cost per outcome.
   requests.agentEconomics = (agentId, month, monthly) => agents.economics(agentId, month, monthly);
   const anomalies = new Anomalies(
@@ -186,6 +197,7 @@ export function createServices(
     invoices,
     anomalies,
     agents,
+    contracts,
     landflow,
     log,
     fetchImpl,
@@ -219,6 +231,8 @@ export function startBackgroundJobs(services: Services, log: (msg: string, err?:
   loop('weekly exceptions', 3_600_000, () => services.exceptions.weekly());
   // Wave 3 (spec 007): anomalies every hour, today's cost as it accrues and the approval patterns; first after 2 min.
   loop('anomalies', 3_600_000, async () => (await services.anomalies.scan(), 0));
+  // Spec 009: contract.renewal_due once per contract and renewal date, every hour.
+  loop('renewals', 3_600_000, () => services.contracts.renewalAlerts());
   timers.add(setTimeout(() => void services.anomalies.scan().catch((e) => log('anomalies failed', e)), 120_000));
   const { config } = services;
   if (config.auditAnchorMinutes > 0) {

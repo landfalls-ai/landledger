@@ -187,6 +187,40 @@ describe('Overview', () => {
     expect(screen.getByTestId('stat-forecast')).toHaveTextContent('$25.00 committed beyond reservations');
   });
 
+  it('lists a renewal inside its notice window in Needs you (spec 009)', async () => {
+    mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/overview': [200, OVERVIEW],
+      '/api/contracts': [
+        200,
+        {
+          today: '2026-11-16',
+          windowDays: 30,
+          contracts: [
+            {
+              id: 'con_linear',
+              vendor: 'Linear',
+              product: 'Business',
+              annualValue: '9600.000000',
+              noticeDate: '2026-12-02',
+              daysToNotice: 16,
+              inNoticeWindow: true,
+            },
+          ],
+          totals: { annualValue: '9600.000000', tcv: '9600.000000', seatsPaid: 40, seatsUsed: 34 },
+        },
+      ],
+    });
+    renderAt('/overview');
+    const needs = await screen.findByTestId('needs-you');
+    expect(needs).toHaveTextContent('1 renewal to decide');
+    expect(within(needs).getByTestId('needs-you-renewal')).toHaveTextContent('Renewal: Linear Business');
+    expect(within(needs).getByRole('link', { name: /Renewal: Linear/ })).toHaveAttribute(
+      'href',
+      '/contracts?id=con_linear',
+    );
+  });
+
   it('claims no forecast on a few hours of data: no amount, no range, no state', async () => {
     const early = {
       ...OVERVIEW,
