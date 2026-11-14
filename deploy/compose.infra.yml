@@ -1,0 +1,23 @@
+# Landledger's local infrastructure (compose project `landledger-infra`, OrbStack only):
+#   pnpm dev:up   # COMPOSE_BAKE=false docker --context orbstack compose -p landledger-infra -f deploy/compose.infra.yml up -d --wait
+# Development credentials only; the defaults match .env.example.
+name: landledger-infra
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: landledger
+      POSTGRES_PASSWORD: ${LANDLEDGER_PG_PASSWORD:-landledger-dev}
+      POSTGRES_DB: landledger
+    ports:
+      - '127.0.0.1:25532:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'landledger']
+      interval: 3s
+      retries: 40
+
+volumes:
+  postgres-data:
