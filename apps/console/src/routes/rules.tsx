@@ -1,4 +1,4 @@
-import type { CostCenter, RateCard, RateLine } from '@landledger/contracts';
+import type { CostCenter, RateCard, RateLine, RuleSetVersionView } from '@landledger/contracts';
 import { formatDecimal } from '@landledger/money';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardBody } from '@/components/ui/card';
@@ -86,10 +86,19 @@ export function RulesPage() {
     queryFn: () => get<{ costCenters: CostCenter[] }>('/api/cost-centers'),
     retry: quiet,
   });
+  const rules = useQuery({
+    queryKey: ['rule-sets'],
+    queryFn: () => get<{ versions: RuleSetVersionView[] }>('/api/allocation/rule-sets'),
+    retry: quiet,
+  });
+  const ruleSet = rules.data?.versions.find((v) => v.status === 'approved') ?? rules.data?.versions[0] ?? null;
   const card = cards.data?.rateCards[0];
   // The version in effect, else the newest proposal (rate card v1 waits for a person's approval, spec 002).
   const current = card ? (card.current ?? card.versions[0] ?? null) : null;
   const proposed = current?.status === 'proposed';
+  // The cluster's lines in the table; the AI lines (Landflow's price table, per model and meter) summed up under it.
+  const clusterLines = current?.lines.filter((l) => l.provider === null) ?? [];
+  const aiLines = current?.lines.filter((l) => l.provider !== null) ?? [];
   const costCenters = ccs.data?.costCenters ?? [];
   const devSeed = costCenters.some((c) => c.origin === 'dev-seed');
 
@@ -132,10 +141,17 @@ export function RulesPage() {
           ) : (
             <DataTable
               columns={rateColumns}
-              rows={current?.lines ?? []}
+              rows={clusterLines}
               rowKey={(r) => r.id}
               empty="No rates yet. Run pnpm db:seed."
             />
+          )}
+          {aiLines.length > 0 && (
+            <CardBody className="border-t border-hair text-[13px] text-t2">
+              <b className="font-medium text-t1">{aiLines.length} AI lines</b> per million tokens for{' '}
+              {new Set(aiLines.map((l) => `${l.provider}/${l.model ?? '*'}`)).size} models (input, cache read, cache
+              write, output, and the long-context tier), from Landflow&apos;s price table. Local models (Ollama) at $0.
+            </CardBody>
           )}
           {card && (
             <CardBody className="border-t border-hair">
@@ -212,14 +228,40 @@ export function RulesPage() {
           )}
         </Card>
 
-        <Card title="Allocation rules" sub="Checked in order. The first match wins." action={<Pill>Wave 1</Pill>}>
-          <CardBody>
-            <p className="text-[14px] text-t2">
-              No rules yet. Wave 1 adds them (spec 003): each maps a selector (namespace, label, agent, workflow) to a
-              cost center, team, product, P&amp;L class and the capitalisable flag. Until then, everything would land in
-              Shared pool.
-            </p>
-          </CardBody>
+        <Card
+          title={ruleSet ? `Allocation rules v${ruleSet.version}` : 'Allocation rules'}
+          sub="Checked in order. The first match wins; idle stays in the shared pool; no match is Unallocated."
+          action={
+            ruleSet &&
+            (ruleSet.status === 'approved' ? <Pill tone="ok">Approved</Pill> : <Pill tone="risk">Proposed</Pill>)
+          }
+          testId="allocation-rules"
+        >
+          {ruleSet ? (
+            <>
+              <ol className="flex flex-col">
+                {(ruleSet.rules as { id: string; name: string }[]).map((r, i) => (
+                  <li key={r.id} className="flex gap-3 border-t border-hair px-4 py-2.5 text-[14px] first:border-t-0">
+                    <span className="figure w-5 shrink-0 text-right text-[12px] text-t3">{i + 1}</span>
+                    <span className="min-w-0">{r.name}</span>
+                  </li>
+                ))}
+              </ol>
+              <CardBody className="border-t border-hair text-[12px] text-t3">
+                {ruleSet.origin === 'dev-seed' && (
+                  <>
+                    <Tag dashed>dev seed</Tag>{' '}
+                  </>
+                )}
+                {ruleSet.approvedBy ? `Approved by ${ruleSet.approvedBy}` : 'Waiting for a controller or the CFO'} ·
+                effective {date(ruleSet.effectiveFrom)}
+              </CardBody>
+            </>
+          ) : (
+            <CardBody>
+              <p className="text-[14px] text-t2">No rules yet: everything lands in Unallocated, idle in Shared pool.</p>
+            </CardBody>
+          )}
         </Card>
 
         <Card

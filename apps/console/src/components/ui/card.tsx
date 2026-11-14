@@ -21,7 +21,7 @@ export function Card({
     <section className={cn('min-w-0 rounded-[14px] border border-hair bg-sf', className)} data-testid={testId}>
       {(title || action) && (
         <div className="flex min-h-11 flex-wrap items-center gap-2.5 px-4 pt-3.5">
-          <h2 className="min-w-0 flex-1 text-[14px] font-semibold text-t1">
+          <h2 className="min-w-0 flex-[1_1_12rem] text-[14px] font-semibold text-t1">
             {title}
             {sub && <small className="mt-px block text-[12px] font-normal text-t3">{sub}</small>}
           </h2>

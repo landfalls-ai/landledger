@@ -6,6 +6,8 @@ export interface Column<T> {
   cell: (row: T) => ReactNode;
   /** Right-aligned mono figures. */
   numeric?: boolean;
+  /** On a phone, the whole width of the card (a bar, a long value), label above. */
+  full?: boolean;
 }
 
 /**
@@ -71,7 +73,13 @@ export function DataTable<T>({
           <li key={rowKey(row)} className="grid grid-cols-2 gap-x-[18px] gap-y-[7px] border-t border-hair px-4 py-3.5">
             <div className="col-span-2 mb-0.5 text-[14px]">{first!.cell(row)}</div>
             {rest.map((c) => (
-              <div key={c.header} className="flex min-w-0 items-baseline justify-between gap-2 text-right text-[14px]">
+              <div
+                key={c.header}
+                className={cn(
+                  'flex min-w-0 items-baseline justify-between gap-2 text-right text-[14px]',
+                  c.full && 'col-span-2 flex-col items-stretch gap-1 text-left',
+                )}
+              >
                 <span className="shrink-0 text-left text-[12px] text-t3">{c.header}</span>
                 <span className={cn('min-w-0', c.numeric && 'figure')}>{c.cell(row)}</span>
               </div>
