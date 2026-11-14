@@ -130,11 +130,25 @@ export interface SpendGroup {
 export interface SpendResult {
   from: string;
   to: string;
+  /**
+   * `billing`: a month's view, every record booked in the month (its billing period), so a locked month never changes;
+   * a correction to a locked month is its own line (`CORRECTIONS`). `charge`: a range of days (`from`/`to`), records by
+   * the day they were charged, wherever they were booked.
+   */
+  basis: 'billing' | 'charge';
   by: Dimension;
   layer: 'direct' | 'spread';
   filters: { dimension: Dimension; value: string }[];
   currency: string;
-  total: { estimated: Amount; invoiced: Amount; total: Amount; provisional: Amount; previous: Amount | null };
+  total: {
+    estimated: Amount;
+    invoiced: Amount;
+    total: Amount;
+    provisional: Amount;
+    previous: Amount | null;
+    /** Corrections to locked months booked in this month (part of `total`; zero for a range of days). */
+    corrections: Amount;
+  };
   groups: SpendGroup[];
   /** Daily totals for the top groups and the rest (`other`), for the stacked bar. */
   daily: { days: string[]; series: { key: string; label: string; values: Amount[] }[] };
@@ -147,7 +161,14 @@ export interface SpendResult {
 
 // Overview ------------------------------------------------------------------------------------------------------------
 
-export type BudgetState = 'ok' | 'risk' | 'over' | 'none';
+/**
+ * `over`: actual above budget; `risk`: the forecast is; `ok`: neither; `none`: no budget; `early`: not over, and too
+ * little data for a forecast (fewer than three full observed days of a source), so no state is claimed.
+ */
+export type BudgetState = 'ok' | 'risk' | 'over' | 'none' | 'early';
+
+/** The line a month's corrections to locked months are reported on, in every breakdown (never in a cost center). */
+export const CORRECTIONS = 'CORRECTIONS';
 
 export interface CostCenterLine {
   code: string;
@@ -156,7 +177,8 @@ export interface CostCenterLine {
   monthToDate: Amount;
   invoiced: Amount;
   budget: Amount | null;
-  forecast: Amount;
+  /** Null when there is not enough data for a forecast (see `Overview.forecast.status`). */
+  forecast: Amount | null;
   /** Wave 2: approved requests' reservations. Zero until then. */
   reserved: Amount;
   state: BudgetState;
@@ -168,17 +190,42 @@ export interface Overview {
   dayOfMonth: number;
   daysInMonth: number;
   currency: string;
-  monthToDate: { total: Amount; estimated: Amount; invoiced: Amount; provisional: Amount };
+  monthToDate: { total: Amount; estimated: Amount; invoiced: Amount; provisional: Amount; corrections: Amount };
   forecast: {
-    amount: Amount;
-    low: Amount;
-    high: Amount;
+    /**
+     * `ok`: every source has at least three full observed days in the last seven; `insufficient`: one doesn't (no
+     * forecast, no range, no state); `past`: a past month, actuals only.
+     */
+    status: 'ok' | 'insufficient' | 'past';
+    amount: Amount | null;
+    low: Amount | null;
+    high: Amount | null;
     /** How the run rate was taken, in words. */
     basis: string;
     /** Cost per day at the run rate (low, mid, high). */
-    perDay: { low: Amount; mid: Amount; high: Amount };
+    perDay: { low: Amount; mid: Amount; high: Amount } | null;
+    /** The newest of the sources' first observed moments: the figures rest on data since then. */
+    dataSince: string | null;
+    /** How much of the month the figures observe, percent with one decimal (from `dataSince` or the 1st, to now). */
+    observedShare: string;
+    /** Per source: since when, full observed days and hours in the last seven days, and its cost per hour. */
+    sources: {
+      source: string;
+      since: string | null;
+      fullDays: number;
+      observedHours: string;
+      perHour: Amount | null;
+    }[];
   };
-  budget: { amount: Amount | null; version: number | null; source: string | null; importedAt: string | null };
+  budget: {
+    amount: Amount | null;
+    /** The budget imports the month's figures come from (one cost center can come from a later import). */
+    versions: number[];
+    source: string | null;
+    importedAt: string | null;
+    /** `dev-seed` when any of them is development seed data. */
+    origin: string | null;
+  };
   /** Budget − actuals − reservations (no reservations until wave 2). */
   leftAfterReservations: Amount | null;
   reserved: Amount;
@@ -204,26 +251,29 @@ export interface BudgetLine extends CostCenterLine {
   months: { month: string; budget: Amount | null; actual: Amount; locked: boolean }[];
 }
 
+export interface BudgetImportView {
+  version: number;
+  source: string;
+  fileName: string | null;
+  importedAt: string;
+  importedBy: string;
+  origin: string;
+  note: string;
+}
+
 export interface BudgetsView {
   month: string;
   currency: string;
-  version: {
-    version: number;
-    source: string;
-    fileName: string | null;
-    importedAt: string;
-    importedBy: string;
-    origin: string;
-    note: string;
-  } | null;
+  /** The imports the month's budgets come from, newest first (each cost center's newest import that names it). */
+  versions: BudgetImportView[];
   rows: BudgetLine[];
   totals: {
     budget: Amount;
     actual: Amount;
     reserved: Amount;
     available: Amount;
-    forecast: Amount;
-    variance: Amount;
+    forecast: Amount | null;
+    variance: Amount | null;
     variancePct: string | null;
     state: BudgetState;
   };

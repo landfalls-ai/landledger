@@ -266,11 +266,8 @@ export class Ingest {
       }
       const built = buildLandflowDay({ day, events, version, names, insights, host: this.options.landflowHost });
       built.warnings.unshift(...warnings);
-      const ats = events
-        .map((e) => Date.parse(e.at))
-        .filter(Number.isFinite)
-        .sort((a, b) => a - b);
-      return { built, version, observedFrom: ats.length ? start : null, observedTo: ats.length ? end : null };
+      // Landflow's events are final when written: the window read is the window observed, calls or none.
+      return { built, version, observedFrom: start, observedTo: new Date(end.getTime() + 1) };
     }
     const ck = this.options.clickland;
     if (!ck) throw new Error('Clickland is not configured (LANDLEDGER_CLICKLAND_URL and LANDLEDGER_CLICKLAND_KEY)');

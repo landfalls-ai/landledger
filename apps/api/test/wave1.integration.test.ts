@@ -6,147 +6,14 @@ import { createTestDatabase, integrationEnabled, type TestDatabase } from '@land
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import type { Config } from '../src/config.js';
 import { createSql, type Sql } from '../src/db.js';
-import type { Principal } from '../src/principal.js';
 import { RATE_CARD_V1, seed } from '../src/seed.js';
 import { createServices, type Services } from '../src/services.js';
+import { call, DANA, fakeSources, KEY, TAL, testConfig, YOAV } from './fakes.js';
 
-const config: Config = {
-  port: 0,
-  host: '127.0.0.1',
-  postgresUrl: '',
-  consoleUrl: 'http://localhost:4811',
-  bootstrapKey: 'll_bootstrap_test_key_0000000000000000',
-  devAuth: true,
-  sessionHours: 8,
-  oidc: null,
-  oidcProblem: 'tests',
-  backgroundJobs: false,
-  landflow: { url: 'http://landflow.test', key: 'lf_test', service: 'landflow-host', namespace: 'landflow-dev' },
-  clickland: { url: 'http://clickland.test', key: 'ck_test', labels: [] },
-  clicklandConsoleUrl: 'http://localhost:4711',
-  costMetricsEndpoint: null,
-  ingestJobs: false,
-};
-
-const person = (id: string, email: string, roles: Principal['roles']): Principal => ({
-  kind: 'person',
-  id,
-  name: email,
-  email,
-  roles,
-  groups: [],
-  scopes: ['read', 'admin'],
-});
-const YOAV = person('usr_yoav', 'yoav.bendavid@landbright.test', ['controller']);
-const DANA = person('usr_dana', 'dana.shalev@landbright.test', ['cfo']);
-const TAL = person('usr_tal', 'tal.levi@landbright.test', ['engineer']);
-const KEY: Principal = {
-  kind: 'key',
-  id: 'key_1',
-  name: 'ingest bot',
-  email: null,
-  roles: [],
-  groups: [],
-  scopes: ['admin'],
-};
-
-// The sources: what they answer can change between runs, as a real source's late data would.
-let events: unknown[] = [];
-let cpuAllocated = '2.000000';
-const rollup = (day: string) => ({
-  rows: [
-    {
-      start: `${day}T00:00:00Z`,
-      end: `${day}T00:00:00Z`,
-      source: 'kubernetes',
-      group: {
-        'k8s.cluster.name': 'orbstack',
-        'k8s.namespace.name': 'landflow-dev',
-        'k8s.workload.kind': 'Deployment',
-        'k8s.workload.name': 'landflow-host',
-        'k8s.container.name': 'host',
-      },
-      cpuCoreHours: '1.000000',
-      cpuAllocatedCoreHours: cpuAllocated,
-      memoryGiBHours: '1.000000',
-      memoryAllocatedGiBHours: '2.000000',
-    },
-    {
-      start: `${day}T00:00:00Z`,
-      end: `${day}T00:00:00Z`,
-      source: 'docker',
-      group: { 'compose.project': 'mystery', 'compose.service': 'thing', 'container.name': 'mystery-thing-1' },
-      cpuCoreHours: '1.000000',
-      cpuAllocatedCoreHours: '1.000000',
-      memoryGiBHours: '0.000000',
-      memoryAllocatedGiBHours: '0.000000',
-    },
-  ],
-  capacity: [
-    {
-      start: `${day}T00:00:00Z`,
-      end: `${day}T00:00:00Z`,
-      cluster: 'orbstack',
-      node: 'orbstack',
-      cpuAllocatableCoreHours: '24.000000',
-      memoryAllocatableGiBHours: '48.000000',
-    },
-  ],
-  volumes: [],
-  coverage: {
-    sources: [
-      { source: 'kubernetes', firstSample: `${day}T00:00:00Z`, lastSample: `${day}T23:59:00Z`, missingBuckets: [] },
-    ],
-    missing: [],
-  },
-});
-const fetchImpl: typeof fetch = async (input, init) => {
-  const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
-  const json = (b: unknown) =>
-    new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
-  if (url.host === 'clickland.test') return json(rollup(JSON.parse(init!.body as string).from.slice(0, 10)));
-  if (url.pathname === '/api/usage/events') {
-    const from = url.searchParams.get('from')!;
-    const to = url.searchParams.get('to')!;
-    return json({ events: events.filter((e) => (e as { at: string }).at >= from && (e as { at: string }).at <= to) });
-  }
-  if (url.pathname === '/api/usage')
-    return json({
-      rows: [],
-      totals: {
-        count: events.filter(
-          (e) =>
-            (e as { at: string }).at >= url.searchParams.get('from')! &&
-            (e as { at: string }).at <= url.searchParams.get('to')!,
-        ).length,
-        tokens: 0,
-      },
-    });
-  if (url.pathname === '/api/agents') return json({ agents: [{ id: 'ag_1', name: 'Triage lead' }] });
-  if (url.pathname === '/api/workflows') return json({ workflows: [] });
-  if (url.pathname === '/api/settings/ai-prices')
-    return json({
-      defaults: [
-        { provider: 'anthropic', model: 'claude-sonnet-4-5', input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-      ],
-      overrides: [],
-    });
-  if (url.pathname === '/api/insights/ai-usage') return json({ models: [] });
-  return new Response('not found', { status: 404 });
-};
-
-const call = (at: string, input: number, output: number, extra: Record<string, number> = {}) => ({
-  id: `ev_${at}_${input}`,
-  at,
-  kind: 'ai.call',
-  agentId: 'ag_1',
-  workflowId: null,
-  actorId: 'usr_x',
-  cost: 0,
-  attrs: { provider: 'anthropic', model: 'claude-sonnet-4-5', input, output, ...extra },
-});
+const config = testConfig();
+const sources = fakeSources();
+const { fetchImpl } = sources;
 
 describe.skipIf(!integrationEnabled('db'))('wave 1 against Postgres', () => {
   let db: TestDatabase;
@@ -196,7 +63,9 @@ describe.skipIf(!integrationEnabled('db'))('wave 1 against Postgres', () => {
   });
 
   it('ingests a complete day once: a second run appends nothing', async () => {
-    events = [call('2026-11-13T10:00:00.000Z', 1_000_000, 100_000, { cacheRead: 400_000, cacheWrite: 0 })];
+    sources.state.events = [
+      call('2026-11-13T10:00:00.000Z', 1_000_000, 100_000, { cacheRead: 400_000, cacheWrite: 0 }),
+    ];
     const first = await services.ingest.run('landflow', '2026-11-13', 'manual', 'test');
     expect(first).toMatchObject({ outcome: 'succeeded', provisional: false, newCount: 3, correctedCount: 0 });
     const again = await services.ingest.run('landflow', '2026-11-13', 'manual', 'test');
@@ -207,11 +76,11 @@ describe.skipIf(!integrationEnabled('db'))('wave 1 against Postgres', () => {
   });
 
   it('corrects a changed figure by reversal and re-entry, and reverses one that vanished', async () => {
-    cpuAllocated = '3.000000';
+    sources.state.cpuAllocated = '3.000000';
     const run = await services.ingest.run('clickland', '2026-11-13', 'manual', 'test');
     // The workload's CPU and the idle CPU both changed.
     expect(run).toMatchObject({ newCount: 0, correctedCount: 2, unchangedCount: 3 });
-    events = [];
+    sources.state.events = [];
     const lf = await services.ingest.run('landflow', '2026-11-13', 'manual', 'test');
     expect(lf.correctedCount).toBe(3);
     const [{ net }] =
@@ -224,10 +93,10 @@ describe.skipIf(!integrationEnabled('db'))('wave 1 against Postgres', () => {
   });
 
   it('keeps today provisional and replaces it on every run', async () => {
-    events = [call('2026-11-14T09:00:00.000Z', 1000, 10)];
+    sources.state.events = [call('2026-11-14T09:00:00.000Z', 1000, 10)];
     const a = await services.ingest.run('landflow', '2026-11-14', 'hourly', 'test');
     expect(a.provisional).toBe(true);
-    events.push(call('2026-11-14T10:00:00.000Z', 2000, 20));
+    sources.state.events.push(call('2026-11-14T10:00:00.000Z', 2000, 20));
     await services.ingest.run('landflow', '2026-11-14', 'hourly', 'test');
     const [{ n }] = await sql`SELECT count(*)::int AS n FROM provisional_usage WHERE source = 'landflow'`;
     expect(n).toBe(2); // input and output rows, the two calls summed
@@ -339,26 +208,97 @@ describe.skipIf(!integrationEnabled('db'))('wave 1 against Postgres', () => {
     expect((await app.inject({ method: 'GET', url: '/api/mcp' })).statusCode).toBe(405);
   });
 
-  it('books a change to a locked month in the open month as a Correction', async () => {
+  it('books a change to a locked month in the open month as a Correction, and month reads never move', async () => {
     // October: one AI call, entered, then the month is closed and locked by a person.
-    events = [call('2026-10-31T10:00:00.000Z', 1_000_000, 0)];
+    sources.state.events = [call('2026-10-31T10:00:00.000Z', 1_000_000, 0, {}, 0.5)];
     now = new Date('2026-11-14T12:00:00Z');
     const oct = await services.ingest.run('landflow', '2026-10-31', 'manual', 'test');
     expect(oct.newCount).toBe(1);
+    expect((await services.spend.overview('2026-10')).monthToDate.total).toBe('0.500000');
     await services.periods.advance('2026-10', 'closing', YOAV);
     await services.periods.advance('2026-10', 'locked', YOAV);
-    events = [call('2026-10-31T10:00:00.000Z', 2_000_000, 0)];
+    sources.state.events = [call('2026-10-31T10:00:00.000Z', 2_000_000, 0, {}, 1.25)];
     const late = await services.ingest.run('landflow', '2026-10-31', 'manual', 'test');
     expect(late.correctedCount).toBe(1);
     const rows = await sql`
       SELECT charge_class, to_char(billing_period_start AT TIME ZONE 'UTC', 'YYYY-MM') AS month, effective_cost_micros::text AS c
       FROM cost_records WHERE source = 'landflow' AND charge_period_start = '2026-10-31' ORDER BY seq`;
-    expect(rows.map((r) => [r.month, r.charge_class, r.c])).toEqual(
-      [
-        ['2026-10', null, '0'], // Oct 31: no rate card yet, Landflow's estimate (0 here)
-        ['2026-11', 'Correction', '-0'],
-        ['2026-11', 'Correction', '0'],
-      ].map(([m, c, v]) => [m, c, v === '-0' ? '0' : v]),
-    );
+    // Oct 31 had no rate card yet: Landflow's estimate.
+    expect(rows.map((r) => [r.month, r.charge_class, r.c])).toEqual([
+      ['2026-10', null, '500000'],
+      ['2026-11', 'Correction', '-500000'],
+      ['2026-11', 'Correction', '1250000'],
+    ]);
+
+    // October as booked never moves: Overview, Explore, Budgets' history, the exports and MCP read what was booked.
+    expect((await services.spend.overview('2026-10')).monthToDate).toMatchObject({
+      total: '0.500000',
+      corrections: '0.000000',
+    });
+    const octSpend = await services.spend.spend({
+      by: 'costCenter',
+      month: '2026-10',
+      layer: 'direct',
+      provisional: 'true',
+    });
+    expect(octSpend).toMatchObject({ basis: 'billing', total: { total: '0.500000' } });
+    const csv = await app.inject({ method: 'GET', url: '/api/spend/export?by=costCenter&month=2026-10' });
+    expect(csv.body).toContain('AI Agents,ENG-AGENTS,0.500000,0.000000,0.500000');
+    const nov = await services.spend.budgetsView('2026-11');
+    expect(nov.rows.find((r) => r.code === 'ENG-AGENTS')?.months.find((m) => m.month === '2026-10')).toMatchObject({
+      actual: '0.500000',
+      locked: true,
+    });
+
+    // November carries the correction on its own line, never inside a cost center.
+    const spend = await services.spend.spend({
+      by: 'costCenter',
+      month: '2026-11',
+      layer: 'direct',
+      provisional: 'true',
+    });
+    expect(spend.total.corrections).toBe('0.750000');
+    expect(spend.groups.find((g) => g.key === 'CORRECTIONS')).toMatchObject({
+      label: 'Corrections to locked months',
+      total: '0.750000',
+    });
+    const ov = await services.spend.overview('2026-11');
+    expect(ov.monthToDate.corrections).toBe('0.750000');
+    expect(ov.costCenters.find((c) => c.code === 'CORRECTIONS')).toMatchObject({
+      monthToDate: '0.750000',
+      state: 'none',
+    });
+    expect(ov.byCategory.at(-1)).toMatchObject({ key: 'correction', amount: '0.750000' });
+    // Opening the line shows whose it is.
+    const drilled = await services.spend.spend({
+      by: 'costCenter',
+      month: '2026-11',
+      filter: 'costCenter:CORRECTIONS',
+      layer: 'direct',
+      provisional: 'true',
+    });
+    expect(drilled.groups.map((g) => [g.key, g.total])).toEqual([['ENG-AGENTS', '0.750000']]);
+    // The days it was charged: a range over 31 October shows the usage as corrected, wherever it was booked.
+    const charged = await services.spend.spend({
+      by: 'costCenter',
+      from: '2026-10-31',
+      to: '2026-10-31',
+      layer: 'direct',
+      provisional: 'true',
+    });
+    expect(charged).toMatchObject({ basis: 'charge', total: { total: '1.250000', corrections: '0.000000' } });
+    // MCP reads October as booked too.
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/mcp',
+      headers: { accept: 'application/json, text/event-stream', 'content-type': 'application/json' },
+      payload: {
+        jsonrpc: '2.0',
+        id: 9,
+        method: 'tools/call',
+        params: { name: 'spend_by', arguments: { by: 'costCenter', month: '2026-10' } },
+      },
+    });
+    expect(res.json().result.content[0].text).toMatch(/: USD 0\.500000,/);
   });
 });

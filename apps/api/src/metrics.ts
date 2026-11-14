@@ -107,7 +107,7 @@ export async function emitCostMetrics(
 ): Promise<number> {
   const today = now.toISOString().slice(0, 10);
   const yesterday = new Date(now.getTime() - DAY_MS).toISOString().slice(0, 10);
-  const { lines } = await spend.lines(yesterday, today);
+  const { lines } = await spend.lines({ from: yesterday, to: today });
   if (!lines.length) return 0;
   const body = otlpCostMetrics(lines, now);
   const res = await fetchImpl(endpoint, {

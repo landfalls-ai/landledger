@@ -83,7 +83,7 @@ export function createMcpServer(spend: Spend, principal: Principal): McpServer {
     {
       title: 'Spend by a dimension',
       description:
-        "Technology and AI spend for a month or a range of days, grouped by one dimension (cost center, service, namespace, agent, model, provider, P&L class, category, resource, workflow, team, product), with each group's estimated and invoiced parts, its share and the window before. Also returns how much is attributed directly versus in the shared pool or unallocated.",
+        "Technology and AI spend for a month (what is booked in it; corrections to locked months on their own line, CORRECTIONS) or a range of days (by the day charged), grouped by one dimension (cost center, service, namespace, agent, model, provider, P&L class, category, resource, workflow, team, product), with each group's estimated and invoiced parts, its share and the window before. Also returns how much is attributed directly versus in the shared pool or unallocated.",
       inputSchema: SpendByInput,
     },
     async (a) => {
@@ -117,7 +117,7 @@ export function createMcpServer(spend: Spend, principal: Principal): McpServer {
     {
       title: 'Budget status',
       description:
-        'Each cost center this month (or the month given) against its budget: month to date, forecast to month end, budget, available, variance and state (ok, risk = forecast over budget, over = actual over budget, none = no budget).',
+        'Each cost center this month (or the month given) against its budget: month to date (what is booked in the month), forecast to month end, budget, available, variance and state (ok, risk = forecast over budget, over = actual over budget, none = no budget, early = not enough data for a forecast yet). Corrections to locked months are their own line, CORRECTIONS.',
       inputSchema: BudgetStatusInput,
     },
     async (a) => {
@@ -125,15 +125,24 @@ export function createMcpServer(spend: Spend, principal: Principal): McpServer {
       const rows = a.costCenter ? v.rows.filter((r) => r.code === a.costCenter!.toUpperCase()) : v.rows;
       if (a.costCenter && !rows.length)
         throw new ApiError('not_found', `No spend or budget for ${a.costCenter} in ${v.month}`);
-      const state = { ok: 'on track', risk: 'at risk', over: 'over budget', none: 'no budget' } as const;
+      const state = {
+        ok: 'on track',
+        risk: 'at risk',
+        over: 'over budget',
+        none: 'no budget',
+        early: 'not enough data yet for a forecast',
+      } as const;
+      const versions = v.versions.map(
+        (i) => `v${i.version}${i.origin === 'dev-seed' ? ' (development seed data)' : ''}`,
+      );
       const text = [
-        `Budgets for ${v.month}${v.version ? ` (budget v${v.version.version}, ${v.version.source})` : ' (no budget imported)'}: actual USD ${v.totals.actual} of USD ${v.totals.budget}, forecast USD ${v.totals.forecast}.`,
+        `Budgets for ${v.month}${versions.length ? ` (budget ${versions.join(', ')})` : ' (no budget imported)'}: actual USD ${v.totals.actual} of USD ${v.totals.budget}, forecast ${v.totals.forecast ? `USD ${v.totals.forecast}` : 'not available yet (not enough data)'}.`,
         ...rows.map(
           (r) =>
-            `- ${r.name} (${r.code}): ${state[r.state]}; actual USD ${r.monthToDate}${r.budget ? ` of USD ${r.budget}` : ''}, forecast USD ${r.forecast}${r.variance ? `, variance USD ${r.variance} (${r.variancePct}%)` : ''}`,
+            `- ${r.name} (${r.code}): ${state[r.state]}; actual USD ${r.monthToDate}${r.budget ? ` of USD ${r.budget}` : ''}${r.forecast ? `, forecast USD ${r.forecast}` : ''}${r.variance ? `, variance USD ${r.variance} (${r.variancePct}%)` : ''}`,
         ),
       ].join('\n');
-      return ok({ month: v.month, currency: v.currency, version: v.version, totals: v.totals, rows }, text);
+      return ok({ month: v.month, currency: v.currency, versions: v.versions, totals: v.totals, rows }, text);
     },
   );
   return server;

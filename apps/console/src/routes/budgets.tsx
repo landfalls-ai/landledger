@@ -21,27 +21,28 @@ function Detail({ row, view }: { row: BudgetLine; view: BudgetsView }) {
         <h3 className="mb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-t3">Owner and source</h3>
         <div className="font-medium text-t1">{row.owner ?? 'No owner'}</div>
         <small className="text-t3">
-          {view.version
-            ? `Budget v${view.version.version} · ${view.version.fileName ?? view.version.source}`
+          {view.versions.length
+            ? view.versions.map((v) => `Budget v${v.version} · ${v.fileName ?? v.source}`).join('; ')
             : 'No budget imported'}
-          {view.version?.origin === 'dev-seed' && ' · development seed data'}
+          {view.versions.some((v) => v.origin === 'dev-seed') && ' · development seed data'}
         </small>
       </div>
       <div>
         <h3 className="mb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-t3">Months</h3>
-        {[...row.months, { month: view.month, budget: row.budget, actual: row.forecast, locked: false }].map(
-          (m, i, all) => (
-            <div key={m.month} className="flex justify-between gap-3 border-t border-hair py-1.5 first:border-t-0">
-              <span className="text-t2">
-                {monthLabel(m.month).split(' ')[0]}
-                {m.locked ? ' · locked' : i === all.length - 1 ? ' · forecast' : ''}
-              </span>
-              <span className="figure whitespace-nowrap">
-                {usd(m.actual)} of {usd(m.budget)}
-              </span>
-            </div>
-          ),
-        )}
+        {[
+          ...row.months,
+          { month: view.month, budget: row.budget, actual: row.forecast ?? row.monthToDate, locked: false },
+        ].map((m, i, all) => (
+          <div key={m.month} className="flex justify-between gap-3 border-t border-hair py-1.5 first:border-t-0">
+            <span className="text-t2">
+              {monthLabel(m.month).split(' ')[0]}
+              {m.locked ? ' · locked' : i === all.length - 1 ? (row.forecast ? ' · forecast' : ' · to date') : ''}
+            </span>
+            <span className="figure whitespace-nowrap">
+              {usd(m.actual)} of {usd(m.budget)}
+            </span>
+          </div>
+        ))}
       </div>
       <div>
         <h3 className="mb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-t3">Reservations</h3>
@@ -62,6 +63,7 @@ export function BudgetsPage() {
   const v = q.data;
   if (!v) return q.isError ? <ErrorNote error={q.error} /> : <Lede>Loading budgets…</Lede>;
   const t = v.totals;
+  const latest = v.versions[0] ?? null;
   const name = (r: BudgetLine) => (
     <button
       type="button"
@@ -85,7 +87,7 @@ export function BudgetsPage() {
     usd(r.monthToDate),
     r.reserved === '0.000000' ? <span className="text-t3">—</span> : usd(r.reserved),
     <span className={r.available && r.available.startsWith('-') ? 'text-rd' : ''}>{usd(r.available)}</span>,
-    usd(r.forecast),
+    r.forecast === null ? <span className="text-t3">—</span> : usd(r.forecast),
     variance(r),
   ];
   return (
@@ -95,12 +97,15 @@ export function BudgetsPage() {
         figures in USD.
       </Lede>
       <Card
-        title={v.version ? `Budget v${v.version.version}` : 'No budget'}
+        title={latest ? `Budget ${v.versions.map((i) => `v${i.version}`).join(', ')}` : 'No budget'}
         sub={
-          v.version ? (
+          latest ? (
             <>
-              From {v.version.fileName ?? 'a CSV'}, imported {dayLabel(v.version.importedAt.slice(0, 10))} by{' '}
-              {v.version.importedBy} {v.version.origin === 'dev-seed' && <Tag dashed>dev seed</Tag>}
+              From {latest.fileName ?? 'a CSV'}, imported {dayLabel(latest.importedAt.slice(0, 10))} by{' '}
+              {latest.importedBy}
+              {v.versions.length > 1 &&
+                ` (and ${v.versions.length - 1} earlier import${v.versions.length > 2 ? 's' : ''})`}{' '}
+              {v.versions.some((i) => i.origin === 'dev-seed') && <Tag dashed>dev seed</Tag>}
             </>
           ) : (
             'Import a CSV of cost center, month, amount and currency'
@@ -129,7 +134,7 @@ export function BudgetsPage() {
                   r.monthToDate,
                   r.reserved,
                   r.available ?? '',
-                  r.forecast,
+                  r.forecast ?? '',
                   r.variance ?? '',
                   r.variancePct ?? '',
                   r.state,

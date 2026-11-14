@@ -9,7 +9,7 @@ import { CopyButton } from '@/components/ui/copy-button';
 import { type Column, DataTable } from '@/components/ui/data-table';
 import { get, quiet } from '@/lib/api';
 import { toTsv } from '@/lib/copy';
-import { change, dayLabel, num, pct, usd } from '@/lib/format';
+import { change, dayLabel, monthLabel, num, pct, usd } from '@/lib/format';
 
 const LINK_BUTTON =
   'inline-flex h-[30px] items-center justify-center gap-[7px] whitespace-nowrap rounded-[9px] border border-bd bg-sf px-2.5 text-[12.5px] font-medium text-t1 hover:bg-acdim';
@@ -148,8 +148,13 @@ export function ExplorePage() {
   return (
     <div data-testid="explore">
       <Lede>
-        {r ? `Where spend comes from, ${dayLabel(r.from)} to ${dayLabel(r.to)}.` : 'Where spend comes from.'} All
-        figures in USD.
+        {r
+          ? r.basis === 'billing'
+            ? `Where spend comes from: what is booked in ${monthLabel(r.from.slice(0, 7))}, to ${dayLabel(r.to)}.`
+            : `Where spend comes from, charged ${dayLabel(r.from)} to ${dayLabel(r.to)}.`
+          : 'Where spend comes from.'}{' '}
+        {r && r.total.corrections !== '0.000000' && 'Corrections to locked months are their own line. '}All figures in
+        USD.
       </Lede>
       <ChipRow label="Group by">
         {DIMS.map((d) => (

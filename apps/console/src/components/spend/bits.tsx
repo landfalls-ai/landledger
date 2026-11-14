@@ -8,9 +8,12 @@ export const STATE_LABEL: Record<BudgetState, string> = {
   risk: 'At risk',
   over: 'Over',
   none: 'No budget',
+  early: 'Not enough data yet',
 };
 
+/** A budget's state; too early to say is plain text, never a pill that claims a state. */
 export function StatePill({ state }: { state: BudgetState }) {
+  if (state === 'early') return <span className="whitespace-nowrap text-[12px] text-t3">{STATE_LABEL.early}</span>;
   return <Pill tone={state === 'none' ? 'nu' : state}>{STATE_LABEL[state]}</Pill>;
 }
 
@@ -24,16 +27,24 @@ export function Stat({
   value,
   children,
   testId,
+  small,
 }: {
   label: string;
   value: ReactNode;
   children?: ReactNode;
   testId?: string;
+  /** A value in words rather than a figure. */
+  small?: boolean;
 }) {
   return (
     <div className="min-w-0 rounded-[14px] border border-hair bg-sf px-3.5 py-[13px] md:p-4" data-testid={testId}>
       <div className="text-[12px] text-t3">{label}</div>
-      <div className="figure my-[3px] whitespace-nowrap text-[21px] font-semibold tracking-[-0.02em] text-t1 md:text-[26px]">
+      <div
+        className={cn(
+          'my-[3px] font-semibold tracking-[-0.02em] text-t1',
+          small ? 'text-[16px] leading-[1.25] md:text-[19px]' : 'figure whitespace-nowrap text-[21px] md:text-[26px]',
+        )}
+      >
         {value}
       </div>
       {children && <div className="text-[12px] leading-[1.35] text-t2">{children}</div>}

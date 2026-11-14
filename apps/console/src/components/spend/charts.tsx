@@ -62,7 +62,7 @@ export function BurnChart({ overview }: { overview: Overview }) {
   const days = (W < 520 ? [0, Math.floor((n - 1) / 2), n - 1] : [0, 6, 13, 20, n - 1]).filter(
     (i, k, a) => i < n && a.indexOf(i) === k,
   );
-  const label = `Cumulative cost in ${overview.month}: ${usd(overview.monthToDate.total)} to date, forecast ${usd(overview.forecast.amount)}${budget !== null ? ` against a budget of ${usd(overview.budget.amount)}` : ''}.`;
+  const label = `Cumulative cost in ${overview.month}: ${usd(overview.monthToDate.total)} to date, ${overview.forecast.amount ? `forecast ${usd(overview.forecast.amount)}` : 'no forecast yet'}${budget !== null ? ` against a budget of ${usd(overview.budget.amount)}` : ''}.`;
   return (
     <div ref={ref} className="w-full" data-testid="burn-chart">
       {W > 0 && (

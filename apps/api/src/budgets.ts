@@ -4,6 +4,7 @@
  * center is the newest import that names it. Datarails comes later (decision 4).
  */
 import { SHARED_POOL } from '@landledger/allocation';
+import type { BudgetImportView } from '@landledger/contracts';
 import { Decimal, Money, REPORTING_CURRENCY } from '@landledger/money';
 import type { AuditLog } from './audit.js';
 import { type Sql, type Tx } from './db.js';
@@ -188,6 +189,31 @@ export class Budgets {
         },
       ]),
     );
+  }
+
+  /** The imports with these version numbers, newest first. */
+  async imports(versions: readonly number[]): Promise<BudgetImportView[]> {
+    if (!versions.length) return [];
+    const rows = await this.sql<
+      {
+        version: number;
+        source: string;
+        file_name: string | null;
+        note: string;
+        origin: string;
+        imported_by: string;
+        imported_at: Date;
+      }[]
+    >`SELECT * FROM budget_imports WHERE version IN ${this.sql(versions as number[])} ORDER BY version DESC`;
+    return rows.map((r) => ({
+      version: r.version,
+      source: r.source,
+      fileName: r.file_name,
+      importedAt: r.imported_at.toISOString(),
+      importedBy: r.imported_by,
+      origin: r.origin,
+      note: r.note,
+    }));
   }
 
   async latestImport() {

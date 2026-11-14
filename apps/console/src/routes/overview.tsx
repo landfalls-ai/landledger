@@ -8,7 +8,7 @@ import { ErrorNote, Estimated, Invoiced, Legend, Lede, Stat, StatePill, Swatch }
 import { Card, CardBody } from '@/components/ui/card';
 import { CopyButton } from '@/components/ui/copy-button';
 import { type Column, DataTable } from '@/components/ui/data-table';
-import { Pill } from '@/components/ui/pill';
+import { Pill, Tag } from '@/components/ui/pill';
 import { get, quiet } from '@/lib/api';
 import { toTsv } from '@/lib/copy';
 import { dayLabel, monthLabel, num, usd } from '@/lib/format';
@@ -30,11 +30,13 @@ const ccColumns: Column<CostCenterLine>[] = [
           {c.name}
         </Link>
         <span className="block text-[12px] text-t3">
-          {c.code === 'SHARED-POOL' || c.code === 'UNALLOCATED'
-            ? c.code === 'SHARED-POOL'
-              ? 'Idle capacity and shared services'
-              : 'No rule matched'
-            : c.code}
+          {c.code === 'SHARED-POOL'
+            ? 'Idle capacity and shared services'
+            : c.code === 'UNALLOCATED'
+              ? 'No rule matched'
+              : c.code === 'CORRECTIONS'
+                ? 'Charged in a locked month, booked in this one'
+                : c.code}
           {c.owner && ` · ${c.owner}`}
         </span>
       </span>
@@ -46,11 +48,14 @@ const ccColumns: Column<CostCenterLine>[] = [
   {
     header: 'Forecast',
     numeric: true,
-    cell: (c) => (
-      <span className={c.budget && Decimal.parse(c.forecast).compare(c.budget) > 0 ? 'text-rd' : ''}>
-        {usd(c.forecast)}
-      </span>
-    ),
+    cell: (c) =>
+      c.forecast === null ? (
+        <span className="text-t3">—</span>
+      ) : (
+        <span className={c.budget && Decimal.parse(c.forecast).compare(c.budget) > 0 ? 'text-rd' : ''}>
+          {usd(c.forecast)}
+        </span>
+      ),
   },
   {
     header: 'Actual + reserved vs budget',
@@ -101,6 +106,8 @@ function Split({ rows, total }: { rows: Overview['byCategory']; total: string })
 }
 
 const SOURCE: Record<string, string> = { landflow: 'Landflow AI usage', clickland: 'Clickland resource usage' };
+const SOURCE_SHORT: Record<string, string> = { landflow: 'Landflow', clickland: 'Clickland' };
+const sinceLabel = (iso: string) => `${dayLabel(iso.slice(0, 10))} ${iso.slice(11, 16)} UTC`;
 const ago = (iso: string | null) => {
   if (!iso) return 'running';
   const m = Math.round((Date.now() - Date.parse(iso)) / 60_000);
@@ -125,9 +132,18 @@ export function OverviewPage() {
   if (!o) return q.isError ? <ErrorNote error={q.error} /> : <Lede>Loading this month’s spend…</Lede>;
   const total = o.monthToDate.total;
   const invoicedPct = share(o.monthToDate.invoiced, total);
-  const overBy = o.budget.amount ? Decimal.parse(o.forecast.amount).minus(o.budget.amount) : null;
+  const f = o.forecast;
+  const overBy = o.budget.amount && f.amount ? Decimal.parse(f.amount).minus(o.budget.amount) : null;
   const usedPct = o.budget.amount ? share(total, o.budget.amount) : null;
   const a = o.attribution;
+  const newest = f.sources.length
+    ? f.sources.reduce((x, s) => (s.since && (!x.since || s.since > x.since) ? s : x))
+    : null;
+  const dataSince = f.dataSince ? (
+    <>
+      {newest ? `${SOURCE_SHORT[newest.source] ?? newest.source} data` : 'Data'} since {sinceLabel(f.dataSince)}
+    </>
+  ) : null;
   return (
     <div data-testid="overview">
       <Lede>
@@ -143,28 +159,71 @@ export function OverviewPage() {
               <span className="figure">{usd(o.monthToDate.provisional)}</span> of it today, provisional
             </>
           )}
-        </Stat>
-        <Stat label="Forecast to month-end" value={usd(o.forecast.amount)} testId="stat-forecast">
-          <span className="figure">
-            {usd(o.forecast.low)} – {usd(o.forecast.high)}
-          </span>
-          <br />
-          {overBy && overBy.compare('0') > 0 ? (
-            <Pill tone="risk">{usd(overBy.toFixed(6, 'halfEven'))} over</Pill>
-          ) : overBy ? (
-            <Pill tone="ok">{usd(overBy.negate().toFixed(6, 'halfEven'))} under</Pill>
-          ) : (
-            <span className="figure">{usd(o.forecast.perDay.mid)} a day</span>
+          {o.monthToDate.corrections !== '0.000000' && (
+            <>
+              <br />
+              <span className="figure">{usd(o.monthToDate.corrections)}</span> corrections to locked months
+            </>
+          )}
+          {dataSince && (
+            <>
+              <br />
+              {dataSince}
+            </>
           )}
         </Stat>
+        {f.status === 'insufficient' ? (
+          <Stat label="Forecast to month-end" value="Not enough data yet" testId="stat-forecast" small>
+            A forecast needs three full observed days of each source.
+            {dataSince && (
+              <>
+                <br />
+                {dataSince}
+              </>
+            )}
+          </Stat>
+        ) : (
+          <Stat label="Forecast to month-end" value={usd(f.amount)} testId="stat-forecast">
+            {f.status === 'ok' && (
+              <>
+                <span className="figure">
+                  {usd(f.low)} – {usd(f.high)}
+                </span>
+                <br />
+              </>
+            )}
+            {overBy && overBy.compare('0') > 0 ? (
+              <Pill tone="risk">{usd(overBy.toFixed(6, 'halfEven'))} over</Pill>
+            ) : overBy ? (
+              <Pill tone="ok">{usd(overBy.negate().toFixed(6, 'halfEven'))} under</Pill>
+            ) : f.perDay ? (
+              <span className="figure">{usd(f.perDay.mid)} a day</span>
+            ) : (
+              'A past month: actuals only'
+            )}
+            {dataSince && f.status === 'ok' && (
+              <>
+                <br />
+                {dataSince}
+              </>
+            )}
+          </Stat>
+        )}
         <Stat label="Budget" value={usd(o.budget.amount)} testId="stat-budget">
-          {o.budget.version
-            ? `v${o.budget.version} from a ${o.budget.source === 'csv' ? 'CSV' : o.budget.source}`
-            : 'No budget imported'}
+          {o.budget.versions.length ? (
+            <>
+              {o.budget.versions.length > 1 ? 'Versions ' : ''}
+              {o.budget.versions.map((v) => `v${v}`).join(', ')} from a{' '}
+              {o.budget.source === 'csv' ? 'CSV' : o.budget.source}{' '}
+              {o.budget.origin === 'dev-seed' && <Tag dashed>dev seed</Tag>}
+            </>
+          ) : (
+            'No budget imported'
+          )}
           {usedPct !== null && (
             <>
               <br />
-              {usedPct}% used at {Math.round((o.dayOfMonth / o.daysInMonth) * 100)}% of the month
+              {usedPct}% used with {f.observedShare}% of the month observed
             </>
           )}
         </Stat>
@@ -196,7 +255,7 @@ export function OverviewPage() {
                 </span>
               )}
             </Legend>
-            <p className="mt-2 text-[12px] text-t3">{o.forecast.basis}.</p>
+            <p className="mt-2 text-[12px] text-t3">{f.basis}.</p>
           </CardBody>
         </Card>
 
@@ -262,7 +321,7 @@ export function OverviewPage() {
                     c.monthToDate,
                     c.invoiced,
                     c.budget ?? '',
-                    c.forecast,
+                    c.forecast ?? '',
                     c.reserved,
                     c.state,
                   ]),
