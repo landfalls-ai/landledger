@@ -307,11 +307,18 @@ export type AuditVerify = z.infer<typeof AuditVerify>;
 
 // Webhooks ----------------------------------------------------------------------------------------------------------
 
-/** The events Landledger sends (docs/architecture.md). Wave 0 has the outbox; the events start in waves 1 and 2. */
+/**
+ * The events Landledger sends (docs/architecture.md; payloads in requests.ts). `request.created`: a request was
+ * submitted; `request.step_pending`: a step waits on its approvers (named, with emails and Landbright subs), also when
+ * it escalates; `request.decided`: the request ended (approved, rejected, cancelled, expired); `request.applied`: the
+ * change is in place; `budget.at_risk`: a cost center crossed into at risk or over (once per month and state).
+ */
 export const WebhookEvent = z.enum([
   'ping',
+  'request.created',
   'request.step_pending',
   'request.decided',
+  'request.applied',
   'budget.at_risk',
   'cost.anomaly',
   'period.closing',
@@ -327,5 +334,6 @@ export const WebhookInput = z.object({
 });
 export type WebhookInput = z.infer<typeof WebhookInput>;
 
+export * from './requests.js';
 export * from './sources.js';
 export * from './spend.js';
