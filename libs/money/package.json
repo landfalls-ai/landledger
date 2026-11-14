@@ -1,0 +1,25 @@
+{
+  "name": "@landledger/money",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Exact money for Landledger: Money (integer minor units + ISO 4217 code), Decimal and Rate (exact decimals, no floats), rounding modes, largest-remainder allocation, dated FX and formatting.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "fast-check": "4.10.2",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
