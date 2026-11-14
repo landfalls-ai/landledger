@@ -415,7 +415,14 @@ function Path({ r, why }: { r: RequestView; why: string }) {
             <Tiers on={r.automatic ? 0 : tierOf(r.thresholdAmount)} />
           </div>
         )}
-        <p className="text-[12.5px] text-t3">{r.policy?.reason || why}</p>
+        <p className="text-[12.5px] text-t3">
+          {r.status === 'awaiting_confirmation' && (
+            <b className="font-medium text-t2" data-testid="path-if-confirmed">
+              If confirmed now, policy is re-run:{' '}
+            </b>
+          )}
+          {r.policy?.reason || why}
+        </p>
         {r.automatic ? (
           <div className="mt-3">
             <Msg tone="ok">Approved by policy: below the automatic threshold, so no person needed to decide.</Msg>

@@ -198,6 +198,7 @@ describe('review of wave 2 on the request page', () => {
     expect(screen.getByTestId('origin-unverified')).toBeInTheDocument();
     expect(screen.getByTestId('created-by')).toHaveTextContent('API key landflow');
     expect(screen.queryByTestId('approve')).toBeNull();
+    expect(screen.getByTestId('path-if-confirmed')).toHaveTextContent('If confirmed now');
     // Decline needs a reason first.
     await userEvent.click(screen.getByTestId('decline'));
     expect(screen.getByTestId('decline')).toBeDisabled();

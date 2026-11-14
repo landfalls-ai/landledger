@@ -25,7 +25,9 @@ open-ended) or **once**, a cost center, a title, a note, and evidence (any JSON;
   `awaiting_confirmation` until that person **confirms** it from their own session (`POST /api/requests/:id/confirm`;
   the Request page and Needs you show a Confirm / Decline card), and only then enters the policy. **Decline** (with a
   reason) cancels it. Webhook `request.needs_confirmation` names the person. Unconfirmed, it expires after the step
-  deadline. A request a person raises in their own session skips this.
+  deadline. A request a person raises in their own session skips this. While it waits, the page's path is a preview
+  ("If confirmed now, policy is re-run"): the policy runs again at confirmation, against that day's budget and what
+  policy approved this month.
 - **Status only moves forward:** `draft → awaiting_confirmation → pending → approved | rejected | cancelled | expired`,
   `draft → pending`, `approved → applied`. The database refuses anything else (`requests_forward_only`), and won't
   move `awaiting_confirmation → pending` without the person's confirmation recorded.
