@@ -43,6 +43,11 @@ disabled; Landledger checks the issuer, audience, `iat` (at most 10 minutes old)
 and audits `auth.backchannel_logout`. It answers `200`, or `400 { error: "invalid_request" }`, with
 `Cache-Control: no-store`.
 
+**Retries.** If Landledger's `200` is lost, Landbright posts the same token again (up to 10 times). The token is
+verified first; a verified token whose `jti` was already processed answers `200` again, ends nothing (a session the
+person opened since stays) and is audited as `auth.backchannel_logout_replay`, never as a second logout. A reused `jti`
+on a token that fails verification, or on a token for another subject, is still `400`.
+
 Register with Landbright as the client's `backchannel_logout_uri`: `http://localhost:4811/api/auth/backchannel-logout`
 (through the console's proxy, as the redirect URI is), or `http://127.0.0.1:4810/api/auth/backchannel-logout` straight
 to the API. Code: `Sessions.backchannelLogout` in `apps/api/src/auth.ts`, `OidcClient.verifyLogoutToken`.

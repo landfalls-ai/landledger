@@ -219,14 +219,37 @@ export class Sessions {
 
   /**
    * Back-channel logout (OpenID Connect Back-Channel Logout 1.0): Landbright posts a signed logout token when a person
-   * signs out there or is disabled; every session of that person here ends. Each token (`jti`) is taken once.
+   * signs out there or is disabled; every session of that person here ends. Each token (`jti`) logs out once: the
+   * token is verified first, so a reused `jti` on a token that fails verification is refused; a verified token whose
+   * `jti` was already processed (Landbright retries when our 200 is lost) answers 200 again, ends nothing and is
+   * audited as `auth.backchannel_logout_replay`, never as a second logout.
    */
-  async backchannelLogout(token: string): Promise<{ sessions: number }> {
+  async backchannelLogout(token: string): Promise<{ sessions: number; replay: boolean }> {
     const { sub, jti, sid } = await this.client().verifyLogoutToken(token);
     return this.sql.begin(async (tx) => {
       const fresh =
         await tx`INSERT INTO logout_tokens (jti, sub) VALUES (${jti}, ${sub}) ON CONFLICT DO NOTHING RETURNING 1`;
-      if (!fresh.length) throw new ApiError('bad_request', 'This logout token was already used (jti)');
+      if (!fresh.length) {
+        const [seen] = await tx<{ sub: string | null; seen_at: Date }[]>`
+          SELECT sub, seen_at FROM logout_tokens WHERE jti = ${jti}`;
+        if (seen?.sub !== sub)
+          throw new ApiError('bad_request', 'This logout token id (jti) was used for another subject');
+        const [u] = await tx<
+          { id: string; email: string | null }[]
+        >`SELECT id, email FROM users WHERE subject = ${sub}`;
+        await this.audit.append(
+          {
+            actor: 'landbright',
+            actorKind: 'system',
+            action: 'auth.backchannel_logout_replay',
+            subjectType: 'user',
+            subjectId: u?.id ?? sub,
+            data: { sub, sid, jti, firstSeenAt: seen.seen_at.toISOString(), person: u?.email ?? null },
+          },
+          tx,
+        );
+        return { sessions: 0, replay: true };
+      }
       const ended = await tx<{ user_id: string }[]>`
         UPDATE sessions SET revoked_at = now()
         WHERE revoked_at IS NULL AND user_id IN (SELECT id FROM users WHERE subject = ${sub})
@@ -243,7 +266,7 @@ export class Sessions {
         },
         tx,
       );
-      return { sessions: ended.length };
+      return { sessions: ended.length, replay: false };
     });
   }
 
@@ -313,7 +336,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: { sql: Sql; confi
   });
 
   // OpenID Connect Back-Channel Logout 1.0: Landbright posts `logout_token` (form-encoded); 200 when the person's
-  // sessions here are ended, 400 with `invalid_request` when the token doesn't verify. Register this path with Landbright.
+  // sessions here are ended, or when a verified token's jti was already processed (a retry: nothing more ends);
+  // 400 with `invalid_request` when the token doesn't verify. Register this path with Landbright.
   if (!app.hasContentTypeParser('application/x-www-form-urlencoded'))
     app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) =>
       done(null, Object.fromEntries(new URLSearchParams(body as string))),

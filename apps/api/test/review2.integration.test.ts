@@ -1097,9 +1097,28 @@ describe.skipIf(!integrationEnabled('db'))('review of wave 2', () => {
     expect(
       (await app.inject({ method: 'GET', url: '/api/auth/me', cookies: { ll_session: session } })).statusCode,
     ).toBe(401);
-    expect((await post(token)).statusCode).toBe(400);
-    const [entry] = await sql`SELECT data FROM audit_log WHERE action = 'auth.backchannel_logout'`;
-    expect(entry!.data).toMatchObject({ sub: 'sub-tal' });
+    // A retry of the same verified token (Landbright's 200 was lost) answers 200 again and ends nothing new: Tal's
+    // fresh session survives, and the retry is audited as a replay, not a second logout.
+    const again = await signIn('tal');
+    const replay = await post(token);
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.headers['cache-control']).toBe('no-store');
+    expect((await app.inject({ method: 'GET', url: '/api/auth/me', cookies: { ll_session: again } })).statusCode).toBe(
+      200,
+    );
+    // A reused jti on a token that fails verification is still refused.
+    expect((await post(await fake.logoutToken('sub-tal', { jti: 'jti-1', nonce: 'n' }))).statusCode).toBe(400);
+    expect((await post(await fake.logoutToken('sub-tal', { jti: 'jti-1', audience: 'someone-else' }))).statusCode).toBe(
+      400,
+    );
+    // The same jti for another person is refused.
+    expect((await post(await fake.logoutToken('sub-shira', { jti: 'jti-1' }))).statusCode).toBe(400);
+    const logouts = await sql`SELECT data FROM audit_log WHERE action = 'auth.backchannel_logout'`;
+    expect(logouts).toHaveLength(1);
+    expect(logouts[0]!.data).toMatchObject({ sub: 'sub-tal' });
+    const replays = await sql`SELECT data FROM audit_log WHERE action = 'auth.backchannel_logout_replay'`;
+    expect(replays).toHaveLength(1);
+    expect(replays[0]!.data).toMatchObject({ sub: 'sub-tal', jti: 'jti-1' });
     cookie.tal = await signIn('tal');
     await owner`UPDATE users SET last_seen_at = ${START} WHERE id = ${userId.tal}`;
   });
