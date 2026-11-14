@@ -4,6 +4,8 @@
  * again by its service (a key never imports, attests or acknowledges).
  */
 import {
+  AcknowledgeInput,
+  AnomaliesQuery,
   type ApiScope,
   ForecastQuery,
   InvoiceImportInput,
@@ -59,5 +61,20 @@ export function registerWave3(
   app.get('/api/forecast', async (r) => {
     need(r, 'read');
     return yearAhead(sql, services.spend, services.spend.today(), parse(ForecastQuery, r.query).months);
+  });
+
+  // 007 Anomalies ------------------------------------------------------------------------------------------------------
+  app.get('/api/anomalies', async (r) => {
+    need(r, 'read');
+    return { anomalies: await services.anomalies.list(parse(AnomaliesQuery, r.query)) };
+  });
+  app.get('/api/anomalies/:id', async (r) => (need(r, 'read'), services.anomalies.view(parse(Id, r.params).id)));
+  app.post('/api/anomalies/:id/acknowledge', async (r) => {
+    need(r, 'requests:write');
+    return services.anomalies.acknowledge(parse(Id, r.params).id, parse(AcknowledgeInput, r.body).note, r.principal);
+  });
+  app.post('/api/anomalies/scan', async (r) => {
+    need(r, 'admin');
+    return services.anomalies.scan();
   });
 }

@@ -1,4 +1,5 @@
 import {
+  Activity,
   Bot,
   CalendarCheck,
   ChartColumn,
@@ -35,6 +36,7 @@ export const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
     label: 'Control',
     items: [
       { href: '/approvals', label: 'Approvals', icon: CircleCheck, bar: true },
+      { href: '/anomalies', label: 'Anomalies', icon: Activity },
       { href: '/contracts', label: 'Contracts', icon: FileText },
     ],
   },

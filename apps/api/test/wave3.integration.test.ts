@@ -8,6 +8,7 @@ import { createTestDatabase, integrationEnabled, type TestDatabase } from '@land
 import { Money } from '@landledger/money';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DEV_SPIKE_SERVICE, devReverse, devSpike } from '../src/anomalies.js';
 import { buildApp } from '../src/app.js';
 import { createSql, type Sql } from '../src/db.js';
 import type { Principal } from '../src/principal.js';
@@ -401,6 +402,154 @@ describe.skipIf(!integrationEnabled('db'))('wave 3: plan and reconcile', () => {
         expect(Number(ov.forecast.p10)).toBeGreaterThanOrEqual(Number(ov.monthToDate.total));
       }
       expect((await as('avi', 'GET', '/api/forecast?months=0')).statusCode).toBe(400);
+    });
+  });
+  // 007 Anomalies ------------------------------------------------------------------------------------------------------
+
+  describe('anomalies (spec 007)', () => {
+    const outbox = async (type: string) =>
+      (
+        await sql<{ data: Record<string, unknown> }[]>`
+          SELECT payload->'data' AS data FROM outbox WHERE event_type = ${type} ORDER BY created_at, id`
+      ).map((r) => r.data);
+    let agentAnomaly = '';
+
+    it('flags today’s agent and model cost against a quiet fortnight, once, with a webhook and an audit entry', async () => {
+      await services.webhooks.create(
+        {
+          url: 'https://receiver.test/hook',
+          events: ['cost.anomaly', 'approval.anomaly'],
+          description: 'test',
+        } as never,
+        principal('dana'),
+      );
+      // Observed days: Landflow read with no calls on 2–9 November (10–12 November had $4.50 a day).
+      sources.state.events = [];
+      for (let d = 2; d <= 9; d++) await services.ingest.run('landflow', `2026-11-0${d}`, 'manual', 'test');
+      // Today so far: one $45 call (10M input at $3, 1M output at $15).
+      sources.state.events = [call('2026-11-16T09:00:00.000Z', 10_000_000, 1_000_000)];
+      await services.ingest.run('landflow', '2026-11-16', 'manual', 'test');
+      sources.state.events = [];
+      const r = await services.anomalies.scanCost('2026-11-16');
+      expect(r.observedDays).toBeGreaterThanOrEqual(7);
+      expect(r.found).toBeGreaterThanOrEqual(2);
+      const list = (await as('avi', 'GET', '/api/anomalies?kind=cost')).json().anomalies;
+      const agent = list.find((a: { dimension: string; key: string }) => a.dimension === 'agent' && a.key === 'ag_1');
+      expect(agent).toMatchObject({
+        rule: 'cost_jump',
+        observed: '45.000000',
+        baseline: '0.000000',
+        acknowledged: null,
+      });
+      expect(agent.summary).toMatch(/Triage lead cost \$45\.00 so far today/);
+      agentAnomaly = agent.id;
+      expect(
+        list.find((a: { dimension: string; key: string }) => a.dimension === 'model' && a.key === 'claude-sonnet-4-5'),
+      ).toBeTruthy();
+      // Stored once: the next hour's scan finds nothing new.
+      expect((await services.anomalies.scanCost('2026-11-16')).found).toBe(0);
+      const sent = await outbox('cost.anomaly');
+      expect(sent.length).toBe(r.found);
+      expect(sent.map((d) => (d.anomaly as { id: string }).id)).toContain(agentAnomaly);
+      expect(String(sent[0]!.url)).toMatch(/\/anomalies\?id=anm_/);
+      const [{ n }] =
+        (await sql`SELECT count(*)::int AS n FROM audit_log WHERE action = 'anomaly.cost'`) as unknown as [
+          { n: number },
+        ];
+      expect(n).toBe(r.found);
+    });
+
+    it('is acknowledged by a person with a note, audited; auditors and keys cannot; then it leaves the open list', async () => {
+      const url = `/api/anomalies/${agentAnomaly}/acknowledge`;
+      expect((await as('avi', 'POST', url, { note: 'Seen it' })).statusCode).toBe(403);
+      const key = await app.inject({
+        method: 'POST',
+        url,
+        headers: { authorization: `Bearer ${readKey}` },
+        payload: { note: 'Seen it' },
+      });
+      expect(key.statusCode).toBe(403);
+      const ok = await as('shira', 'POST', url, { note: 'The triage agent’s backfill; expected once' });
+      expect(ok.statusCode, ok.body).toBe(200);
+      expect(ok.json().acknowledged).toMatchObject({ by: people.shira.email, note: expect.stringMatching(/backfill/) });
+      expect((await as('shira', 'POST', url, { note: 'Again' })).statusCode).toBe(409);
+      const open = (await as('avi', 'GET', '/api/anomalies')).json().anomalies;
+      expect(open.map((a: { id: string }) => a.id)).not.toContain(agentAnomaly);
+      const all = (await as('avi', 'GET', '/api/anomalies?status=all')).json().anomalies;
+      expect(all.map((a: { id: string }) => a.id)).toContain(agentAnomaly);
+      const [audit] = await sql`SELECT actor, data FROM audit_log WHERE action = 'anomaly.acknowledged'`;
+      expect(audit).toMatchObject({ actor: people.shira.email });
+    });
+
+    it('finds a spend split under the automatic threshold and automatic approvals raised again and again', async () => {
+      await services.budgets.import(
+        {
+          csv: 'cost_center,month,amount,currency\nENG-AGENTS,2026-11,5000.00,USD\nENG-AGENTS,2026-12,5000.00,USD\n',
+          note: 'test: room for automatic approvals',
+        },
+        principal('dana'),
+      );
+      // Three under the threshold go through by policy; the fourth reaches it (the month's automatic total counts), so a
+      // person decides it. Together they are a split; the three automatic ones a ratchet.
+      const ids: string[] = [];
+      for (const [title, amt, automatic] of [
+        ['Runner node A', '150.00', true],
+        ['Runner node B', '150.00', true],
+        ['Runner node C', '150.00', true],
+        ['Runner node D', '120.00', false],
+      ] as const) {
+        const res = await as('tal', 'POST', '/api/requests', {
+          kind: 'infra_change',
+          title,
+          costCenter: 'ENG-AGENTS',
+          amount: { amount: amt, currency: 'USD' },
+          recurrence: 'monthly',
+          start: '2026-11-16',
+        });
+        expect(res.statusCode, res.body).toBe(201);
+        expect(res.json().request.automatic, res.json().request.policy?.reason).toBe(automatic);
+        ids.push(res.json().request.id);
+      }
+      const scan = await as('dana', 'POST', '/api/anomalies/scan');
+      expect(scan.statusCode, scan.body).toBe(200);
+      expect(scan.json().approval).toBeGreaterThanOrEqual(2);
+      const list = (await as('avi', 'GET', '/api/anomalies?kind=approval')).json().anomalies;
+      const split = list.find((a: { rule: string }) => a.rule === 'split');
+      expect(split).toMatchObject({ dimension: 'requester', costCenter: 'ENG-AGENTS', observed: '570.000000' });
+      expect(split.requests.map((r: { id: string }) => r.id)).toEqual(ids);
+      expect(split.summary).toMatch(/Tal Levi raised 4 infra change requests on ENG-AGENTS within 72 hours/);
+      const ratchet = list.find((a: { rule: string }) => a.rule === 'automatic_ratchet');
+      expect(ratchet.summary).toMatch(/3 requests by Tal Levi on ENG-AGENTS were approved automatically/);
+      expect((await outbox('approval.anomaly')).length).toBeGreaterThanOrEqual(2);
+      // Once: scanning again adds nothing.
+      expect((await as('dana', 'POST', '/api/anomalies/scan')).json().approval).toBe(0);
+    });
+
+    it('takes a dev spike only when LANDLEDGER_DEV_ANOMALY=on, flags it, and reverses it with nothing in the ledger', async () => {
+      const opts = { amount: '25', day: '2026-11-16', startedBy: 'test' };
+      await expect(devSpike(sql, services.audit, { ...opts, enabled: false })).rejects.toThrow(
+        /LANDLEDGER_DEV_ANOMALY/,
+      );
+      await expect(devReverse(sql, services.audit, { enabled: false, startedBy: 'test' })).rejects.toThrow(/off/);
+      const before = await total('2026-11');
+      await devSpike(sql, services.audit, { ...opts, enabled: true });
+      expect((await total('2026-11')).toString()).toBe(before.plus(usd('25')).toString());
+      await services.anomalies.scanCost('2026-11-16');
+      const list = (await as('avi', 'GET', '/api/anomalies?kind=cost')).json().anomalies;
+      const spike = list.find(
+        (a: { dimension: string; key: string }) => a.dimension === 'service' && a.key === DEV_SPIKE_SERVICE,
+      );
+      expect(spike).toMatchObject({ observed: '25.000000' });
+      const [stored] = await sql`SELECT details FROM anomalies WHERE id = ${spike.id}`;
+      expect(stored!.details.sources).toEqual(['dev-anomaly']);
+      expect(await devReverse(sql, services.audit, { enabled: true, startedBy: 'test' })).toEqual({
+        removed: 1,
+        ledger: 0,
+      });
+      expect((await total('2026-11')).toString()).toBe(before.toString());
+      const [{ n }] = (await sql`
+        SELECT count(*)::int AS n FROM cost_records WHERE source = 'dev-anomaly'`) as unknown as [{ n: number }];
+      expect(n).toBe(0);
     });
   });
 });

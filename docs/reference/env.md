@@ -42,4 +42,8 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_TZ` | `UTC` | The IANA time zone business days are counted in (`Asia/Jerusalem` on this machine) |
 | `LANDLEDGER_HOLIDAYS_FILE` | `deploy/holidays.txt` | Dates that never count toward a deadline: one `YYYY-MM-DD` per line, `#` comments; `none` for no file. The file is empty for now |
 | `LANDLEDGER_RECONCILE_TOLERANCE_PCT` | `2` | Reconciliation's tolerance: a provider × model × month is within it when \|invoiced − estimated\| ≤ this percent of the estimate |
+| `LANDLEDGER_ANOMALY_MIN_USD` | `1` | The smallest daily jump above the median that is a cost anomaly, USD ([anomalies.md](../anomalies.md)) |
+| `LANDLEDGER_DEV_ANOMALY` | unset | `on` allows `anomaly spike` and `anomaly reverse` (the dev-only test spike); refused unless the API listens on loopback |
+| `LANDLEDGER_CLICKLAND_API_URL` | `LANDLEDGER_CLICKLAND_URL`, else `http://localhost:4710` | Clickland's API for wave 3: the alert rule and Agent Value |
+| `LANDLEDGER_CLICKLAND_ALERTS_KEY` | unset | A Clickland key with `alerts:write`, for `anomaly clickland-alert` (in the untracked `apps/api/.env.local`) |
 | `LANDLEDGER_INTEGRATION` | unset | Tests: a comma list of real services to test against (`db`, or `all`) |

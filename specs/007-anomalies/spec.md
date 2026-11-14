@@ -1,6 +1,6 @@
 # Feature 007: Anomalies (wave 3, "Plan and reconcile")
 
-**Status**: specified 2026-11-15 · **Plan**: [plan.md](plan.md) · **Tasks**: [tasks.md](tasks.md)
+**Status**: built 2026-11-15 · **Plan**: [plan.md](plan.md) · **Tasks**: [tasks.md](tasks.md)
 
 ## Why
 
@@ -34,8 +34,10 @@ seconds after the card arrived, one approver waving through one requester.
   requester's steps in 90 days, at least 80% of that requester's). Webhook `approval.anomaly`.
 - **Acknowledge** (a person with `requests:write`; auditors read only): a note, audited; open anomalies are those
   not acknowledged, from the last 14 days.
-- **Dev only**: `pnpm --filter @landledger/api anomaly spike` appends a test spike as source `dev-anomaly` (never a
-  real source), refused unless `LANDLEDGER_DEV_ANOMALY=on`; `anomaly reverse` reverses every live `dev-anomaly` record.
+- **Dev only**: `pnpm --filter @landledger/api anomaly spike` writes a test spike as one provisional row today from
+  the source `dev-anomaly` (never a real source, never booked into the ledger), refused unless
+  `LANDLEDGER_DEV_ANOMALY=on`; `anomaly reverse` takes every `dev-anomaly` row out again. (Built as a provisional
+  row, not a ledger record and its reversal, so that a test leaves nothing in the append-only ledger.)
 - **Console**: Overview's Needs you lists open anomalies; an Anomalies section (its own screen) lists both kinds.
 
 ## Out of scope

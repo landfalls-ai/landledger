@@ -103,7 +103,7 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
   - **Landledger Trigger**: an app webhook for what Landledger sends today: `request.created`,
     `request.needs_confirmation`, `request.step_pending`, `decision.relayed`, `request.decided`, `request.applied`,
     `budget.at_risk`, `report.exceptions`, `period.closing`, `audit.anchor` (subscribed with a `webhooks:write` key,
-    which sees only its own subscriptions). Planned, not sent yet: `cost.anomaly` (wave 3, with Clickland's alerts).
+    which sees only its own subscriptions). Wave 3 adds `cost.anomaly` and `approval.anomaly` ([anomalies.md](anomalies.md)); a cost anomaly is also an OTel log record that Clickland's alert rule counts.
   - Planned, not built: a knowledge kind (an agent asks "why is ENG-AGENTS over?" and gets the drivers with links).
 - **Approvals.** Landledger owns the request, the policy and the decision. Landflow carries the conversation:
   1. A flow (infra change, AI budget, tool) creates the request and waits on `request.decided`.

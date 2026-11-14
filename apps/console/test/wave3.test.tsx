@@ -170,3 +170,79 @@ describe('The year ahead (spec 006)', () => {
     expect(within(a).getByText('R-9')).toBeInTheDocument();
   });
 });
+
+const anomaly = (over: object) => ({
+  id: 'anm_1',
+  kind: 'cost',
+  rule: 'cost_jump',
+  dimension: 'agent',
+  key: 'ag_1',
+  label: 'Triage lead',
+  windowStart: '2026-11-16T00:00:00.000Z',
+  windowEnd: '2026-11-17T00:00:00.000Z',
+  summary: 'Triage lead cost $45.00 so far today, against a median of $0.00 a day over the 11 observed days before',
+  observed: '45.000000',
+  baseline: '0.000000',
+  mad: '0.000000',
+  score: null,
+  costCenter: null,
+  requests: [],
+  detectedAt: '2026-11-16T10:00:00.000Z',
+  acknowledged: null,
+  dev: false,
+  ...over,
+});
+
+describe('Anomalies (spec 007)', () => {
+  it('lists cost and approval anomalies, marks a dev test, and lets a person acknowledge with a note', async () => {
+    const userEvent = (await import('@testing-library/user-event')).default;
+    const fetchMock = mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/anomalies': [
+        200,
+        {
+          anomalies: [
+            anomaly({}),
+            anomaly({
+              id: 'anm_2',
+              dimension: 'service',
+              key: 'landledger-dev-anomaly',
+              label: 'landledger-dev-anomaly',
+              dev: true,
+            }),
+            anomaly({
+              id: 'anm_3',
+              kind: 'approval',
+              rule: 'split',
+              dimension: 'requester',
+              label: 'Tal Levi on ENG-AGENTS',
+              summary: 'Tal Levi raised 4 infra change requests on ENG-AGENTS within 72 hours',
+              observed: '570.000000',
+              requests: [{ id: 'req_1', number: 'R-7', title: 'Runner node A' }],
+            }),
+          ],
+        },
+      ],
+      '/api/anomalies/anm_1/acknowledge': [
+        200,
+        anomaly({ acknowledged: { by: 'x', at: '2026-11-16T11:00:00.000Z', note: 'ok' } }),
+      ],
+      '/api/requests': [200, { requests: [], counts: { waiting: 0, mine: 0, decided: 0 } }],
+    });
+    renderAt('/anomalies');
+    const cost = await screen.findByTestId('cost-anomalies');
+    expect(within(cost).getAllByText('Cost jump').length).toBe(2);
+    expect(within(screen.getByTestId('anomaly-anm_2')).getByText('dev test')).toBeInTheDocument();
+    const approval = screen.getByTestId('approval-anomalies');
+    expect(within(approval).getByText('Split under the threshold')).toBeInTheDocument();
+    expect(within(approval).getByRole('link', { name: /R-7 Runner node A/ })).toHaveAttribute(
+      'href',
+      '/approvals/req_1',
+    );
+    await userEvent.click(screen.getByTestId('ack-anm_1'));
+    await userEvent.type(screen.getByLabelText('Note'), 'The backfill');
+    await userEvent.click(screen.getByRole('button', { name: 'Acknowledge' }));
+    const [, init] = fetchMock.mock.calls.find(([p]) => p === '/api/anomalies/anm_1/acknowledge')!;
+    expect(JSON.parse(String(init!.body))).toEqual({ note: 'The backfill' });
+  });
+});

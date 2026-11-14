@@ -24,6 +24,7 @@ import { Requests } from './requests.js';
 import { Reservations } from './reservations.js';
 import { SecretBox } from './secrets.js';
 import { Spend } from './spend.js';
+import { Anomalies } from './anomalies.js';
 import { Invoices } from './invoices.js';
 
 /** Everything the routes call. */
@@ -53,6 +54,7 @@ export interface Services {
   links: PersonLinks;
   relayChannels: RelayChannels;
   invoices: Invoices;
+  anomalies: Anomalies;
   landflow: LandflowClient | null;
   log: IngestLog;
   fetchImpl: typeof fetch;
@@ -134,6 +136,16 @@ export function createServices(
     for (const month of months) await allocation.allocatePending(month);
   });
   const exceptions = new Exceptions(sql, audit, webhooks, spend, policies, now, budgets, config.consoleUrl);
+  const anomalies = new Anomalies(
+    sql,
+    audit,
+    webhooks,
+    spend,
+    policies,
+    log,
+    { minUsd: config.anomalyMinUsd ?? '1', consoleUrl: config.consoleUrl },
+    now,
+  );
   return {
     config,
     sql,
@@ -160,6 +172,7 @@ export function createServices(
     links,
     relayChannels,
     invoices,
+    anomalies,
     landflow,
     log,
     fetchImpl,
@@ -191,6 +204,9 @@ export function startBackgroundJobs(services: Services, log: (msg: string, err?:
   loop('reservations', 600_000, async () => (await services.reservations.settle(), 0));
   loop('budget alerts', 900_000, async () => (await services.exceptions.budgetAlerts(), 0));
   loop('weekly exceptions', 3_600_000, () => services.exceptions.weekly());
+  // Wave 3 (spec 007): anomalies every hour, today's cost as it accrues and the approval patterns; first after 2 min.
+  loop('anomalies', 3_600_000, async () => (await services.anomalies.scan(), 0));
+  timers.add(setTimeout(() => void services.anomalies.scan().catch((e) => log('anomalies failed', e)), 120_000));
   const { config } = services;
   if (config.auditAnchorMinutes > 0) {
     // The audit chain's head, out to Clickland and webhooks (anchors.ts); the first a minute after start.

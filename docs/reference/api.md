@@ -130,6 +130,10 @@ The schemas are in `libs/contracts/src/wave3.ts`. Amounts are six-decimal string
 | `POST /api/invoices/:id/void` `{ reason }` | `admin`, a person (controller or CFO) | Reverses every live record of the invoice; a `voided` version; 409 if voided already |
 | `GET /api/reconciliation?month=` | `read` | Per provider × model: estimated, invoiced, variance, variance %, status (`matched`, `outside`, `not_invoiced`, `no_estimate`), the invoices; totals with the share invoiced; the tolerance |
 | `GET /api/requests/:id/lifecycle` | `read` | An approved request's stages (approved, reserved, consumed, invoiced), approved and actual to date, the variance; `null` before approval |
+| `GET /api/anomalies?status=open\|all&kind=cost\|approval&limit=` | `read` | Anomalies, newest first; `open` (default) is the last 14 days' not acknowledged ([anomalies.md](../anomalies.md)) |
+| `GET /api/anomalies/:id` | `read` | One anomaly: the rule, dimension and key, the figures (observed, median, MAD, score), the requests behind a pattern, who acknowledged it, `dev` |
+| `POST /api/anomalies/:id/acknowledge` `{ note }` | `requests:write`, a person (not only an auditor) | Acknowledged once, audited; 409 after; a key gets 403 |
+| `POST /api/anomalies/scan` | `admin` | What the hourly job does now: `{ cost, approval, checked }` |
 | `GET /api/forecast?months=12` (1–24) | `read` | The year ahead ([spend.md](../spend.md#the-year-ahead)): per month the run rate over its days with P10/P50/P90 (`null` without enough data), actual, reserved, committed (approved monthly requests beyond their reserved months), total, budget and state (`none` without a budget); annualised (run rate × 365 with its band, commitments × 12, Σ months, Σ budgets); the commitments. `status: insufficient` keeps _Not enough data yet_ |
 
 ## Webhook events
@@ -150,4 +154,5 @@ Standard Webhooks, from the outbox; subscriptions are managed by an admin (`/api
 | `budget.at_risk` | a cost center crosses into at risk or over in a month (once per month and state) | `BudgetAtRiskData` |
 | `period.closing` | a month starts closing | `{ month }` |
 | `audit.anchor` | every `LANDLEDGER_AUDIT_ANCHOR_MINUTES` | `{ seq, hash, at }`: keep them to prove later that no entry was cut off |
-| `cost.anomaly` | planned (wave 3): never sent yet | |
+| `cost.anomaly` | a cost per cost center, service, agent or model jumps against its 14-day baseline (once per key and day) | `{ anomaly: AnomalyView, url }` ([anomalies.md](../anomalies.md)) |
+| `approval.anomaly` | an approval pattern: a split, automatic approvals again and again, a decision relayed seconds after its card, one approver for one requester | `{ anomaly: AnomalyView, url }` |

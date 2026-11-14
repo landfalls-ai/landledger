@@ -147,6 +147,46 @@ describe('Overview', () => {
     expect(within(screen.getByTestId('stat-budget')).getByText('dev seed')).toBeInTheDocument();
   });
 
+  it('lists open anomalies in Needs you, and the year ahead beside them (spec 006, 007)', async () => {
+    mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/overview': [200, { ...OVERVIEW, forecast: { ...OVERVIEW.forecast, committed: '25.000000' } }],
+      '/api/anomalies': [
+        200,
+        {
+          anomalies: [
+            {
+              id: 'anm_1',
+              kind: 'cost',
+              rule: 'cost_jump',
+              dimension: 'agent',
+              key: 'ag_1',
+              label: 'Triage lead',
+              windowStart: '2026-11-14T00:00:00.000Z',
+              windowEnd: '2026-11-15T00:00:00.000Z',
+              summary: 'x',
+              observed: '45.000000',
+              baseline: '0.000000',
+              mad: '0.000000',
+              score: null,
+              costCenter: null,
+              requests: [],
+              detectedAt: '2026-11-14T10:00:00.000Z',
+              acknowledged: null,
+              dev: false,
+            },
+          ],
+        },
+      ],
+    });
+    renderAt('/overview');
+    const needs = await screen.findByTestId('needs-you');
+    expect(needs).toHaveTextContent('1 open anomaly');
+    expect(within(needs).getByTestId('needs-you-anomaly')).toHaveTextContent('Cost jump: Triage lead');
+    expect(within(needs).getByRole('link', { name: /Cost jump/ })).toHaveAttribute('href', '/anomalies?id=anm_1');
+    expect(screen.getByTestId('stat-forecast')).toHaveTextContent('$25.00 committed beyond reservations');
+  });
+
   it('claims no forecast on a few hours of data: no amount, no range, no state', async () => {
     const early = {
       ...OVERVIEW,

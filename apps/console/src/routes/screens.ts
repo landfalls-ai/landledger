@@ -57,6 +57,16 @@ export const SCREENS: Screen[] = [
     ],
   },
   {
+    path: '/anomalies',
+    wave: 3,
+    purpose: 'Cost that jumps, and approval patterns that work around a control.',
+    shows: [
+      'Cost per cost center, service, agent and model against the 14 days before (median and MAD), every hour',
+      'Splits under the threshold, automatic approvals again and again, decisions seconds after the card, one approver for one requester',
+      'Acknowledged by a person with a note',
+    ],
+  },
+  {
     path: '/approvals',
     wave: 2,
     purpose: 'Spend above the threshold, waiting on a person. Agents request; people decide.',

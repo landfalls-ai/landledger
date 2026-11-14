@@ -1,7 +1,7 @@
 import type { CostCenterLine, Overview } from '@landledger/contracts';
 import { Decimal } from '@landledger/money';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, Database, Gauge, Scale } from 'lucide-react';
+import { Activity, ChevronRight, Database, Gauge, Scale } from 'lucide-react';
 import { Link } from 'react-router';
 import { BudgetBar, BurnChart, SplitBar } from '@/components/spend/charts';
 import { YearAhead } from '@/components/spend/year-ahead';
@@ -14,6 +14,7 @@ import { get, quiet } from '@/lib/api';
 import { toTsv } from '@/lib/copy';
 import { dayLabel, monthLabel, num, usd } from '@/lib/format';
 import { amountWords, perLabel, useRequests } from '@/lib/requests';
+import { RULE_LABEL, useOpenAnomalies } from './anomalies';
 
 const share = (part: string, whole: string) => {
   const w = Decimal.parse(whole);
@@ -24,12 +25,14 @@ const share = (part: string, whole: string) => {
 function NeedsYou() {
   const q = useRequests('waiting');
   const c = useRequests('confirm');
+  const an = useOpenAnomalies().data?.anomalies ?? [];
   const confirm = c.data?.requests ?? [];
   const rows = [...confirm, ...(q.data?.requests ?? [])];
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && an.length === 0) return null;
   const sub = [
     confirm.length ? `${confirm.length} raised in your name, to confirm` : null,
     q.data?.requests.length ? `${q.data.requests.length} waiting on your decision` : null,
+    an.length ? `${an.length} open ${an.length === 1 ? 'anomaly' : 'anomalies'}` : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -49,6 +52,32 @@ function NeedsYou() {
             </Link>
           </li>
         ))}
+        {an.slice(0, 3).map((a) => (
+          <li key={a.id} className="border-t border-hair first:border-t-0" data-testid="needs-you-anomaly">
+            <Link to={`/anomalies?id=${a.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-acdim">
+              <Activity className="size-4 shrink-0 text-warn" />
+              <span className="min-w-0 flex-1 text-[14px]">
+                <b className="font-medium">
+                  {RULE_LABEL[a.rule]}: {a.label}
+                </b>
+                <small className="block text-[12px] text-t3">
+                  {a.kind === 'cost' && a.observed
+                    ? `${usd(a.observed)} against a median of ${usd(a.baseline)}`
+                    : `${a.requests.length} request${a.requests.length === 1 ? '' : 's'}`}
+                  {a.dev ? ' · dev test' : ''}
+                </small>
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-t3" />
+            </Link>
+          </li>
+        ))}
+        {an.length > 3 && (
+          <li className="border-t border-hair px-4 py-2.5 text-[13px]">
+            <Link to="/anomalies" className="underline decoration-hair underline-offset-2">
+              All {an.length} open anomalies
+            </Link>
+          </li>
+        )}
       </ul>
     </Card>
   );

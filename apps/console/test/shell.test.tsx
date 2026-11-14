@@ -17,7 +17,7 @@ describe('the shell', () => {
     );
     expect(groups).toEqual([
       ['Overview', 'Explore', 'Budgets', 'Reconciliation'],
-      ['Approvals', 'Contracts'],
+      ['Approvals', 'Anomalies', 'Contracts'],
       ['Agents'],
       ['Month-end'],
       ['Rates and rules', 'Audit log'],
@@ -44,6 +44,7 @@ describe('the shell', () => {
     ).toEqual([
       'Budgets',
       'Reconciliation',
+      'Anomalies',
       'Contracts',
       'Agents',
       'Month-end',

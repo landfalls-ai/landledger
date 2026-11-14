@@ -215,6 +215,8 @@ export interface AnomalyView {
   requests: { id: string; number: string; title: string }[];
   detectedAt: string;
   acknowledged: { by: string; at: string; note: string } | null;
+  /** A dev-only test spike's (source `dev-anomaly`), never a real cost. */
+  dev: boolean;
 }
 
 export interface CostAnomalyData {
