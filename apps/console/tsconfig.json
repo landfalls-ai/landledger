@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client", "@testing-library/jest-dom"],
+    "noEmit": true,
+    "declaration": false,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@landledger/contracts": ["../../libs/contracts/src/index.ts"],
+      "@landledger/focus": ["../../libs/focus/src/index.ts"],
+      "@landledger/money": ["../../libs/money/src/index.ts"]
+    }
+  },
+  "include": ["src", "test", "vite.config.ts"]
+}
