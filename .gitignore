@@ -6,3 +6,4 @@ upstream/
 .nx/
 coverage/
 .DS_Store
+.logs/

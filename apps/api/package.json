@@ -1,0 +1,40 @@
+{
+  "name": "@landledger/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Landledger API: health, sign-in through Landbright, sessions, API keys, the audit log, the dimensions and rate cards, and webhooks out.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "serve": "tsx watch --import ./src/instrument.ts src/main.ts",
+    "start": "node --import ./dist/instrument.js dist/main.js",
+    "seed": "tsx src/seed.ts",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/cors": "^11.4.3",
+    "@landledger/contracts": "workspace:*",
+    "@landledger/focus": "workspace:*",
+    "@landledger/money": "workspace:*",
+    "@landledger/schema": "workspace:*",
+    "@opentelemetry/api": "^1.10.0",
+    "@opentelemetry/instrumentation-http": "^0.301.2",
+    "@opentelemetry/instrumentation-pino": "^0.71.0",
+    "@opentelemetry/instrumentation-runtime-node": "^0.38.0",
+    "@opentelemetry/resources": "^3.1.1",
+    "@opentelemetry/sdk-node": "^0.301.2",
+    "@opentelemetry/semantic-conventions": "^1.45.0",
+    "fastify": "^5.12.8",
+    "jose": "^6.2.17",
+    "postgres": "^3.4.7",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
