@@ -2,12 +2,13 @@
   "name": "@landledger/focus",
   "version": "0.1.0",
   "private": true,
-  "description": "The FOCUS columns Landledger keeps and its x_ extensions (constants only until specs/001-money-and-records settles them).",
+  "description": "Cost records in FOCUS 1.4 (spec 001): the 45 kept columns and the x_ columns as data, the table mapping, check(record), and ledger-style reverse and correct.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./testing": "./dist/testing.js"
   },
   "files": [
     "dist"
@@ -20,5 +21,8 @@
   "devDependencies": {
     "typescript": "^5.9.3",
     "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "@landledger/money": "workspace:*"
   }
 }
