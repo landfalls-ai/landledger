@@ -101,10 +101,17 @@ At least 80% of technology spend attributed directly to a cost center (shared po
 jumps alerted within an hour; median approval under 4 business hours; calendar-day-10 forecast within ±10%; AI usage
 within ±2% of invoices; technology lines ready on business day 1.
 
-## Open decisions
+## Decisions (14 Nov 2026)
 
-1. The name: Landledger (working name).
-2. Approval thresholds: proposed automatic under USD 500 a month, budget owner to 5,000, Finance to 25,000, CFO above.
-3. The rate card: cloud list prices, a blended internal rate, or a flat rate per team.
-4. Datarails: is there a tenant, and are budgets kept there or here?
-5. The GitHub repo: public in landfalls-ai like the others?
+The user said "start everything, don't wait for me", so the proposed defaults stand until changed:
+
+1. **Name:** Landledger.
+2. **Approval thresholds:** automatic under USD 500 a month; budget owner to USD 5,000; Finance to USD 25,000; CFO
+   above. One-off amounts use the same lines.
+3. **Rate card v1:** a blended internal rate, owned by finance and editable through a request: USD 0.034 per
+   vCPU-hour, 0.0045 per GiB-hour of memory, 0.10 per GB-month of storage, 0.02 per GB of network egress. AI tokens are
+   priced from the providers' list prices, as Landflow's price table carries them.
+4. **Datarails:** no tenant yet. Budgets are kept in Landledger (CSV import). The Datarails connector is built
+   against `fake-datarails` in wave 4.
+5. **Repository:** public in landfalls-ai, like the other land projects, scanned for secrets before every push.
+6. **Currency:** one reporting currency, USD.
