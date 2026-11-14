@@ -10,6 +10,7 @@ import { ExplorePage } from './routes/explore';
 import { OverviewPage } from './routes/overview';
 import { ProfilePage } from './routes/profile';
 import { RulesPage } from './routes/rules';
+import { AgentsPage } from './routes/agents';
 import { AnomaliesPage } from './routes/anomalies';
 import { ReconciliationPage } from './routes/reconciliation';
 import { SCREENS } from './routes/screens';
@@ -21,6 +22,7 @@ const BUILT = new Set([
   '/budgets',
   '/reconciliation',
   '/anomalies',
+  '/agents',
   '/approvals',
   '/audit',
   '/rules',
@@ -36,6 +38,7 @@ export const routes: RouteObject[] = [
       { path: 'budgets', element: <BudgetsPage /> },
       { path: 'reconciliation', element: <ReconciliationPage /> },
       { path: 'anomalies', element: <AnomaliesPage /> },
+      { path: 'agents', element: <AgentsPage /> },
       { path: 'approvals', element: <ApprovalsPage /> },
       { path: 'approvals/:id', element: <RequestPage /> },
       // Webhooks (request.step_pending) link to /requests/:id.

@@ -8,6 +8,7 @@ import { createTestDatabase, integrationEnabled, type TestDatabase } from '@land
 import { Money } from '@landledger/money';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Agents, AgentValueClient } from '../src/agents.js';
 import { DEV_SPIKE_SERVICE, devReverse, devSpike } from '../src/anomalies.js';
 import { buildApp } from '../src/app.js';
 import { createSql, type Sql } from '../src/db.js';
@@ -550,6 +551,160 @@ describe.skipIf(!integrationEnabled('db'))('wave 3: plan and reconcile', () => {
       const [{ n }] = (await sql`
         SELECT count(*)::int AS n FROM cost_records WHERE source = 'dev-anomaly'`) as unknown as [{ n: number }];
       expect(n).toBe(0);
+    });
+  });
+  // 008 Agents ---------------------------------------------------------------------------------------------------------
+
+  describe("agents' unit economics (spec 008)", () => {
+    const report = {
+      from: '2026-11-01T00:00:00.000Z',
+      to: '2026-11-16T10:00:00.000Z',
+      currency: 'USD',
+      hourlyRate: 60,
+      agents: [
+        {
+          key: 'landflow-host/Triage lead',
+          name: 'Triage lead',
+          service: 'landflow-host',
+          family: 'landflow',
+          value: 600,
+          cost: 1.5,
+          outcomes: 12,
+          adoption: { runs: 12 },
+          quality: { successRate: 1 },
+        },
+        {
+          key: 'landflow-host/Night digest',
+          name: 'Night digest',
+          service: 'landflow-host',
+          family: 'landflow',
+          value: 0,
+          cost: 0,
+          outcomes: 0,
+          adoption: { runs: 14 },
+          quality: { successRate: 1 },
+        },
+        {
+          key: 'demo-landflow-host/Support triage',
+          name: 'Support triage',
+          service: 'demo-landflow-host',
+          value: 25,
+          outcomes: 5,
+          adoption: { runs: 5 },
+          quality: { successRate: 1 },
+        },
+      ],
+    };
+    const asked: string[] = [];
+    const clickland: typeof fetch = async (input) => {
+      asked.push(String(input));
+      return new Response(JSON.stringify(report), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const withValue = () =>
+      new Agents(
+        services.spend,
+        new AgentValueClient('http://clickland.test', 'ck_test', clickland),
+        'landflow-host',
+        () => now,
+      );
+
+    it('shows each agent’s month: ledger cost, Clickland’s outcomes, cost per outcome, capacity, owner and a suggestion', async () => {
+      const v = await withValue().view('2026-11');
+      expect(asked[0]).toMatch(
+        /^http:\/\/clickland\.test\/api\/agents\/value\?from=2026-11-01T00%3A00%3A00\.000Z&to=2026-11-16T10/,
+      );
+      expect(v.clickland).toMatchObject({ status: 'ok', hourlyRate: '60.00' });
+      const lead = v.agents.find((a) => a.id === 'ag_1')!;
+      expect(lead).toMatchObject({
+        name: 'Triage lead',
+        value: { runs: 12, outcomes: 12, value: '600.000000', hoursSaved: '10.00' },
+      });
+      const cost = usd(lead.cost.total);
+      expect(cost.isZero()).toBe(false);
+      expect(lead.cost.models).toBe(lead.cost.total);
+      expect(lead.cost.compute).toBeNull(); // not attributable, said rather than zero
+      expect(lead.costPerOutcome).toBe(
+        Money.fromDecimal(cost.toDecimal().divide('12', 6, 'halfEven'), 'USD')
+          .toDecimal()
+          .toFixed(6, 'halfEven'),
+      );
+      expect(lead.valuePerOutcome).toBe('50.000000');
+      expect(lead.suggestion).toBe('scale');
+      expect(lead.why).toMatch(/rule: 10 or more outcomes, value ≥ 5 × cost/);
+      expect(lead.costCenter).not.toBeNull();
+      // Only Clickland knows the night digest: no cost here, 14 runs and no outcome.
+      const digest = v.agents.find((a) => a.name === 'Night digest')!;
+      expect(digest).toMatchObject({
+        id: 'landflow-host/Night digest',
+        suggestion: 'retire',
+        cost: { total: '0.000000' },
+      });
+      expect(digest.why).toMatch(/Landledger has no cost for it in 2026-11/);
+      // Demo services aren't Landflow's.
+      expect(v.agents.find((a) => a.name === 'Support triage')).toBeUndefined();
+      expect(v.totals.outcomes).toBe(12);
+      expect(v.computeNote).toMatch(/not attributed/);
+    });
+
+    it('says so without a key or when Clickland is down, and still shows the cost', async () => {
+      const res = await as('avi', 'GET', '/api/agents?month=2026-11');
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json().clickland.status).toBe('unconfigured');
+      expect(res.json().agents.find((a: { id: string }) => a.id === 'ag_1').value).toBeNull();
+      const down = new Agents(
+        services.spend,
+        new AgentValueClient('http://clickland.test', 'ck_test', async () => new Response('no', { status: 502 })),
+        'landflow-host',
+        () => now,
+      );
+      const v = await down.view('2026-11');
+      expect(v.clickland).toMatchObject({ status: 'unavailable', note: expect.stringMatching(/answered 502/) });
+      expect(v.agents.find((a) => a.id === 'ag_1')!.suggestion).toBe('keep');
+    });
+
+    it('shows an AI budget request’s agent cost per outcome, and what the raise buys at that rate', async () => {
+      const agents = withValue();
+      services.requests.agentEconomics = (id, month, monthly) => agents.economics(id, month, monthly);
+      try {
+        const writeKey = (
+          await services.keys.create(
+            { name: 'landflow requests', scopes: ['read', 'requests:write'] },
+            principal('dana'),
+          )
+        ).key;
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/requests',
+          headers: { authorization: `Bearer ${writeKey}` },
+          payload: {
+            kind: 'ai_budget',
+            title: 'More tokens for the triage lead',
+            costCenter: 'ENG-AGENTS',
+            amount: { amount: '120.00', currency: 'USD' },
+            recurrence: 'monthly',
+            start: '2026-11-16',
+            origin: { type: 'landflow_run', workflowId: 'wf_triage', executionId: 'ex_8' },
+            requester: {
+              kind: 'agent',
+              agent: { id: 'ag_1', name: 'Triage lead' },
+              sponsor: { email: people.tal.email },
+            },
+          },
+        });
+        expect(res.statusCode, res.body).toBe(201);
+        const shown = (await as('shira', 'GET', `/api/requests/${res.json().request.id}`)).json();
+        const e = shown.evidence.agentEconomics;
+        expect(e).toMatchObject({
+          agentId: 'ag_1',
+          name: 'Triage lead',
+          month: '2026-11',
+          outcomes: 12,
+          suggestion: 'scale',
+        });
+        expect(e.buys).toBe(Money.parse('120', 'USD').toDecimal().divide(e.costPerOutcome, 1, 'halfEven').toString());
+      } finally {
+        services.requests.agentEconomics = (id, month, monthly) => services.agents.economics(id, month, monthly);
+      }
     });
   });
 });

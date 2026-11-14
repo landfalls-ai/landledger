@@ -1,6 +1,6 @@
 # Feature 008: Agents' unit economics (wave 3, "Plan and reconcile")
 
-**Status**: specified 2026-11-15 · **Plan**: [plan.md](plan.md) · **Tasks**: [tasks.md](tasks.md) · Screen: `#agents`
+**Status**: built 2026-11-15 · **Plan**: [plan.md](plan.md) · **Tasks**: [tasks.md](tasks.md) · Screen: `#agents`
 in `ui/prototype.html`
 
 ## Why
@@ -28,7 +28,7 @@ AI budget raise needs to see what the raise buys.
   ÷ its hourly rate, in hours, and × the rate as capacity, labelled *capacity, not cash*.
 - **Owner and cost center**: the cost center most of its cost is allocated to, and that cost center's owner.
 - **Suggestion**, first rule that holds: *retire* (10 or more runs, no outcome), *review* (cost per outcome above the
-  value per outcome, or a success rate under 80%), *scale* (10 or more outcomes, value at least 5 × cost, success at
+  value per outcome, or a success rate under 80% over 5 or more runs), *scale* (10 or more outcomes, value at least 5 × cost, success at
   least 90%), *keep* (otherwise, including too few runs to say). The rule is shown beside it. An owner decides.
 - **AI budget evidence**: `agentEconomics` with the agent's month (cost, outcomes, cost per outcome, value per
   outcome, suggestion) and what the request's monthly amount buys at that cost per outcome.

@@ -246,3 +246,87 @@ describe('Anomalies (spec 007)', () => {
     expect(JSON.parse(String(init!.body))).toEqual({ note: 'The backfill' });
   });
 });
+
+const agentRow = (over: object) => ({
+  id: 'ag_1',
+  name: 'Triage lead',
+  cost: { total: '67.500000', models: '67.500000', compute: null, invoiced: '22.500000' },
+  costCenter: { code: 'ENG-AGENTS', name: 'AI Agents' },
+  owner: 'Shira Navon',
+  value: {
+    runs: 12,
+    outcomes: 12,
+    successRate: '1.00',
+    value: '600.000000',
+    hoursSaved: '10.00',
+    clicklandKey: 'landflow-host/Triage lead',
+  },
+  costPerOutcome: '5.625000',
+  valuePerOutcome: '50.000000',
+  suggestion: 'scale',
+  why: 'Scale: 12 outcomes, worth $600.00 for $67.50, 100% succeeded (rule: 10 or more outcomes, value ≥ 5 × cost, 90% or more succeed)',
+  ...over,
+});
+
+describe('Agents (spec 008)', () => {
+  it('shows each agent’s cost, outcomes, cost per outcome, capacity and the suggestion with its rule', async () => {
+    mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/requests': [200, { requests: [], counts: { waiting: 0, mine: 0, decided: 0 } }],
+      '/api/agents': [
+        200,
+        {
+          month: '2026-11',
+          from: '2026-11-01',
+          to: '2026-11-16',
+          currency: 'USD',
+          agents: [
+            agentRow({}),
+            agentRow({
+              id: 'landflow-host/Night digest',
+              name: 'Night digest',
+              cost: { total: '0.000000', models: '0.000000', compute: null, invoiced: '0.000000' },
+              costCenter: null,
+              owner: null,
+              value: {
+                runs: 14,
+                outcomes: 0,
+                successRate: '1.00',
+                value: '0.000000',
+                hoursSaved: '0.00',
+                clicklandKey: 'x',
+              },
+              costPerOutcome: null,
+              valuePerOutcome: null,
+              suggestion: 'retire',
+              why: 'Retire: 14 runs this month and no outcome (rule: 10 or more runs, none). Landledger has no cost for it in 2026-11',
+            }),
+          ],
+          totals: {
+            cost: '67.500000',
+            invoiced: '22.500000',
+            outcomes: 12,
+            hoursSaved: '10.00',
+            capacity: '600.000000',
+          },
+          clickland: {
+            status: 'ok',
+            hourlyRate: '60.00',
+            note: 'Runs, outcomes and value from Clickland’s Agent Value',
+          },
+          computeNote: 'Compute is not attributed to agents yet',
+        },
+      ],
+    });
+    renderAt('/agents?month=2026-11');
+    const lead = await screen.findByTestId('agent-ag_1');
+    expect(lead).toHaveTextContent('$5.63'); // cost per outcome
+    expect(lead).toHaveTextContent('10.00 h');
+    expect(lead).toHaveTextContent('owner Shira Navon');
+    expect(within(lead).getByTestId('suggestion-ag_1')).toHaveTextContent('Scale');
+    expect(within(lead).getByTestId('why-ag_1')).toHaveTextContent(/rule: 10 or more outcomes/);
+    expect(screen.getByTestId('suggestion-landflow-host/Night digest')).toHaveTextContent('Retire');
+    expect(screen.getByText('capacity, not cash')).toBeInTheDocument();
+    expect(screen.getByTestId('clickland-note')).toHaveTextContent('Compute is not attributed');
+  });
+});

@@ -14,6 +14,7 @@
 | [spend.md](spend.md) | Overview, Explore, Budgets: the figures, the forecast, exports, the MCP tools, cost metrics in Clickland |
 | [invoices.md](invoices.md) | Invoices and reconciliation: the CSV, posting beside the estimates they replace, never counting twice, corrections and voids, a locked month's true-up, reconciliation per provider and model, a request from approval to invoice |
 | [anomalies.md](anomalies.md) | Cost anomalies against a median and MAD baseline, approval patterns (split, automatic again and again, fast relay, one approver for one requester), webhooks, Clickland's alert rule, acknowledging, the dev-only spike |
+| [agents.md](agents.md) | Agents' unit economics: cost from the ledger, outcomes and value from Clickland's Agent Value, cost per outcome, capacity freed, the keep, scale, review or retire rule, and what an AI budget raise buys |
 | [integrations.md](integrations.md) | What Clickland, Landflow and Landbright need from Landledger's wave 3, and how each is called |
 | [reference/api.md](reference/api.md), [reference/env.md](reference/env.md) | Every route and every environment variable |
 | [ui.md](ui.md) | The console's screens and the rules they follow; `../ui/prototype.html` is the clickable version |

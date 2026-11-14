@@ -28,6 +28,7 @@ import type {
   SlackRelayInput,
 } from '@landledger/contracts';
 import {
+  type AgentEconomics,
   type CreatedBy,
   type DecisionView,
   type EvidencePack,
@@ -258,6 +259,9 @@ export type AfterApplied = (
 export class Requests {
   /** Set by services: re-price or rebuild after a rate card or rule set is applied. */
   afterApplied: AfterApplied = async () => {};
+
+  /** Spec 008: an agent's month (cost per outcome, what a raise buys), for an AI budget request's evidence. */
+  agentEconomics: ((agentId: string, month: string, monthly: Money) => Promise<AgentEconomics | null>) | null = null;
 
   constructor(
     private readonly sql: Sql,
@@ -1868,6 +1872,13 @@ export class Requests {
         ? `${noBudgetWords(r.cost_center, { month, budget: budget ? amount(budget) : null, firstFullMonth } as LedgerEvidence)}: a month with no budget is never on track, so this request is not automatic and Finance decides it (docs/plan.md, decision 8)`
         : null,
       committed: cc?.committed ?? amount(Money.zero(U)),
+      ...(r.kind === 'ai_budget' && r.agent_id && this.agentEconomics
+        ? {
+            agentEconomics: await this.agentEconomics(r.agent_id, month, Money.ofMicros(r.amount_micros, U)).catch(
+              () => null,
+            ),
+          }
+        : {}),
     };
   }
 

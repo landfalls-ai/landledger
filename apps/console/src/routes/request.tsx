@@ -14,7 +14,7 @@ import { cn } from '@/lib/cn';
 import { monthLabel, usd } from '@/lib/format';
 import { age, amountWords, askedBy, kindLabel, perLabel, stepTone, tierOf, when } from '@/lib/requests';
 import { Tiers } from './approvals';
-import { Lifecycle } from '@/components/requests/wave3';
+import { AgentEconomicsCard, Lifecycle } from '@/components/requests/wave3';
 
 const H3 = ({ children }: { children: ReactNode }) => (
   <h3 className="mb-1.5 mt-4 text-[11px] font-medium uppercase tracking-[0.08em] text-t3 first:mt-0">{children}</h3>
@@ -913,6 +913,7 @@ export function RequestPage() {
         <div className="flex min-w-0 flex-col gap-3.5">
           <WhatAndWhy r={r} e={d.evidence} />
           <Evidence d={d} />
+          <AgentEconomicsCard d={d} />
           <Lifecycle r={r} />
           <Manage r={r} />
         </div>

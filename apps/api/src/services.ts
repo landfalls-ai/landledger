@@ -24,6 +24,7 @@ import { Requests } from './requests.js';
 import { Reservations } from './reservations.js';
 import { SecretBox } from './secrets.js';
 import { Spend } from './spend.js';
+import { Agents, AgentValueClient } from './agents.js';
 import { Anomalies } from './anomalies.js';
 import { Invoices } from './invoices.js';
 
@@ -55,6 +56,7 @@ export interface Services {
   relayChannels: RelayChannels;
   invoices: Invoices;
   anomalies: Anomalies;
+  agents: Agents;
   landflow: LandflowClient | null;
   log: IngestLog;
   fetchImpl: typeof fetch;
@@ -136,6 +138,16 @@ export function createServices(
     for (const month of months) await allocation.allocatePending(month);
   });
   const exceptions = new Exceptions(sql, audit, webhooks, spend, policies, now, budgets, config.consoleUrl);
+  const agents = new Agents(
+    spend,
+    config.clicklandApi?.valueKey
+      ? new AgentValueClient(config.clicklandApi.url, config.clicklandApi.valueKey, fetchImpl)
+      : null,
+    config.landflow?.service ?? 'landflow-host',
+    now,
+  );
+  // Spec 008: an AI budget request's evidence shows its agent's cost per outcome.
+  requests.agentEconomics = (agentId, month, monthly) => agents.economics(agentId, month, monthly);
   const anomalies = new Anomalies(
     sql,
     audit,
@@ -173,6 +185,7 @@ export function createServices(
     relayChannels,
     invoices,
     anomalies,
+    agents,
     landflow,
     log,
     fetchImpl,

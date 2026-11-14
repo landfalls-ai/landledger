@@ -28,4 +28,27 @@ what they would have to add to do better. Keys live in the untracked `apps/api/.
 
 ### Agent Value (spec 008)
 
-See the Agents section, added with spec 008.
+- **Calls:** `GET /api/agents/value?from&to` with `LANDLEDGER_CLICKLAND_VALUE_KEY` (`read`, minted from Clickland's
+  `POST /api/keys` with the dev bootstrap key). Landledger takes each agent's runs, outcomes, success rate and value,
+  and Clickland's hourly rate. It takes no cost from Clickland: cost comes from Landledger's ledger.
+- **Matching:** by agent name within Landflow's service (`landflow-host`). Clickland keys agents as `service/name`,
+  and Landledger knows them by Landflow's agent id (`ag_…`) and name.
+- **Clickland would need,** to match without names:
+  1. Landflow's **agent id** on the value report's agent rows (Landflow's spans carry it as an attribute;
+     Clickland could expose it as `agentId`), so a renamed agent stays matched.
+  2. A **`month` window** or the `to` as given: it takes `from` and `to`, which is enough today.
+
+## Landflow
+
+### What Landledger reads
+
+- `ai.call` events (Landflow's usage ledger) for AI cost, with each call's agent (`agentId`, the agent's name) and
+  workflow ([ingest.md](ingest.md)).
+
+### Agents (spec 008)
+
+- **Compute per agent:** Landledger can show an agent's compute only when the workloads it runs carry the agent. Landflow
+  would need to label the pods and containers an agent starts with `landflow.agent.id` (a Kubernetes label, which
+  Clickland's rollup can group by), as it already labels them with the workflow.
+- **Names:** an agent renamed in Landflow is a new name in Clickland's telemetry; the agent id on Landflow's spans
+  (above) would keep it matched.

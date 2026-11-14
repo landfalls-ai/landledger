@@ -155,6 +155,40 @@ describe('a request', () => {
     expect(screen.getByTestId('committed')).toHaveTextContent('$25.00');
   });
 
+  it('shows an AI budget request’s agent cost per outcome and what the raise buys (spec 008)', async () => {
+    mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/requests/req_1': [
+        200,
+        {
+          request: request({}),
+          evidence: {
+            ...evidence,
+            agentEconomics: {
+              agentId: 'ag_1',
+              name: 'Triage lead',
+              month: '2026-11',
+              cost: '67.500000',
+              outcomes: 12,
+              costPerOutcome: '5.625000',
+              valuePerOutcome: '50.000000',
+              suggestion: 'scale',
+              why: 'Scale: 12 outcomes',
+              buys: '21.3',
+              source: 'Clickland’s Agent Value',
+            },
+          },
+          evidenceSha256: SHA,
+        },
+      ],
+    });
+    renderAt('/approvals/req_1');
+    const card = await screen.findByTestId('agent-economics');
+    expect(card).toHaveTextContent('What Triage lead costs per outcome');
+    expect(card).toHaveTextContent('$5.63');
+    expect(screen.getByTestId('agent-buys')).toHaveTextContent('about 21.3 outcomes a month');
+  });
+
   it('tells the requester they can’t decide their own request, and who has it', async () => {
     mockApi({
       '/api/auth/me': [200, ME],

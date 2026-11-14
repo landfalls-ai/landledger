@@ -5,6 +5,7 @@
  */
 import {
   AcknowledgeInput,
+  AgentsQuery,
   AnomaliesQuery,
   type ApiScope,
   ForecastQuery,
@@ -76,5 +77,11 @@ export function registerWave3(
   app.post('/api/anomalies/scan', async (r) => {
     need(r, 'admin');
     return services.anomalies.scan();
+  });
+
+  // 008 Agents ---------------------------------------------------------------------------------------------------------
+  app.get('/api/agents', async (r) => {
+    need(r, 'read');
+    return services.agents.view(parse(AgentsQuery, r.query).month);
   });
 }

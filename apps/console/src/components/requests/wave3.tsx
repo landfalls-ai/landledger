@@ -44,3 +44,38 @@ export function Lifecycle({ r }: { r: RequestView }) {
 }
 
 export type Evidence = RequestDetail['evidence'];
+
+const SUGGESTION_WORD = { scale: 'Scale', keep: 'Keep', review: 'Review', retire: 'Retire' } as const;
+
+/** An AI budget request's agent (spec 008): its month's cost per outcome, and what the raise buys at that rate. */
+export function AgentEconomicsCard({ d }: { d: RequestDetail }) {
+  const e = d.evidence.agentEconomics;
+  if (!e) return null;
+  return (
+    <Card title={`What ${e.name} costs per outcome`} testId="agent-economics">
+      <CardBody>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[14px] sm:grid-cols-4">
+          {[
+            ['Cost this month', usd(e.cost)],
+            ['Outcomes', e.outcomes === null ? '—' : String(e.outcomes)],
+            ['Cost per outcome', e.costPerOutcome ? usd(e.costPerOutcome) : '—'],
+            ['Value per outcome', e.valuePerOutcome ? usd(e.valuePerOutcome) : '—'],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <div className="text-[11.5px] text-t3">{label}</div>
+              <div className="figure font-medium text-t1">{value}</div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 text-[13px] text-t1" data-testid="agent-buys">
+          {e.buys
+            ? `At this month’s rate the raise buys about ${e.buys} outcomes a month.`
+            : 'No outcomes are known for this agent yet, so what the raise buys can’t be said.'}
+        </p>
+        <p className="mt-1 text-[12.5px] text-t3">
+          {SUGGESTION_WORD[e.suggestion]} — {e.why}. {e.source}.
+        </p>
+      </CardBody>
+    </Card>
+  );
+}
