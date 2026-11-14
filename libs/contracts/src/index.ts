@@ -14,6 +14,8 @@ export const ErrorCode = z.enum([
   'forbidden',
   'not_found',
   'conflict',
+  /** 422: well formed, but Landledger can't take it yet (a request in another currency before FX is set up). */
+  'unprocessable',
   'unavailable',
   'internal',
 ]);
@@ -40,9 +42,25 @@ export type MoneyJson = z.infer<typeof MoneyJson>;
 
 // Who ---------------------------------------------------------------------------------------------------------------
 
-/** What an API key may do (docs/architecture.md, "Security and controls"). No scope decides a request. */
-export const ApiScope = z.enum(['read', 'requests:write', 'reservations:write', 'decisions:relay', 'ingest', 'admin']);
+/**
+ * What an API key may do (docs/architecture.md, "Security and controls"). No scope decides a request.
+ * `webhooks:write` (review of wave 2) creates, lists and deletes only the subscriptions that key created.
+ * `decisions:relay` carries a person's signed press from a relay channel (Slack); a key holding it may not also hold
+ * `requests:write` or `admin`, so the key that raises a request never also carries its approval.
+ */
+export const ApiScope = z.enum([
+  'read',
+  'requests:write',
+  'reservations:write',
+  'decisions:relay',
+  'webhooks:write',
+  'ingest',
+  'admin',
+]);
 export type ApiScope = z.infer<typeof ApiScope>;
+
+/** Scopes a `decisions:relay` key may not hold beside it. */
+export const RELAY_EXCLUDES: readonly ApiScope[] = ['requests:write', 'admin'];
 
 export const Role = z.enum(['cfo', 'controller', 'fpa', 'budget_owner', 'auditor', 'engineer']);
 export type Role = z.infer<typeof Role>;
@@ -107,17 +125,30 @@ export type Health = z.infer<typeof Health>;
 
 // API keys ----------------------------------------------------------------------------------------------------------
 
-export const ApiKeyInput = z.object({
-  name: z.string().trim().min(1).max(100),
-  scopes: z.array(ApiScope).min(1),
-});
-export type ApiKeyInput = z.infer<typeof ApiKeyInput>;
+/**
+ * `POST /api/keys`: only a signed-in person with `admin` mints a key (the bootstrap key only until the first admin
+ * person has signed in). `boundWorkflowIds`: the Landflow workflows whose runs this key raises requests for; an
+ * origin `landflow_run` naming one of them is stored `verified: true`, any other origin from a key `verified: false`.
+ */
+export const ApiKeyInput = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    scopes: z.array(ApiScope).min(1),
+    boundWorkflowIds: z.array(z.string().trim().min(1).max(200)).max(50).default([]),
+  })
+  .refine((k) => !k.scopes.includes('decisions:relay') || !k.scopes.some((s) => RELAY_EXCLUDES.includes(s)), {
+    message: 'A decisions:relay key holds neither requests:write nor admin',
+    path: ['scopes'],
+  });
+export type ApiKeyInput = z.input<typeof ApiKeyInput>;
 
 export const ApiKey = z.object({
   id: z.string(),
   name: z.string(),
   prefix: z.string(),
   scopes: z.array(ApiScope),
+  /** The Landflow workflow ids whose `landflow_run` origins this key may vouch for (empty: none). */
+  boundWorkflowIds: z.array(z.string()),
   createdBy: z.string(),
   createdAt: z.string(),
   lastUsedAt: z.string().nullable(),
@@ -312,6 +343,10 @@ export type AuditVerify = z.infer<typeof AuditVerify>;
  * submitted; `request.step_pending`: a step waits on its approvers (named, with emails and Landbright subs), also when
  * it escalates; `request.decided`: the request ended (approved, rejected, cancelled, expired); `request.applied`: the
  * change is in place; `budget.at_risk`: a cost center crossed into at risk or over (once per month and state).
+ * Review of wave 2: `request.needs_confirmation`: a key named a person as requester or sponsor, and that person
+ * confirms it from their own session before it enters the policy; `decision.relayed`: a decision came through a relay
+ * channel, sent naming the person so they hear of it; `report.exceptions`: the weekly exceptions report was stored,
+ * with its sha256. `cost.anomaly` is planned (wave 3) and never sent yet.
  */
 export const WebhookEvent = z.enum([
   'ping',
@@ -324,6 +359,9 @@ export const WebhookEvent = z.enum([
   'period.closing',
   /** The audit chain's head (seq and hash), on a schedule: keep it to detect a cut-off log. */
   'audit.anchor',
+  'request.needs_confirmation',
+  'decision.relayed',
+  'report.exceptions',
 ]);
 export type WebhookEvent = z.infer<typeof WebhookEvent>;
 
@@ -333,6 +371,21 @@ export const WebhookInput = z.object({
   description: z.string().max(500).default(''),
 });
 export type WebhookInput = z.infer<typeof WebhookInput>;
+
+/**
+ * A subscription as listed. An admin person sees every one; a `webhooks:write` key sees only those it created. The
+ * signing secret is shown once, at creation, to its creator, and never listed.
+ */
+export interface WebhookView {
+  id: string;
+  url: string;
+  events: WebhookEvent[];
+  description: string;
+  createdBy: string;
+  /** The key that created it, if a key did (`webhooks:write`). */
+  createdByKey: string | null;
+  createdAt: string;
+}
 
 export * from './requests.js';
 export * from './sources.js';

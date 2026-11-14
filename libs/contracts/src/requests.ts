@@ -7,8 +7,13 @@
  * six-decimal amount strings in USD like the rest of the read API. Nothing is a JSON number.
  *
  * **Agents request; people decide.** An agent may raise a request, always with an accountable sponsor (a person); a
- * decision is always a person's: from their signed-in session, or relayed by a key with `decisions:relay` that names
- * the person, whom Landledger checks itself. No route, key, MCP tool or agent token decides otherwise.
+ * decision is always a person's: from their signed-in session, or a press in a relay channel (Slack) that Landledger
+ * verifies itself (the channel's signature, team and app) and maps to a person through a link that person made from
+ * their own session. A key never names who decided. No route, key, MCP tool or agent token decides otherwise.
+ *
+ * Review of wave 2 (this file's second version): a request a key raises naming a person (requester or sponsor) waits
+ * in `awaiting_confirmation` until that person confirms it from their own session; every request carries `createdBy`
+ * (the key or person that raised it) and its origin's `verified`; relays carry the raw Slack interaction.
  */
 import { z } from 'zod';
 
@@ -50,9 +55,20 @@ export const SELF_APPLIED_KINDS: readonly RequestKind[] = ['rate_card_change', '
 
 /**
  * Only forward: `draft → pending → approved | rejected | cancelled | expired`, and `approved → applied`. A draft can be
- * cancelled; nothing else moves back or sideways (the database refuses it).
+ * cancelled; nothing else moves back or sideways (the database refuses it). A request a key raised naming a person
+ * goes `draft → awaiting_confirmation → pending` when that person confirms it (or `→ cancelled` when they decline,
+ * `→ expired` when nobody answers); only then does the policy give it a path.
  */
-export const RequestStatus = z.enum(['draft', 'pending', 'approved', 'rejected', 'cancelled', 'expired', 'applied']);
+export const RequestStatus = z.enum([
+  'draft',
+  'pending',
+  'approved',
+  'rejected',
+  'cancelled',
+  'expired',
+  'applied',
+  'awaiting_confirmation',
+]);
 export type RequestStatus = z.infer<typeof RequestStatus>;
 
 /** `monthly`: a recurring amount per month from `start` (to `end`, or open-ended); `once`: a one-off amount. */
@@ -85,6 +101,16 @@ export const RequestOrigin = z.discriminatedUnion('type', [
   z.object({ type: z.literal('mcp') }),
 ]);
 export type RequestOrigin = z.infer<typeof RequestOrigin>;
+
+/**
+ * An origin as stored and shown. `verified`: Landledger set it itself (`console` from a session, `mcp`), or a key bound
+ * to that workflow (`boundWorkflowIds`) sent a `landflow_run` for it. Anything else a key sends is stored as said,
+ * `verified: false`: a flow checks `createdBy` and `verified` before trusting a request is its own.
+ */
+export type OriginView = RequestOrigin & { verified: boolean };
+
+/** Who raised a request, stamped by Landledger: the key (`requests:write`, or MCP on a key) or the signed-in person. */
+export type CreatedBy = { kind: 'key'; id: string; name: string } | { kind: 'person'; id: string; name: string };
 
 // Who --------------------------------------------------------------------------------------------------------------
 
@@ -161,14 +187,27 @@ export const CreateRequestInput = z
      * `model`, … with `*` wildcards) that tells the reservation which real cost consumes it.
      */
     evidence: z.record(z.string(), z.unknown()).default({}),
-    /** Default: `console` for a person's session, `mcp` from the MCP server; a key must say. */
+    /**
+     * Default: `console` for a person's session, `mcp` from the MCP server (always, whatever is sent); a key must say,
+     * and what it says is stored `verified: false` unless the key is bound to that `landflow_run`'s workflow.
+     */
     origin: RequestOrigin.optional(),
     /** Further sources (a pull request beside the Landflow run, …). */
     related: z.array(RequestOrigin).max(10).default([]),
+    /**
+     * Who asks, from a key: a person, or an agent and its sponsor. That person confirms it from their own session
+     * before it enters the policy (`awaiting_confirmation`, webhook `request.needs_confirmation`).
+     */
     requester: RequesterInput.optional(),
-    /** `false` keeps it a draft (submit later); default `true`: pending, or approved at once below the threshold. */
+    /**
+     * `false` keeps it a draft (submit later); default `true`: pending (or awaiting the named person's confirmation),
+     * or approved at once below the threshold.
+     */
     submit: z.boolean().default(true),
-    /** Retries with the same key and caller return the first request instead of a second (≤ 200 characters). */
+    /**
+     * Retries with the same key, caller and body return the first request instead of a second (≤ 200 characters); the
+     * same key with a different body is a 409.
+     */
     idempotencyKey: z.string().min(1).max(200).optional(),
   })
   .refine((r) => !r.end || !r.start || r.end >= r.start, { message: 'end is on or after start', path: ['end'] });
@@ -195,11 +234,18 @@ export interface DecisionView {
   at: string;
   /** The sha256 of the evidence snapshot the person was shown (`GET /api/requests/:id` → `evidenceSha256`). */
   evidenceSha256: string;
-  /** `console`: their signed-in session; `relay`: a key with `decisions:relay` carried it (Landflow, Slack, email). */
+  /** `console`: their signed-in session; `relay`: a key with `decisions:relay` carried their press from a channel. */
   via: 'console' | 'relay';
-  /** For a relay: the key's name and the channel the person pressed the button in. */
+  /** For a relay: the key's name and the channel's kind (`slack`). */
   relayedBy: string | null;
   channel: string | null;
+  /** For a relay: the registered channel, and the channel's user id that pressed (linked to the person). */
+  relay: { channelId: string; kind: RelayChannelKind; externalUserId: string } | null;
+  /**
+   * The decider and the request's cost center: its `owner` or a `deputy` (Budgets' owner map), or `not_owner` (shown
+   * as a flag on the Request page when a budget-owner step was decided by someone else).
+   */
+  ownerRole: 'owner' | 'deputy' | 'not_owner';
 }
 
 export interface StepView {
@@ -212,9 +258,20 @@ export interface StepView {
     groups: string[];
     /** The cost center's owner, when the step is the owner's and the cost center names a person. */
     costCenterOwner: PersonView | null;
-    /** The people who may decide it now: the owner, else the groups' members; never the requester or sponsor. */
+    /** The cost center's deputies, who decide the owner's step beside the owner. */
+    deputies: PersonView[];
+    /** Why the groups decide an owner's step: the cost center has no owner mapped (null when the owner decides). */
+    fallback: string | null;
+    /**
+     * The people who may decide it now: the owner and deputies, else the groups' members; never the requester, the
+     * sponsor, or a service-like account (a generic `Administrator`, `admin@…`), listed apart below.
+     */
     people: PersonView[];
+    /** Accounts in the step's groups that look like services, not people: never approvers. */
+    serviceAccounts: PersonView[];
   };
+  /** Why the step went straight to escalation, if it did (the owner raised it; its only approver decided before). */
+  note: string | null;
   /** When a pending step escalates (or, once escalated, expires). */
   deadlineAt: string | null;
   /** When it escalated, and to whom. */
@@ -237,6 +294,12 @@ export interface ReservationView {
   consumed: Amount;
   /** `amount − consumed` while reserved; zero once consumed or released. What budget left subtracts. */
   remaining: Amount;
+  /**
+   * `matched`: real cost matching the request's `match` selector consumes it, only above `baselineDaily` (the matched
+   * cost's daily average over the 30 days before approval); `none`: no selector, held until the month ends.
+   */
+  consumption: 'matched' | 'none';
+  baselineDaily: Amount | null;
   status: ReservationStatus;
   createdAt: string;
   closedAt: string | null;
@@ -260,12 +323,25 @@ export interface RequestView {
   /** What the policy's thresholds compare: the monthly amount, or the one-off amount. */
   thresholdAmount: Amount;
   evidence: Record<string, unknown>;
-  origin: RequestOrigin;
+  origin: OriginView;
+  /** Further sources, as the caller said them (never verified). */
   related: RequestOrigin[];
   requester: Requester;
   createdVia: 'session' | 'key' | 'mcp';
   /** The key that created it (its name), if one did. */
   createdByKey: string | null;
+  /** Who raised it, stamped by Landledger: compare `createdBy.id` with your own key's id. */
+  createdBy: CreatedBy;
+  /**
+   * The named person's confirmation, when a key raised it naming them (requester, or the agent's sponsor): `waiting`
+   * until they confirm or decline it from their own session. Null when a person raised it themselves.
+   */
+  confirmation: {
+    person: PersonView;
+    status: 'waiting' | 'confirmed' | 'declined' | 'expired';
+    at: string | null;
+    reason: string;
+  } | null;
   change: RequestChange | null;
   /** Approved by policy below the threshold: no person decided. */
   automatic: boolean;
@@ -287,6 +363,10 @@ export interface RequestView {
     /** Why not, in words, when `canDecide` is false. */
     reason: string | null;
     canCancel: boolean;
+    /** The caller is the named person and it waits on their confirmation. */
+    canConfirm: boolean;
+    /** The creating key, the requester or an admin person (a reservation's release, `applied`). */
+    canManage: boolean;
   };
 }
 
@@ -302,10 +382,13 @@ export interface RequestSummary extends Omit<
   budgetLeftAfter: Amount | null;
 }
 
-export const RequestBox = z.enum(['waiting', 'mine', 'decided', 'open', 'all']);
+export const RequestBox = z.enum(['waiting', 'mine', 'decided', 'open', 'all', 'confirm']);
 export type RequestBox = z.infer<typeof RequestBox>;
 
-/** `GET /api/requests`. `waiting`: on me now; `mine`: I raised or sponsor; `decided`: no longer pending; `open`: pending. */
+/**
+ * `GET /api/requests`. `waiting`: on me now; `mine`: I raised or sponsor; `decided`: no longer pending; `open`: pending;
+ * `confirm`: raised by a key naming me, waiting on my confirmation.
+ */
 export const RequestsQuery = z.object({
   box: RequestBox.default('all'),
   status: RequestStatus.optional(),
@@ -318,7 +401,7 @@ export type RequestsQuery = z.infer<typeof RequestsQuery>;
 export interface RequestsList {
   requests: RequestSummary[];
   /** For the inbox's headings and the bottom bar's count. */
-  counts: { waiting: number; mine: number; decided: number; open: number };
+  counts: { waiting: number; mine: number; decided: number; open: number; confirm: number };
 }
 
 // Evidence -----------------------------------------------------------------------------------------------------------
@@ -354,21 +437,46 @@ export interface LedgerEvidence {
   }[];
   /** The policy's path for this amount, in words (`$1,840 a month is in the budget owner's range …`). */
   why: string;
+  /**
+   * A monthly request that starts mid-month adds only part of a month first: the first whole month's budget with it
+   * (null for a one-off, or one that starts on the 1st). The over-budget check uses both months.
+   */
+  firstFullMonth: {
+    month: string;
+    adds: Amount;
+    budget: Amount | null;
+    reserved: Amount;
+    leftAfter: Amount | null;
+    stateWith: 'ok' | 'risk' | 'over' | 'none' | 'early';
+  } | null;
+  /** What the request commits: per month, a year of it (open-ended too), and the whole window when it has an end. */
+  commitment: { monthly: Amount | null; annualised: Amount; window: Amount | null };
+  /**
+   * Approved by policy so far this month, which counts toward the automatic threshold: on this cost center, and for an
+   * AI budget, for this agent.
+   */
+  automaticThisMonth: { costCenter: Amount; agent: Amount | null };
+  /** A rate card change: the version's lines, frozen once its request exists, and their sha256. */
+  rateCardChange: { versionId: string; lines: number; linesSha256: string } | null;
 }
 
 export interface RequestDetail {
   request: RequestView;
   evidence: LedgerEvidence;
-  /** sha256 of the canonical JSON of `{ request (as shown, without `you`), evidence }`: send it with a decision. */
+  /**
+   * sha256 of the canonical JSON of `{ request (as shown, without `you`), evidence }`: send it with a decision. Each
+   * serving is recorded (who, when); a decision cites one served to that person within 30 minutes, else 409.
+   */
   evidenceSha256: string;
+  servedAt: string;
 }
 
 // Decisions ----------------------------------------------------------------------------------------------------------
 
 /**
- * `POST /api/requests/:id/decisions`. From a signed-in person: they decide. From a key with `decisions:relay`: `person`
- * names who pressed the button (their Landbright `sub` or email); Landledger checks that they exist, are active, are a
- * person, are among the step's approvers, and aren't the requester or the sponsor. An agent never decides.
+ * `POST /api/requests/:id/decisions`: a signed-in person's decision, on evidence served to them within 30 minutes. A
+ * key gets 403 here (no key names who decided): a relay sends the raw channel interaction to `POST /api/relays/slack`.
+ * `person` may only name the signed-in person themselves; `channel` is ignored. An agent never decides.
  */
 export const DecisionInput = z
   .object({
@@ -402,6 +510,133 @@ export type AppliedInput = z.input<typeof AppliedInput>;
 
 /** `POST /api/requests/:id/cancel`: the requester, the sponsor or an admin, while draft or pending. */
 export const CancelInput = z.object({ reason: z.string().trim().max(1000).default('') });
+
+/**
+ * `POST /api/requests/:id/confirm` and `/decline`: the person a key named (requester, or the agent's sponsor), from
+ * their own signed-in session only. Confirming enters the policy (pending, or approved below the threshold); declining
+ * cancels it, with a reason.
+ */
+export const ConfirmInput = z.object({ comment: z.string().trim().max(1000).default('') });
+export const DeclineInput = z.object({
+  reason: z.string().trim().min(3, 'Say why (3 characters or more)').max(1000),
+});
+
+// Relay channels and person links (review of wave 2) ----------------------------------------------------------------
+
+/** Kinds of relay channel. Only `slack` is implemented; the table and these schemas leave room for the others. */
+export const RelayChannelKind = z.enum(['slack', 'teams', 'email']);
+export type RelayChannelKind = z.infer<typeof RelayChannelKind>;
+
+/**
+ * `POST /api/relay-channels` (an admin person): a channel Landledger verifies presses from itself. Slack: the app's
+ * signing secret (sealed at rest, never shown again), its workspace (`teamId`, `T…`) and app (`appId`, `A…`).
+ */
+export const RelayChannelInput = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('slack'),
+    name: z.string().trim().min(1).max(100),
+    signingSecret: z.string().min(16).max(200),
+    teamId: z.string().regex(/^T[A-Z0-9_]+$/, 'a Slack team id (T…)'),
+    appId: z.string().regex(/^A[A-Z0-9_]+$/, 'a Slack app id (A…)'),
+  }),
+]);
+export type RelayChannelInput = z.input<typeof RelayChannelInput>;
+
+export interface RelayChannelView {
+  id: string;
+  kind: RelayChannelKind;
+  name: string;
+  /** Slack: `{ teamId, appId }`. Never the secret. */
+  config: Record<string, string>;
+  createdBy: string;
+  createdAt: string;
+  disabledAt: string | null;
+}
+
+/** Which requests a relay may decide: only the budget owner's step of these kinds; never Finance's or the CFO's. */
+export const RELAYABLE_KINDS: readonly RequestKind[] = ['infra_change', 'ai_budget', 'tool_or_seat', 'other'];
+export const RELAYABLE_STEP_KEYS: readonly string[] = ['budget_owner'];
+
+/** The Slack actions Landledger reads: a button's `action_id`, and the reject modal's `callback_id`. */
+export const SLACK_ACTIONS = {
+  approve: 'landledger.approve',
+  reject: 'landledger.reject',
+  /** The reject modal's comment input: `view.state.values.comment.comment.value`. */
+  commentBlock: 'comment',
+} as const;
+
+/**
+ * A card's button `value` (and the reject modal's `private_metadata`): `ll1|<requestId>|<step>|<evidenceSha256>`, the
+ * hash from `request.step_pending` (or a fresh `GET /api/requests/:id`). Signed by Slack with the press, so Landledger
+ * trusts it only as far as it verifies the signature.
+ */
+export function slackButtonValue(v: { requestId: string; step: number; evidenceSha256: string }): string {
+  return `ll1|${v.requestId}|${v.step}|${v.evidenceSha256}`;
+}
+export function parseSlackButtonValue(
+  value: string,
+): { requestId: string; step: number; evidenceSha256: string } | null {
+  const m = /^ll1\|(req_[\w-]{1,80})\|(\d{1,2})\|([0-9a-f]{64})$/.exec(value);
+  return m ? { requestId: m[1]!, step: Number(m[2]), evidenceSha256: m[3]! } : null;
+}
+
+/**
+ * `POST /api/relays/slack` (a key with `decisions:relay`): the raw Slack interaction as Slack sent it. Landledger checks
+ * `X-Slack-Signature` (`v0=` HMAC-SHA256 of `v0:<timestamp>:<body>` with the channel's signing secret), that the
+ * timestamp is within 5 minutes, and the team and app; then reads the press (a `block_actions` button
+ * `landledger.approve` or `landledger.reject` with a comment-less reject refused, or the reject modal's
+ * `view_submission` with its comment), finds the person linked to the Slack user, and decides as them if they may.
+ */
+export const SlackRelayInput = z.object({
+  /** The registered channel; default: the one whose team and app match the payload. */
+  channelId: z.string().min(1).max(100).optional(),
+  /** The request body exactly as Slack sent it (`payload=…`, form-encoded). */
+  body: z.string().min(1).max(200_000),
+  /** `X-Slack-Signature`. */
+  signature: z.string().regex(/^v0=[0-9a-f]{64}$/, 'X-Slack-Signature, v0=<hex>'),
+  /** `X-Slack-Request-Timestamp`, Unix seconds. */
+  timestamp: z.string().regex(/^\d{1,12}$/),
+});
+export type SlackRelayInput = z.input<typeof SlackRelayInput>;
+
+/**
+ * `POST /api/me/links` (a person's own session only): links their account in a relay channel to them. They enter it
+ * themselves on their profile page (Link Slack); a relay from an unlinked user is refused.
+ */
+export const PersonLinkInput = z.object({
+  kind: z.literal('slack'),
+  /** The Slack member id (`U…` or `W…`). */
+  externalId: z.string().regex(/^[UW][A-Z0-9_]+$/, 'a Slack member id (U…)'),
+});
+export type PersonLinkInput = z.input<typeof PersonLinkInput>;
+
+export interface PersonLinkView {
+  id: string;
+  kind: RelayChannelKind;
+  externalId: string;
+  createdAt: string;
+}
+
+// Cost center owners (review of wave 2) -------------------------------------------------------------------------------
+
+/**
+ * `PUT /api/cost-centers/:code/owners` (an admin person): the owner (a person) and optional deputies who decide the
+ * budget owner's step for that cost center. Without one the step falls back to the `Budget Owners` group, and says so.
+ */
+export const CostCenterOwnersInput = z.object({
+  owner: PersonRef,
+  deputies: z.array(PersonRef).max(10).default([]),
+  note: z.string().trim().max(1000).default(''),
+});
+export type CostCenterOwnersInput = z.input<typeof CostCenterOwnersInput>;
+
+export interface CostCenterOwnersView {
+  costCenter: string;
+  owner: PersonView | null;
+  deputies: PersonView[];
+  setBy: string | null;
+  setAt: string | null;
+}
 
 // Reservations ---------------------------------------------------------------------------------------------------------
 
@@ -573,6 +808,76 @@ export interface ExceptionsReport {
 
 // Webhook payloads (Standard Webhooks; `data` of each event) ------------------------------------------------------------
 
+/** `request.needs_confirmation`: a key named this person; they confirm or decline it in the console. */
+export interface NeedsConfirmationData {
+  request: RequestSummary;
+  person: PersonView;
+  /** The key that raised it. */
+  createdBy: CreatedBy;
+  url: string;
+}
+
+/** `decision.relayed`: a decision came through a relay channel; sent naming the person, so they hear of it. */
+export interface DecisionRelayedData {
+  request: RequestSummary;
+  decision: DecisionView;
+  person: PersonView;
+  channel: { id: string; kind: RelayChannelKind; name: string };
+  url: string;
+}
+
+/** `report.exceptions`: the weekly exceptions report, stored with its sha256. */
+export interface ExceptionsReportData {
+  id: string;
+  sha256: string;
+  from: string;
+  to: string;
+  generatedAt: string;
+  rows: number;
+  url: string;
+}
+
+/** A stored weekly report (`GET /api/exceptions/reports`). */
+export interface StoredExceptionsReport {
+  id: string;
+  sha256: string;
+  from: string;
+  to: string;
+  generatedAt: string;
+  rows: number;
+  report?: ExceptionsReport;
+}
+
+/**
+ * `GET /api/requests/:id/evidence-pack` (JSON; `?format=html` for a printable page): everything that shows how a
+ * request was decided, for an auditor: the request, every snapshot served (and to whom, when), the decisions, the
+ * request's audit entries and the chain's proof from them to the last anchor.
+ */
+export interface EvidencePack {
+  generatedAt: string;
+  request: RequestView;
+  snapshots: { sha256: string; createdAt: string; body: unknown; served: { to: string; kind: string; at: string }[] }[];
+  decisions: DecisionView[];
+  audit: {
+    seq: number;
+    at: string;
+    actor: string;
+    actorKind: string;
+    action: string;
+    data: Record<string, unknown>;
+    prevHash: string;
+    hash: string;
+  }[];
+  /** The chain checked from the request's first entry to the head, against the last anchor. */
+  chain: {
+    from: number;
+    to: number;
+    ok: boolean;
+    brokenAt: number | null;
+    anchor: { seq: number; hash: string; at: string } | null;
+  };
+}
+
 /** The approvers of a pending step, for a card in Slack or an email: the group and each person in it. */
 export interface StepPendingData {
   request: RequestSummary;
@@ -587,7 +892,10 @@ export interface StepPendingData {
   approvers: { name: string; email: string | null; sub: string | null; via: 'group' | 'owner'; group: string | null }[];
   /** Where a person decides in the console. */
   url: string;
+  /** The snapshot to put on the card (a relay must cite it within 30 minutes, else 409: refresh the card). */
   evidenceSha256: string;
+  /** Whether a relay channel may decide this step (only the budget owner's step of infra, AI budget, seat, other). */
+  relayable: boolean;
 }
 
 export interface RequestDecidedData {

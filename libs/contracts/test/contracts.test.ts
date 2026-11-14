@@ -4,7 +4,13 @@ import { aiInputRow } from '@landledger/focus/testing';
 import { Money } from '@landledger/money';
 import {
   ApiKeyInput,
+  ApiScope,
   CostRecord,
+  PersonLinkInput,
+  RelayChannelInput,
+  SlackRelayInput,
+  parseSlackButtonValue,
+  slackButtonValue,
   CreateRequestInput,
   DecisionInput,
   PolicyDef,
@@ -119,6 +125,7 @@ describe('wave 2: requests and decisions', () => {
       'cancelled',
       'expired',
       'applied',
+      'awaiting_confirmation',
     ]);
     for (const e of ['request.created', 'request.step_pending', 'request.decided', 'request.applied', 'budget.at_risk'])
       expect(WebhookEvent.options).toContain(e);
@@ -129,5 +136,41 @@ describe('wave 2: requests and decisions', () => {
         steps: [{ key: 'budget_owner', label: 'Budget owner', approvers: { groups: ['Budget Owners'] }, when: {} }],
       }).success,
     ).toBe(true);
+  });
+});
+
+describe('review of wave 2: relays, keys, confirmation', () => {
+  it('never lets a relay key raise requests or administer, and knows webhooks:write', () => {
+    expect(ApiScope.options).toContain('webhooks:write');
+    expect(ApiKeyInput.safeParse({ name: 'relay', scopes: ['decisions:relay'] }).success).toBe(true);
+    expect(ApiKeyInput.safeParse({ name: 'x', scopes: ['decisions:relay', 'requests:write'] }).success).toBe(false);
+    expect(ApiKeyInput.safeParse({ name: 'x', scopes: ['decisions:relay', 'admin'] }).success).toBe(false);
+    expect(ApiKeyInput.parse({ name: 'w', scopes: ['requests:write'] }).boundWorkflowIds).toEqual([]);
+  });
+
+  it('round-trips a Slack button value, and refuses anything else', () => {
+    const v = { requestId: 'req_KKKMAdhv9Vr1Vp0f3KxS', step: 1, evidenceSha256: 'b'.repeat(64) };
+    expect(parseSlackButtonValue(slackButtonValue(v))).toEqual(v);
+    expect(parseSlackButtonValue('ll1|req_x|1|short')).toBeNull();
+    expect(parseSlackButtonValue(`ll2|req_x|1|${'b'.repeat(64)}`)).toBeNull();
+  });
+
+  it('takes a Slack channel with its team and app, the raw relay, and a member id to link', () => {
+    const channel = {
+      kind: 'slack',
+      name: 'Dev',
+      signingSecret: 'x'.repeat(32),
+      teamId: 'T_LANDDEV',
+      appId: 'A_LANDLEDGER',
+    };
+    expect(RelayChannelInput.safeParse(channel).success).toBe(true);
+    expect(RelayChannelInput.safeParse({ ...channel, teamId: 'landdev' }).success).toBe(false);
+    expect(
+      SlackRelayInput.safeParse({ body: 'payload=%7B%7D', signature: `v0=${'0'.repeat(64)}`, timestamp: '1763200000' })
+        .success,
+    ).toBe(true);
+    expect(SlackRelayInput.safeParse({ body: 'x', signature: 'sha256=1', timestamp: '1' }).success).toBe(false);
+    expect(PersonLinkInput.safeParse({ kind: 'slack', externalId: 'U_SHIRA' }).success).toBe(true);
+    expect(PersonLinkInput.safeParse({ kind: 'slack', externalId: 'shira' }).success).toBe(false);
   });
 });
