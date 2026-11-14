@@ -133,6 +133,28 @@ describe('a request', () => {
     expect(JSON.parse(String(init!.body))).toEqual({ outcome: 'approve', comment: '', evidenceSha256: SHA, step: 1 });
   });
 
+  it('says why a request whose first full month has no budget goes to Finance (decision 8), and what is committed', async () => {
+    mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/requests/req_1': [
+        200,
+        {
+          request: request({}),
+          evidence: {
+            ...evidence,
+            budgetMissing:
+              'ENG-PLATFORM has no budget for December 2026: a month with no budget is never on track, so this request is not automatic and Finance decides it (docs/plan.md, decision 8)',
+            committed: '25.000000',
+          },
+          evidenceSha256: SHA,
+        },
+      ],
+    });
+    renderAt('/approvals/req_1');
+    expect(await screen.findByTestId('budget-missing')).toHaveTextContent('Finance decides it');
+    expect(screen.getByTestId('committed')).toHaveTextContent('$25.00');
+  });
+
   it('tells the requester they can’t decide their own request, and who has it', async () => {
     mockApi({
       '/api/auth/me': [200, ME],

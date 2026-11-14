@@ -191,6 +191,13 @@ export const words = (m: Money) => {
 };
 
 /** Canonical JSON of a snapshot: sorted keys, no whitespace; finite numbers as JSON writes them. */
+/** Which month has no budget, in words (Decision 8). */
+export function noBudgetWords(costCenter: string | null, ledger: LedgerEvidence): string {
+  const who = costCenter ?? 'the cost center';
+  if (ledger.budget === null) return `${who} has no budget for ${ledger.month}`;
+  return `${who} has no budget for ${ledger.firstFullMonth!.month}, this request's first full month`;
+}
+
 export function canonicalSnapshot(value: unknown): string {
   if (value === null) return 'null';
   switch (typeof value) {
@@ -823,7 +830,11 @@ export class Requests {
   ): Promise<{ automatic: boolean; reason: string; steps: PathStep[] }> {
     const amt = usd(r.amount_micros, r.currency);
     const per = r.recurrence === 'monthly' ? ' a month' : ' once';
+    // Decision 8 (a default to confirm): a month with no budget for the cost center is never on track, so nothing is
+    // automatic there and the policy's at-risk step (Finance) holds.
+    const noBudget = ledger.budget === null || (!!ledger.firstFullMonth && ledger.firstFullMonth.budget === null);
     const atRisk =
+      noBudget ||
       ['risk', 'over'].includes(ledger.stateNow) ||
       ledger.stateWith === 'over' ||
       ledger.firstFullMonth?.stateWith === 'over';
@@ -842,11 +853,19 @@ export class Requests {
           steps: [],
         };
       if (amt.compare(threshold) < 0) {
-        if (atRisk)
+        if (noBudget)
+          why.push(`Nothing is automatic where there is no budget: ${noBudgetWords(r.cost_center, ledger)}`);
+        const risky =
+          ['risk', 'over'].includes(ledger.stateNow) ||
+          ledger.stateWith === 'over' ||
+          ledger.firstFullMonth?.stateWith === 'over';
+        if (risky)
           why.push(
             `Nothing is automatic while ${r.cost_center} is at risk or over budget, or this request takes it over`,
           );
-        else if (withCc.compare(threshold) >= 0)
+        else if (noBudget) {
+          // said above
+        } else if (withCc.compare(threshold) >= 0)
           why.push(
             `With ${words(so.costCenter)} approved by policy on ${r.cost_center} this month, ${words(withCc)} reaches the automatic threshold of ${words(threshold)}`,
           );
@@ -877,7 +896,7 @@ export class Requests {
       };
     };
     for (const def of policy.steps) {
-      const reasons = this.whenHolds(def, amt, atRisk, ledger);
+      const reasons = this.whenHolds(def, amt, atRisk, ledger, noBudget);
       if (!reasons.length) continue;
       why.push(`${def.label}: ${reasons.join('; ')}`);
       steps.push(stepOf(def));
@@ -896,7 +915,13 @@ export class Requests {
     };
   }
 
-  private whenHolds(def: PolicyDef['steps'][number], amt: Money, atRisk: boolean, ledger: LedgerEvidence): string[] {
+  private whenHolds(
+    def: PolicyDef['steps'][number],
+    amt: Money,
+    atRisk: boolean,
+    ledger: LedgerEvidence,
+    noBudget = false,
+  ): string[] {
     const out: string[] = [];
     const w = def.when;
     if (w.always) out.push('every request of this kind');
@@ -906,13 +931,15 @@ export class Requests {
       out.push(`${words(amt)} is above ${words(Money.parse(w.amountAbove, amt.currency))}`);
     if (w.costCenterAtRisk && atRisk)
       out.push(
-        ledger.stateNow === 'over'
-          ? `the cost center is over its ${ledger.month} budget`
-          : ledger.stateNow === 'risk'
-            ? `the cost center is at risk in ${ledger.month}`
-            : ledger.stateWith === 'over'
-              ? `this request takes the cost center over its ${ledger.month} budget`
-              : `this request takes the cost center over its ${ledger.firstFullMonth!.month} budget, its first full month`,
+        noBudget
+          ? noBudgetWords(null, ledger)
+          : ledger.stateNow === 'over'
+            ? `the cost center is over its ${ledger.month} budget`
+            : ledger.stateNow === 'risk'
+              ? `the cost center is at risk in ${ledger.month}`
+              : ledger.stateWith === 'over'
+                ? `this request takes the cost center over its ${ledger.month} budget`
+                : `this request takes the cost center over its ${ledger.firstFullMonth!.month} budget, its first full month`,
       );
     return out;
   }
@@ -1803,8 +1830,10 @@ export class Requests {
         automaticThisMonth: { costCenter: amount(so.costCenter), agent: so.agent ? amount(so.agent) : null },
         rateCardChange,
       };
+      partial.budget = budget ? amount(budget) : null;
       why = (await this.pathFor(r, policy, partial)).reason;
     }
+    const missing = !budget || (firstFullMonth && firstFullMonth.budget === null);
     return {
       month,
       currency: U,
@@ -1835,6 +1864,10 @@ export class Requests {
       commitment,
       automaticThisMonth: { costCenter: amount(so.costCenter), agent: so.agent ? amount(so.agent) : null },
       rateCardChange,
+      budgetMissing: missing
+        ? `${noBudgetWords(r.cost_center, { month, budget: budget ? amount(budget) : null, firstFullMonth } as LedgerEvidence)}: a month with no budget is never on track, so this request is not automatic and Finance decides it (docs/plan.md, decision 8)`
+        : null,
+      committed: cc?.committed ?? amount(Money.zero(U)),
     };
   }
 

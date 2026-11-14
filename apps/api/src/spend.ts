@@ -35,6 +35,7 @@ import { Decimal, Money, REPORTING_CURRENCY } from '@landledger/money';
 import { type Allocation, allocInputOf, type AllocRow, type RuleBook } from './allocation.js';
 import type { Budgets } from './budgets.js';
 import { day as dayOf, type Sql } from './db.js';
+import { band, commitmentsIn, halfWidth, Z90 } from './forecast.js';
 import { ApiError } from './errors.js';
 import type { RateCards } from './ratecards.js';
 
@@ -70,6 +71,9 @@ export interface Line {
   correction: boolean;
   source: string;
   amount: Money;
+  /** Consumed quantity and its unit (a forecast's driver, spec 006); null when the record has none. */
+  quantity: Decimal | null;
+  unit: string | null;
   tags: Record<string, unknown>;
   serviceName: string;
   serviceCategory: string;
@@ -85,6 +89,8 @@ export interface Line {
 
 type Row = AllocRow & {
   charge_class: string | null;
+  consumed_quantity: string | null;
+  consumed_unit: string | null;
   recorded_at: Date;
   service_category: string;
   service_provider_name: string;
@@ -252,6 +258,10 @@ export interface SourceRate {
   /** The lowest and highest cost per hour of its full observed days. */
   low: Decimal | null;
   high: Decimal | null;
+  /** Each full observed day's cost (the band's spread, spec 006). */
+  fullCosts: Money[];
+  /** Consumed quantity per observed day, per unit (the source's drivers, spec 006). */
+  drivers: { unit: string; perDay: Decimal }[];
 }
 
 export interface RunRate {
@@ -289,6 +299,7 @@ export function runRateOf(
     let h = Decimal.ZERO;
     let c = zero();
     const fullRates: Decimal[] = [];
+    const fullCosts: Money[] = [];
     let fullDays = 0;
     for (const [d, ms] of hours) {
       if (d < window.from || d > window.to) continue;
@@ -299,13 +310,36 @@ export function runRateOf(
       if (ms >= FULL_DAY_HOURS * HOUR_MS) {
         fullDays++;
         fullRates.push(dc.toDecimal().divide(dh, 12, 'halfEven'));
+        fullCosts.push(dc);
       }
     }
     // Cost on a day no run observed (none in the window today) is left out: a rate is cost over the hours it covers.
     const perHour = h.isZero() ? null : c.toDecimal().divide(h, 12, 'halfEven');
     const low = fullRates.length ? fullRates.reduce((a, b) => (b.compare(a) < 0 ? b : a)) : null;
     const high = fullRates.length ? fullRates.reduce((a, b) => (b.compare(a) > 0 ? b : a)) : null;
-    return { source, since: since.get(source) ?? null, fullDays, hours: h, cost: c, perHour, low, high };
+    // Drivers: what the source consumed per observed day, by unit, over the days it observed.
+    const qty = new Map<string, Decimal>();
+    for (const l of lines)
+      if (l.source === source && l.unit && l.quantity && l.day >= window.from && l.day <= window.to && hours.has(l.day))
+        qty.set(l.unit, (qty.get(l.unit) ?? Decimal.ZERO).plus(l.quantity));
+    const observedDays = h.isZero() ? null : h.divide('24', 12, 'halfEven');
+    const drivers = observedDays
+      ? [...qty.entries()]
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([unit, q]) => ({ unit, perDay: q.divide(observedDays, 6, 'halfEven') }))
+      : [];
+    return {
+      source,
+      since: since.get(source) ?? null,
+      fullDays,
+      hours: h,
+      cost: c,
+      perHour,
+      low,
+      high,
+      fullCosts,
+      drivers,
+    };
   });
   const enough = rates.length > 0 && rates.every((r) => r.fullDays >= MIN_FULL_DAYS && r.perHour !== null);
   const dataSince = rates.map((r) => r.since).reduce<string | null>((a, b) => (b && (!a || b > a) ? b : a), null);
@@ -317,7 +351,7 @@ export function runRateOf(
     perHour: enough ? { low: sum((r) => r.low!), mid: sum((r) => r.perHour!), high: sum((r) => r.high!) } : null,
     dataSince,
     basis: enough
-      ? `Run rate per source over ${window.from} to ${window.to}: Σ cost ÷ Σ observed hours (${rates.map((r) => `${r.source} ${r.hours.toFixed(1, 'halfEven')} h`).join(', ')}); range from the lowest and highest full day`
+      ? `Run rate per source over ${window.from} to ${window.to}: Σ cost ÷ Σ observed hours (${rates.map((r) => `${r.source} ${r.hours.toFixed(1, 'halfEven')} h`).join(', ')}); the band from how much the full days vary`
       : rates.length
         ? `Not enough data yet: a forecast needs ${MIN_FULL_DAYS} full observed days of each source in the last ${RUN_RATE_DAYS} (${short.join(', ')})`
         : 'Not enough data yet: no source has been read in the last seven days',
@@ -382,7 +416,7 @@ export class Spend {
     const start = byMonth ? `${sel.fromMonth}-01T00:00:00Z` : `${sel.from}T00:00:00Z`;
     const end = byMonth ? `${addMonths(sel.toMonth, 1)}-01T00:00:00Z` : `${addDays(sel.to, 1)}T00:00:00Z`;
     const cols = s.unsafe(
-      'r.record_id, r.billing_period_start, r.charge_period_start, r.charge_class, r.recorded_at, r.basis, r.source, r.tags, r.sku_meter, r.actor_id, r.service_name, r.effective_cost_micros, r.billing_currency, r.service_category, r.service_provider_name, r.resource_name',
+      'r.record_id, r.billing_period_start, r.charge_period_start, r.charge_class, r.recorded_at, r.basis, r.source, r.tags, r.sku_meter, r.actor_id, r.service_name, r.effective_cost_micros, r.billing_currency, r.service_category, r.service_provider_name, r.resource_name, r.consumed_quantity::text AS consumed_quantity, r.consumed_unit',
     );
     const where = byMonth
       ? s`r.billing_period_start >= ${start}::timestamptz AND r.billing_period_start < ${end}::timestamptz`
@@ -441,6 +475,8 @@ export class Spend {
         correction,
         source: r.source,
         amount: reportingAmount(r.effective_cost_micros, r.billing_currency, r.record_id),
+        quantity: r.consumed_quantity ? Decimal.parse(r.consumed_quantity) : null,
+        unit: r.consumed_unit,
         tags: (r.tags ?? {}) as Record<string, unknown>,
         serviceName: r.service_name,
         serviceCategory: r.service_category,
@@ -711,6 +747,26 @@ export class Spend {
     return { hours, since: new Map(first.map((r) => [r.source, r.since.toISOString()])) };
   }
 
+  /** The run rate now (the last seven days), as Overview takes it. */
+  async runRateNow(): Promise<RunRate> {
+    const today = this.today();
+    const window = { from: addDays(today, -(RUN_RATE_DAYS - 1)), to: today };
+    const recent = (await this.lines(window)).lines;
+    const obs = await this.observed(window.from, window.to);
+    return runRateOf(recent, obs.hours, obs.since, window);
+  }
+
+  /** Every cost center's budget for a month, summed; null when no budget names the month. */
+  async budgetTotal(month: string): Promise<Money | null> {
+    const budgets = await this.budgets.forMonth(month);
+    return budgets.size
+      ? Money.sum(
+          [...budgets.values()].map((b) => b.amount),
+          USD,
+        )
+      : null;
+  }
+
   async overview(month?: string): Promise<Overview> {
     const today = this.today();
     const nowMs = this.now().getTime();
@@ -745,7 +801,17 @@ export class Spend {
     const project = (perHour: Decimal) =>
       mtd.plus(Money.fromDecimal(perHour.times(hoursLeft).round(6, 'halfEven'), USD));
     const ready = rr?.enough ? rr.perHour! : null;
-    const forecast = isCurrent ? (ready ? project(ready.mid) : null) : mtd;
+    // The band (spec 006): z₀.₉ × σ × √(days left), σ from how much each source's full days vary.
+    const daysLeft = hoursLeft.divide('24', 12, 'halfEven');
+    const fullCosts = rr?.enough ? rr.sources.map((s) => s.fullCosts) : [];
+    const p = ready ? band(project(ready.mid), halfWidth(fullCosts, daysLeft), mtd) : null;
+    // Committed: approved monthly requests beyond their reservations, for the rest of this month (from tomorrow).
+    const commits = isCurrent ? await commitmentsIn(this.sql, m, addDays(today, 1)) : [];
+    const committed = Money.sum(
+      commits.map((c) => c.amount),
+      USD,
+    );
+    const forecast = isCurrent ? (p ? p.p50.plus(committed) : null) : mtd;
 
     const budgets = await this.budgets.forMonth(m);
     const reserved = await this.reservedByCostCenter(m);
@@ -760,7 +826,12 @@ export class Spend {
 
     // Cost centers: month to date, and a forecast at each one's own cost per observed hour, per source.
     const ccOf = (l: Line) => (l.correction ? CORRECTIONS : l.costCenter);
-    const codes = new Set([...lines.map(ccOf), ...budgets.keys(), ...reserved.keys()]);
+    const codes = new Set([
+      ...lines.map(ccOf),
+      ...budgets.keys(),
+      ...reserved.keys(),
+      ...commits.map((c) => c.costCenter),
+    ]);
     const ccRate = (code: string) => {
       if (!rr?.enough) return null;
       let r = Decimal.ZERO;
@@ -774,12 +845,19 @@ export class Spend {
       const mine = lines.filter((l) => ccOf(l) === code);
       const actual = sumOf(mine);
       const rate = code === CORRECTIONS ? Decimal.ZERO : ccRate(code);
+      const ccCommitted = Money.sum(
+        commits.filter((c) => c.costCenter === code).map((c) => c.amount),
+        USD,
+      );
       const f = !isCurrent
         ? actual
         : rate === null
           ? null
-          : actual.plus(Money.fromDecimal(rate.times(hoursLeft).round(6, 'halfEven'), USD));
+          : actual.plus(Money.fromDecimal(rate.times(hoursLeft).round(6, 'halfEven'), USD)).plus(ccCommitted);
       const b = budgets.get(code)?.amount ?? null;
+      // Without a run rate, what is spent and committed can still put it over.
+      const plain = stateOf(actual, f, b);
+      const state = plain === 'early' && b && actual.plus(ccCommitted).compare(b) > 0 ? 'risk' : plain;
       return {
         code,
         name: ccLabel(code, ccs),
@@ -789,7 +867,8 @@ export class Spend {
         budget: b ? amount(b) : null,
         forecast: f ? amount(f) : null,
         reserved: amount(reserved.get(code) ?? zero()),
-        state: stateOf(actual, f, b),
+        committed: amount(ccCommitted),
+        state,
       };
     });
     ccLines.sort(
@@ -817,8 +896,9 @@ export class Spend {
         });
       } else if (ready) {
         const ahead = hoursOf(Date.parse(`${d}T00:00:00Z`) + DAY_MS - nowMs);
-        const at = (r: Decimal) => amount(mtd.plus(Money.fromDecimal(r.times(ahead).round(6, 'halfEven'), USD)));
-        burn.push({ day: d, actual: null, forecast: at(ready.mid), low: at(ready.low), high: at(ready.high) });
+        const mid = mtd.plus(Money.fromDecimal(ready.mid.times(ahead).round(6, 'halfEven'), USD));
+        const b = band(mid, halfWidth(fullCosts, ahead.divide('24', 12, 'halfEven')), mtd);
+        burn.push({ day: d, actual: null, forecast: amount(b.p50), low: amount(b.p10), high: amount(b.p90) });
       } else burn.push({ day: d, actual: null, forecast: null, low: null, high: null });
     }
 
@@ -881,8 +961,32 @@ export class Spend {
       forecast: {
         status: !isCurrent ? 'past' : ready ? 'ok' : 'insufficient',
         amount: forecast ? amount(forecast) : null,
-        low: ready ? amount(project(ready.low)) : !isCurrent ? amount(mtd) : null,
-        high: ready ? amount(project(ready.high)) : !isCurrent ? amount(mtd) : null,
+        low: p ? amount(p.p10.plus(committed)) : !isCurrent ? amount(mtd) : null,
+        high: p ? amount(p.p90.plus(committed)) : !isCurrent ? amount(mtd) : null,
+        p10: p ? amount(p.p10) : null,
+        p50: p ? amount(p.p50) : null,
+        p90: p ? amount(p.p90) : null,
+        band: p
+          ? `P10–P90: P50 ± ${Z90} × σ × √${daysLeft.toFixed(1, 'halfEven')} days left; σ² is the sum of each source's variance over its full days (${rr!.sources.map((x) => `${x.source} ${x.fullCosts.length}`).join(', ')})`
+          : null,
+        committed: amount(committed),
+        commitments: commits.map((c) => ({
+          requestId: c.requestId,
+          number: c.number,
+          title: c.title,
+          costCenter: c.costCenter,
+          amount: amount(c.amount),
+        })),
+        drivers: (rr?.sources ?? []).flatMap((x) =>
+          x.drivers.map((d) => ({
+            source: x.source,
+            unit: d.unit,
+            perDay: d.perDay.toFixed(6, 'halfEven'),
+            costPerDay: x.perHour
+              ? amount(Money.fromDecimal(x.perHour.times('24').round(6, 'halfEven'), USD))
+              : '0.000000',
+          })),
+        ),
         basis: rr ? rr.basis : 'A past month: actuals only',
         perDay: ready ? { low: perDay(ready.low), mid: perDay(ready.mid), high: perDay(ready.high) } : null,
         dataSince,

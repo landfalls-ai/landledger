@@ -21,10 +21,21 @@ Clickland. Code: `apps/api/src/spend.ts` (reads), `budgets.ts`, `export.ts`, `mc
   over the last 7 days (today included; observed hours come from each day's newest run: the window Clickland's samples
   covered, Landflow's whole day), summed across sources, so a partial day weighs by its hours. With fewer than **3 full
   observed days** (23 hours or more) of any source in those 7, there is no forecast: the tile says _Not enough data
-  yet_, with _data since_ the newest source's first sample, and no range or state is claimed. The range is the lowest
-  and highest full day's rate per hour, summed across sources.
+  yet_, with _data since_ the newest source's first sample, and no range or state is claimed.
+- **The band** (spec 006): P50 is that run rate. P10 and P90 sit z₀.₉ × σ × √days either side of it (z₀.₉ = 1.2816),
+  σ² the sum of each source's sample variance of its full days' cost in the window (sources vary independently), and
+  _days_ the days left. Square roots are exact integer square roots on the decimals, never floats. P10 never falls below
+  month to date. Overview shows the band in its forecast tile (`P10–P90`) and on the burn chart, and says how it was
+  taken under the chart. Each source's driver (consumed units a day: core-hours, GiB-hours, tokens) comes with it.
+- **Committed** (spec 006): an approved or applied open-ended monthly request reserves only its first months. Beyond
+  them it still commits its amount, so each month it is active without a reservation adds its amount (pro rata from
+  tomorrow in the current month) to the forecast, to its cost center's forecast and to _at risk_. Reservations are
+  never counted twice: a month with the request's reservation counts the reservation instead.
+- **No budget** (decision 8, a default to confirm): a month with no budget is never _on track_; it says _no budget_.
+  A request whose month, or first full month, has no budget for its cost center is never automatic and takes the
+  Finance step; the Request page says why (`evidence.budgetMissing`).
 - **States** per cost center: _over_ when month to date is above budget; with a forecast, _at risk_ when it is over
-  budget and _on track_ otherwise; without one, _early_ (no claim yet); _no budget_ without a budget. The month's line
+  budget (with what is committed) and _on track_ otherwise; without one, _early_ (no claim yet); _no budget_ without a budget. The month's line
   says how much of the budget is used and how much of the month has been observed, not how much has passed.
 - **P&L classes**: the shared pool (idle capacity, before it is spread) is its own class, _Shared pool_; _Not
   classified_ is only what the rules sent nowhere.
@@ -93,3 +104,12 @@ never rates, budgets or contracts. Compose services are named `<project>/<servic
 
 - Invoiced figures (wave 3), teams and products in the dev data.
 - A cost column on Clickland's Services page from these metrics is Clickland's to build.
+
+## The year ahead
+
+`GET /api/forecast?months=12` and the _Year ahead_ card on Overview: for each month from this one, the run rate over
+its days (the days left of this one) with its P10–P90 band, what approved requests reserve and what they commit beyond
+their reservations, the total against its budget, and the state: _no budget_ where there is none. _Annualised_ is
+today's run rate × 365 with its band, and every approved monthly commitment × 12; the commitments are listed with the
+month their reservations reach. Without enough data for a run rate it says _Not enough data yet_, shows only what is
+reserved and committed, and claims no total.

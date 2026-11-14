@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, Database, Gauge, Scale } from 'lucide-react';
 import { Link } from 'react-router';
 import { BudgetBar, BurnChart, SplitBar } from '@/components/spend/charts';
+import { YearAhead } from '@/components/spend/year-ahead';
 import { ErrorNote, Estimated, Invoiced, Legend, Lede, Stat, StatePill, Swatch } from '@/components/spend/bits';
 import { Card, CardBody } from '@/components/ui/card';
 import { CopyButton } from '@/components/ui/copy-button';
@@ -222,9 +223,15 @@ export function OverviewPage() {
             {f.status === 'ok' && (
               <>
                 <span className="figure">
-                  {usd(f.low)} – {usd(f.high)}
+                  P10–P90 {usd(f.low)} – {usd(f.high)}
                 </span>
                 <br />
+                {f.committed && f.committed !== '0.000000' && (
+                  <>
+                    with <span className="figure">{usd(f.committed)}</span> committed beyond reservations
+                    <br />
+                  </>
+                )}
               </>
             )}
             {overBy && overBy.compare('0') > 0 ? (
@@ -290,12 +297,15 @@ export function OverviewPage() {
                 </span>
               )}
             </Legend>
-            <p className="mt-2 text-[12px] text-t3">{f.basis}.</p>
+            <p className="mt-2 text-[12px] text-t3">
+              {f.basis}.{f.band && ` ${f.band}.`}
+            </p>
           </CardBody>
         </Card>
 
         <div className="flex min-w-0 flex-col gap-3.5">
           <NeedsYou />
+          <YearAhead />
           <Card title="Where the figures come from">
             <ul>
               <li className="flex gap-3 border-t border-hair px-4 py-3 first:border-t-0">

@@ -1,6 +1,6 @@
 # Feature 006: Forecasts (wave 3, "Plan and reconcile")
 
-**Status**: specified 2026-11-15 · **Plan**: [plan.md](plan.md) · **Tasks**: [tasks.md](tasks.md) · **Contract**:
+**Status**: built 2026-11-15 · **Plan**: [plan.md](plan.md) · **Tasks**: [tasks.md](tasks.md) · **Contract**:
 `libs/contracts/src/spend.ts` (`Overview.forecast`), `libs/contracts/src/wave3.ts` (`ForecastView`)
 
 ## Why

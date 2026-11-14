@@ -326,6 +326,17 @@ function Evidence({ d }: { d: RequestDetail }) {
         <div className="mt-2.5">
           <Msg tone={over || e.stateNow === 'over' || e.stateNow === 'risk' ? 'warn' : undefined}>{forecastMsg}</Msg>
         </div>
+        {e.budgetMissing && (
+          <div className="mt-2" data-testid="budget-missing">
+            <Msg tone="warn">{e.budgetMissing}.</Msg>
+          </div>
+        )}
+        {e.committed && e.committed !== '0.000000' && (
+          <p className="mt-1.5 text-[12.5px] text-t3" data-testid="committed">
+            Approved monthly requests beyond their reserved months commit {usd(e.committed)} more to {r.costCenter.code}{' '}
+            this month; the forecast counts it.
+          </p>
+        )}
         {e.automaticThisMonth && e.automaticThisMonth.costCenter !== '0.000000' && (
           <p className="mt-1.5 text-[12.5px] text-t3" data-testid="automatic-this-month">
             Approved by policy on {r.costCenter.code} this month: {usd(e.automaticThisMonth.costCenter)}

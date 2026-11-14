@@ -3,11 +3,18 @@
  * agents, contracts and seats, the access review. Each route checks its scope; what only a person may do is checked
  * again by its service (a key never imports, attests or acknowledges).
  */
-import { type ApiScope, InvoiceImportInput, InvoiceVoidInput, ReconciliationQuery } from '@landledger/contracts';
+import {
+  type ApiScope,
+  ForecastQuery,
+  InvoiceImportInput,
+  InvoiceVoidInput,
+  ReconciliationQuery,
+} from '@landledger/contracts';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { parse } from './app.js';
 import { notFound } from './errors.js';
+import { yearAhead } from './forecast.js';
 import type { Services } from './services.js';
 
 const Id = z.object({ id: z.string().min(1).max(100) });
@@ -46,5 +53,11 @@ export function registerWave3(
       FROM requests WHERE id = ${parse(Id, r.params).id}`;
     if (!row) throw notFound('Request');
     return { lifecycle: await invoices.lifecycle(row) };
+  });
+
+  // 006 Forecasts ------------------------------------------------------------------------------------------------------
+  app.get('/api/forecast', async (r) => {
+    need(r, 'read');
+    return yearAhead(sql, services.spend, services.spend.today(), parse(ForecastQuery, r.query).months);
   });
 }

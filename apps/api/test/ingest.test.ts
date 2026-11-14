@@ -500,6 +500,8 @@ describe('cost metrics', () => {
       correction: false,
       source: 'clickland',
       amount: Money.parse('0.5', 'USD'),
+      quantity: null,
+      unit: null,
       tags: { service: 'landflow-host', namespace: 'landflow-dev' },
       serviceName: 'Kubernetes (orbstack)',
       serviceCategory: 'Compute',

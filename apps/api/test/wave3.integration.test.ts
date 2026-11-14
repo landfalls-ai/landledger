@@ -312,4 +312,95 @@ describe.skipIf(!integrationEnabled('db'))('wave 3: plan and reconcile', () => {
       expect((await total('2026-11')).toString()).toBe(before.toString());
     });
   });
+  // 006 Forecasts ------------------------------------------------------------------------------------------------------
+
+  describe('forecasts (spec 006)', () => {
+    const raise = async (body: Record<string, unknown>) => {
+      const res = await as('tal', 'POST', '/api/requests', {
+        kind: 'infra_change',
+        recurrence: 'monthly',
+        start: '2026-11-16',
+        ...body,
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      return res.json().request;
+    };
+
+    it('sends a request whose first full month has no budget to Finance, never automatically, and says why (decision 8)', async () => {
+      await services.budgets.import(
+        { csv: 'cost_center,month,amount,currency\nRND-DATA,2026-11,5000.00,USD\n', note: 'test: room in November' },
+        principal('dana'),
+      );
+      const r = await raise({
+        title: 'A data node',
+        costCenter: 'RND-DATA',
+        amount: { amount: '50.00', currency: 'USD' },
+      });
+      expect(r.automatic).toBe(false);
+      expect(r.status).toBe('pending');
+      expect(r.steps.map((s: { key: string }) => s.key)).toContain('finance');
+      expect(r.policy.reason).toMatch(/Nothing is automatic where there is no budget/);
+      const shown = (await as('shira', 'GET', `/api/requests/${r.id}`)).json();
+      expect(shown.evidence.firstFullMonth).toMatchObject({ month: '2026-12', budget: null });
+      expect(shown.evidence.budgetMissing).toMatch(/decision 8/);
+      // With December's budget too, the same request is automatic again.
+      await services.budgets.import(
+        { csv: 'cost_center,month,amount,currency\nRND-DATA,2026-12,5000.00,USD\n', note: 'test: December' },
+        principal('dana'),
+      );
+      const again = await raise({
+        title: 'A data node again',
+        costCenter: 'RND-DATA',
+        amount: { amount: '50.00', currency: 'USD' },
+      });
+      expect(again).toMatchObject({ status: 'approved', automatic: true });
+      expect((await as('shira', 'GET', `/api/requests/${again.id}`)).json().evidence.budgetMissing).toBeNull();
+    });
+
+    it('counts an approved open-ended request beyond its reserved months as committed, month by month', async () => {
+      const f = (await as('avi', 'GET', '/api/forecast?months=6')).json();
+      expect(f.months.map((m: { month: string }) => m.month)).toEqual([
+        '2026-11',
+        '2026-12',
+        '2027-01',
+        '2027-02',
+        '2027-03',
+        '2027-04',
+      ]);
+      // "A data node again": $50 a month, reserved 16 November to January; from February it is committed.
+      const by = Object.fromEntries(f.months.map((m: { month: string }) => [m.month, m]));
+      expect(by['2026-12'].reserved).toBe('50.000000');
+      expect(by['2026-12'].committed).toBe('0.000000');
+      expect(by['2027-02'].committed).toBe('50.000000');
+      expect(by['2027-02'].reserved).toBe('0.000000');
+      // February has no budget: "no budget", never on track.
+      expect(by['2027-02']).toMatchObject({ budget: null, state: 'none' });
+      expect(f.commitments.find((c: { title: string }) => c.title === 'A data node again')).toMatchObject({
+        costCenter: 'RND-DATA',
+        monthly: '50.000000',
+        reservedThrough: '2027-01',
+      });
+      expect(Number(f.annualised.commitments)).toBeGreaterThanOrEqual(600);
+      // Two days of Clickland data are not enough for a band: the forecast says so instead of guessing.
+      if (f.status === 'insufficient') {
+        expect(f.basis).toMatch(/Not enough data yet/);
+        expect(by['2027-02'].runRate).toBeNull();
+        expect(f.annualised.total).toBeNull();
+      } else {
+        for (const m of f.months) {
+          expect(Number(m.runRate.p10)).toBeLessThanOrEqual(Number(m.runRate.p50));
+          expect(Number(m.runRate.p50)).toBeLessThanOrEqual(Number(m.runRate.p90));
+        }
+      }
+      // Overview carries the committed figure and P10 ≤ P50 ≤ P90 when it has a band.
+      const ov = (await as('avi', 'GET', '/api/overview?month=2026-11')).json();
+      expect(ov.forecast.committed).toBe('0.000000');
+      if (ov.forecast.p50) {
+        expect(Number(ov.forecast.p10)).toBeLessThanOrEqual(Number(ov.forecast.p50));
+        expect(Number(ov.forecast.p50)).toBeLessThanOrEqual(Number(ov.forecast.p90));
+        expect(Number(ov.forecast.p10)).toBeGreaterThanOrEqual(Number(ov.monthToDate.total));
+      }
+      expect((await as('avi', 'GET', '/api/forecast?months=0')).statusCode).toBe(400);
+    });
+  });
 });

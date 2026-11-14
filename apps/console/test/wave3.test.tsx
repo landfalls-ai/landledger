@@ -97,3 +97,76 @@ describe('Reconciliation (spec 005)', () => {
     expect(invoicedShare('5', '0')).toBe(100);
   });
 });
+
+const FORECAST = {
+  from: '2026-11',
+  status: 'ok',
+  basis: 'Run rate over the last 7 days',
+  months: [
+    {
+      month: '2026-11',
+      days: 30,
+      runRate: { p10: '200.000000', p50: '240.000000', p90: '280.000000' },
+      actual: '100.000000',
+      reserved: '60.000000',
+      committed: '0.000000',
+      total: '400.000000',
+      budget: '500.000000',
+      state: 'ok',
+    },
+    {
+      month: '2027-02',
+      days: 28,
+      runRate: { p10: '400.000000', p50: '448.000000', p90: '496.000000' },
+      actual: '0.000000',
+      reserved: '0.000000',
+      committed: '120.000000',
+      total: '568.000000',
+      budget: null,
+      state: 'none',
+    },
+  ],
+  annualised: {
+    runRate: { p10: '5000.000000', p50: '5840.000000', p90: '6700.000000' },
+    commitments: '1440.000000',
+    total: '968.000000',
+    budget: '500.000000',
+  },
+  commitments: [
+    {
+      requestId: 'req_9',
+      number: 'R-9',
+      title: 'A bigger node',
+      costCenter: 'ENG-AGENTS',
+      monthly: '120.000000',
+      reservedThrough: '2027-01',
+    },
+  ],
+};
+
+describe('The year ahead (spec 006)', () => {
+  it('shows each month with its band, reserved and committed, says "No budget" where there is none, and annualises', async () => {
+    const { YearAhead } = await import('../src/components/spend/year-ahead');
+    const { render } = await import('@testing-library/react');
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
+    const { MemoryRouter } = await import('react-router');
+    mockApi({ '/api/forecast': [200, FORECAST] });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <YearAhead />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const feb = await screen.findByTestId('ahead-2027-02');
+    expect(feb).toHaveTextContent('$400.00–$496.00 run rate');
+    expect(feb).toHaveTextContent('$120.00 committed');
+    expect(feb).toHaveTextContent('No budget');
+    expect(screen.getByTestId('ahead-2026-11')).toHaveTextContent('On track');
+    expect(screen.getByTestId('ahead-2026-11')).toHaveTextContent('$60.00 reserved');
+    const a = screen.getByTestId('annualised');
+    expect(a).toHaveTextContent('$5,840');
+    expect(a).toHaveTextContent('$1,440 a year of approved monthly requests (1)');
+    expect(within(a).getByText('R-9')).toBeInTheDocument();
+  });
+});

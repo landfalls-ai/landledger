@@ -15,6 +15,8 @@ const line = (source: string, day: string, cost: string, costCenter = 'ENG-PLATF
   correction: false,
   source,
   amount: usd(cost),
+  quantity: null,
+  unit: null,
   tags: {},
   serviceName: 's',
   serviceCategory: 'Compute',

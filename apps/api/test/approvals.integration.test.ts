@@ -108,6 +108,18 @@ describe.skipIf(!integrationEnabled('db'))('wave 2: requests, decisions, reserva
       },
       principal('dana'),
     );
+    // Wave 3 (decision 8): a month with no budget is never on track, so December (these monthly requests' first full
+    // month) gets November's budgets, and the paths below stay as wave 2 tested them.
+    const nov = await services.budgets.forMonth('2026-11');
+    await services.budgets.import(
+      {
+        csv: `cost_center,month,amount,currency\n${[...nov.entries()]
+          .map(([code, b]) => `${code},2026-12,${b.amount.toDecimal().toString()},USD`)
+          .join('\n')}\n`,
+        note: 'test: December like November',
+      },
+      principal('dana'),
+    );
     const key = async (
       name: string,
       scopes: ('requests:write' | 'decisions:relay' | 'reservations:write' | 'read')[],
@@ -298,7 +310,10 @@ describe.skipIf(!integrationEnabled('db'))('wave 2: requests, decisions, reserva
 
   it('adds Finance above 5,000 and the CFO above 25,000; seats always go to the budget owner; in budget, the owner alone', async () => {
     await services.budgets.import(
-      { csv: 'cost_center,month,amount,currency\nENG-PRODUCT,2026-11,100000.00,USD\n', note: 'test' },
+      {
+        csv: 'cost_center,month,amount,currency\nENG-PRODUCT,2026-11,100000.00,USD\nENG-PRODUCT,2026-12,100000.00,USD\n',
+        note: 'test',
+      },
       principal('dana'),
     );
     const path = async (body: Record<string, unknown>) =>

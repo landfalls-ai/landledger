@@ -146,3 +146,10 @@ The user said "start everything, don't wait for me", so the proposed defaults st
 7. **Business days (15 Nov 2026, a default to confirm):** approval deadlines count Sunday to Thursday in
    `Asia/Jerusalem` on this machine (`LANDLEDGER_BUSINESS_DAYS=sun-thu`, `LANDLEDGER_TZ=Asia/Jerusalem`); the code's
    default stays Monday to Friday in UTC. The holiday list (`deploy/holidays.txt`) is empty until Finance gives one.
+8. **No budget (15 Nov 2026, a default to confirm):** a month with no budget is never _on track_; it shows _no budget_.
+   A request landing in a month (or a first full month) with no budget for its cost center is never automatic and
+   gets the Finance step, and the Request page says why. The alternative, treating a missing budget as unlimited, would
+   let the automatic threshold spend into months nobody has planned.
+9. **Contract policy (15 Nov 2026, a default to confirm):** a `contract` request is approved for its total contract
+   value and term, never automatically: the budget owner and Finance always, the CFO above USD 25,000 of TCV (policy
+   `pol_contract_1`). Seats are its reservation unit.
