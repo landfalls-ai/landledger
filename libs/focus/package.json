@@ -1,0 +1,24 @@
+{
+  "name": "@landledger/focus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The FOCUS columns Landledger keeps and its x_ extensions (constants only until specs/001-money-and-records settles them).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
