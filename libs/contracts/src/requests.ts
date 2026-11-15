@@ -40,6 +40,8 @@ export const RequestKind = z.enum([
   'other',
   /** Wave 3 (spec 009): a contract, for its total contract value and term; it reserves seats, not money. */
   'contract',
+  /** Wave 4 (spec 012): reopen a locked month; the CFO decides, Landledger applies it. */
+  'period_reopen',
 ]);
 export type RequestKind = z.infer<typeof RequestKind>;
 
@@ -52,10 +54,16 @@ export const REQUEST_KIND_LABEL: Readonly<Record<RequestKind, string>> = {
   policy_change: 'Policy change',
   other: 'Other',
   contract: 'Contract',
+  period_reopen: 'Reopen a month',
 };
 
 /** Kinds whose change Landledger applies itself when the last step approves (the others are applied by Landflow). */
-export const SELF_APPLIED_KINDS: readonly RequestKind[] = ['rate_card_change', 'rule_set_change', 'policy_change'];
+export const SELF_APPLIED_KINDS: readonly RequestKind[] = [
+  'rate_card_change',
+  'rule_set_change',
+  'policy_change',
+  'period_reopen',
+];
 
 /**
  * Only forward: `draft → pending → approved | rejected | cancelled | expired`, and `approved → applied`. A draft can be
@@ -178,6 +186,8 @@ export const RequestChange = z.discriminatedUnion('type', [
   z.object({ type: z.literal('rate_card_version'), versionId: z.string() }),
   z.object({ type: z.literal('rule_set_version'), versionId: z.string() }),
   z.object({ type: z.literal('policy'), policyId: z.string() }),
+  /** Wave 4 (spec 012): reopen a locked month (`YYYY-MM`). */
+  z.object({ type: z.literal('period_reopen'), month: z.string() }),
 ]);
 export type RequestChange = z.infer<typeof RequestChange>;
 
@@ -189,7 +199,7 @@ export type RequestChange = z.infer<typeof RequestChange>;
  */
 export const CreateRequestInput = z
   .object({
-    kind: RequestKind.exclude(['rate_card_change', 'rule_set_change', 'policy_change']),
+    kind: RequestKind.exclude(['rate_card_change', 'rule_set_change', 'policy_change', 'period_reopen']),
     title: z.string().trim().min(3).max(200),
     /** The requester's why, in their words. */
     note: z.string().trim().max(4000).default(''),
@@ -416,6 +426,11 @@ export interface RequestSummary extends Omit<
   stepCount: number;
   /** The cost center's budget left in the request's first month, after this request (null without a budget). */
   budgetLeftAfter: Amount | null;
+  /**
+   * Wave 4: a `tool_or_seat` request on a contract reserves seats, not money, until Landbright prices seats; its
+   * amount shows as "within contract" and is in no reservation, commitment or forecast. Absent on older answers.
+   */
+  withinContract?: boolean;
 }
 
 export const RequestBox = z.enum(['waiting', 'mine', 'decided', 'open', 'all', 'confirm']);

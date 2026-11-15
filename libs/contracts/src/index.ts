@@ -46,7 +46,8 @@ export type MoneyJson = z.infer<typeof MoneyJson>;
  * What an API key may do (docs/architecture.md, "Security and controls"). No scope decides a request.
  * `webhooks:write` (review of wave 2) creates, lists and deletes only the subscriptions that key created.
  * `decisions:relay` carries a person's signed press from a relay channel (Slack); a key holding it may not also hold
- * `requests:write` or `admin`, so the key that raises a request never also carries its approval.
+ * `requests:write` or `admin`, so the key that raises a request never also carries its approval. `notes:draft` (wave
+ * 4): an agent's key submits variance note drafts; an analyst, a person, accepts them.
  */
 export const ApiScope = z.enum([
   'read',
@@ -56,6 +57,8 @@ export const ApiScope = z.enum([
   'webhooks:write',
   'ingest',
   'admin',
+  /** Wave 4 (spec 015): submit a variance note draft (text and the figures it cites); never accepts one. */
+  'notes:draft',
 ]);
 export type ApiScope = z.infer<typeof ApiScope>;
 
@@ -377,6 +380,18 @@ export const WebhookEvent = z.enum([
   'contract.notice_missed',
   /** Review of wave 3: seats went back to their contract (released or expired unapplied, spec 010). */
   'seat.released',
+  /** Wave 4 (spec 015): the close reached step 8; draft the variance notes the snapshot needs. */
+  'notes.draft_requested',
+  /** Wave 4 (spec 015): an analyst accepted a variance note. */
+  'note.accepted',
+  /** Wave 4 (spec 013): a controller accepted the month's accrual proposal (and froze the snapshot). */
+  'accrual.accepted',
+  /** Wave 4 (spec 012): a controller and the CFO locked a month; the lock's audit entry is anchored at once. */
+  'period.locked',
+  /** Wave 4 (spec 012): the CFO approved reopening a locked month. */
+  'period.reopened',
+  /** Wave 4 (spec 017): the month's snapshot and notes were uploaded to Datarails (the fake on this machine). */
+  'datarails.uploaded',
 ]);
 export type WebhookEvent = z.infer<typeof WebhookEvent>;
 
@@ -406,3 +421,4 @@ export * from './requests.js';
 export * from './sources.js';
 export * from './spend.js';
 export * from './wave3.js';
+export * from './wave4.js';

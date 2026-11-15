@@ -8,8 +8,9 @@ The API listens on `http://127.0.0.1:4810`; the console proxies `/api` to it. Er
 with `LANDLEDGER_DEV_AUTH=on` on loopback only, the local developer (a controller). A person's scopes come from their
 roles: cfo and controller `read`, `requests:write`, `admin`; fpa, budget_owner and engineer `read`, `requests:write`;
 auditor `read`. `admin` includes every scope. Key scopes: `read`, `requests:write`, `reservations:write`,
-`decisions:relay`, `webhooks:write`, `ingest`, `admin`; a `decisions:relay` key holds neither `requests:write` nor
-`admin`.
+`decisions:relay`, `webhooks:write`, `ingest`, `admin`, and (wave 4) `notes:draft`; a `decisions:relay` key holds
+neither `requests:write` nor `admin`. `notes:draft` submits variance note drafts and nothing else: no person's role
+carries it, and nothing it holds accepts a note.
 
 | Route | Needs | Does |
 |---|---|---|
@@ -23,7 +24,7 @@ auditor `read`. `admin` includes every scope. Key scopes: `read`, `requests:writ
 | `GET /api/rate-cards`, `/api/rate-cards/:id` | `read` | Rate cards with their versions (`proposed` or `approved`) and lines; `current` is the approved version in effect `?on=` |
 | `GET /api/periods` | `read` | Every month known to the ledger, newest first: `{ month, status, openedAt, closingBy, closingAt, lockedBy, lockedAt }` |
 | `POST /api/periods/:month/close` | `admin`, a person (controller or CFO) | `open → closing`; 409 from any other state; an API key gets 403 |
-| `POST /api/periods/:month/lock` `{ override?: { reason } }` | `admin`, a person (controller or CFO; the override: a controller) | `closing → locked`, final; earlier months must be locked first; an API key gets 403. 409 with `details.problems` unless the month is whole: ended, a complete run for every source-day since the source's first data, no provisional rows, every record allocated. A controller's override with a reason locks anyway, audited (`period.locked` with `checks: overridden`, the problems and the reason) |
+| `POST /api/periods/:month/lock` `LockSignInput` | `admin`, a person (controller or CFO) | Wave 4: the same as `POST /api/close/:month/lock`, a signature on a four-eyes lock (below). The wave 1 override is gone: a step that can't go green is explained on the close (audited), never overridden at the lock |
 | `GET /api/records` | `read` | Cost records under FOCUS names, amounts as decimal strings. `?month=YYYY-MM&basis=&source=&sourceKey=&limit=1..1000&after=<next>`; `{ records, next }` |
 | `GET /api/audit?limit=&before=` | `read` | The audit log, newest first, with each entry's hash and the one before |
 | `GET /api/audit/verify` | `read` | Walks the hash chain and compares it with the last anchor: `{ ok, checked, head, brokenAt, reason, anchor: { seq, hash, at } \| null, truncated }`; `truncated` when the log ends before the anchored entry |
@@ -148,6 +149,41 @@ The schemas are in `libs/contracts/src/wave3.ts`. Amounts are six-decimal string
 | `POST /api/access-reviews/:id/items/:itemId/attest` `{ decision: keep\|revoke, comment, confirm? }` | `admin`, a person (controller or CFO) | Keeps or revokes one item (a comment is required to revoke); never an item about yourself (403), a `cfoOnly` item only by the CFO; once (409). A key, link or session revoke needs `confirm: true` and is done at once; any other is tracked until gone. Completes when every item is attested and no revoke is outstanding; audited |
 | `GET /api/forecast?months=12` (1–24) | `read` | The year ahead ([spend.md](../spend.md#the-year-ahead)): per month the run rate over its days with P10/P50/P90 (`null` without enough data), actual, reserved, committed (approved monthly requests beyond their reserved months), total, budget and state (`none` without a budget); contracted; reserved and committed net of what the run rate already projects; annualised over the next 12 months (run rate × 365 with its band, commitments bounded by their end dates, contracted, Σ months, Σ budgets); the commitments. The current month's total is Overview's forecast. `status: insufficient` keeps _Not enough data yet_ |
 
+## Wave 4: month-end (specs 012–019)
+
+The schemas are in `libs/contracts/src/wave4.ts`. Amounts are six-decimal strings in USD. **People close; agents
+draft.** Every write below is a person's, signed in with Landbright (an API key or the local developer gets 403),
+except a note draft, which is an agent's key with `notes:draft`.
+
+| Route | Needs | Does |
+|---|---|---|
+| `GET /api/close?month=` | `read` | `CloseView`: the ten steps in order (`usage_ingested`, `reconciled`, `unallocated`, `no_dev_rows`, `no_open_anomalies`, `no_outstanding_revokes`, `accrual_accepted`, `notes_accepted`, `datarails_uploaded`, `locked`), each `done`, `explained`, `red` (with its problems) or `waiting`, who did it and when; the snapshot, the signatures, each lock with its anchored audit entry, reopens. A month still open is a dry run (`dryRun: true`): the gates as they stand, nothing to act on. A locked month shows its steps as recorded at the lock ([close.md](../close.md)) |
+| `POST /api/close/:month/start` `{ note? }` | `admin`, a person (controller or CFO) | `open → closing` (as `POST /api/periods/:month/close`): the month must have ended; rules and rate cards freeze for it; webhook `period.closing` |
+| `POST /api/close/:month/explain` `CloseExplainInput` `{ step, rowKey?, note }` | `requests:write`, a person (controller, CFO or FP&A) | Marks a red step explained, with a note of 3 characters or more (audited `close.explained`); step 2 explains one reconciliation row (`rowKey` `provider\|model`). Never step 4 (`no_dev_rows`) or 10 (`locked`): 400. 409 for a locked month (unless reopened) or a month still open |
+| `POST /api/close/:month/lock` `LockSignInput` `{ as?, note? }` | `admin`, a person (controller or CFO) | A signature on the lock (`LockResult`). Steps 1–9 must be done or explained and the live figures must still hash to the snapshot (409 otherwise, `details.problems`). The first signature waits (`waitingFor`); the lock happens when a second, different person signs and the two are a controller and the CFO (409 for the same person or two of one role). Locking writes `period.locked` to the audit log with both signatures and the snapshot's sha256, anchors the chain's head at once (an `audit_anchors` row, a log record to Clickland, webhook `audit.anchor`), and sends `period.locked`. Months lock in order |
+| `POST /api/close/:month/reopen` `{ reason }` | `admin`, a person (controller) | Raises a `period_reopen` request for a locked month (201 `{ request }`); only the CFO decides it, never the person who asked. Approved, the month is reopened: its ledger stays closed to inserts (corrections post to the open month), notes and the upload can be done again, and it locks again with two signatures. 409 for a month not locked, or with a reopen pending |
+| `GET /api/accruals?month=` | `read` | `AccrualsView`: the month's newest accrual proposal (lines, total, status, sha256, the snapshot accepting it froze), its earlier versions, and the earlier accrual lines reversed in this month |
+| `POST /api/accruals/:month/propose` `{ note? }` | `requests:write`, a person (controller, CFO or FP&A) | A new proposal for an ended month (201 `AccrualView`): per AI provider, model and cost center, the estimates not yet invoiced; per contract, its value per month of term not invoiced. Supersedes an unaccepted proposal; 409 once accepted (unless the snapshot is out of date) or for a locked month |
+| `POST /api/accruals/:id/accept` `{ sha256, note? }` | `admin`, a person (controller) | Accepts the proposal as shown (`sha256` of its lines; 409 if it changed) once steps 1–6 are done or explained; freezes the snapshot (spec 016) in the same transaction; audited `accrual.accepted`, webhook `accrual.accepted`, then `notes.draft_requested` |
+| `GET /api/accruals/journal.csv?month=` | `read` | The journal entry for the controller to book (Landledger never posts to a GL): the month's accepted accrual (debit technology expense by P&L class and cost center, credit accrued liabilities) and the reversals booked in the month of earlier accruals whose invoices posted (the opposite entries). Balanced; one row per line and side |
+| `GET /api/forecast/history?month=&costCenter=` | `read` | `ForecastHistoryView`: the forecast stored each day (P10, P50, P90 to month-end per cost center, and `TOTAL`), the day-10 forecast, and its accuracy against the snapshot's actual at close (within ±10%?) |
+| `GET /api/notes?month=` | `read` | `NotesView`: the notes the month's snapshot needs (the month as a whole, `TOTAL`, and each cost center with an actual or a budget), each with the figures it may cite, and every version of every note |
+| `GET /api/notes/:month/figures` | `read` (a `notes:draft` key may call it) | `{ snapshotSha256, needed: NoteFigures[] }`: what an agent may cite |
+| `POST /api/notes/:month/drafts` `NoteDraftInput` | `notes:draft` (or `admin`) | An agent's draft for one note (201 `NoteView`): text, the figures it cites (each checked against the snapshot it names: 422 `details.mismatches` on any difference, 409 if that snapshot is not the month's current one), the agent and its sponsor (a known person; the key's minter by default). A new version of the note; every version is kept |
+| `POST /api/notes/:month/template` `{ costCenter? }` | `requests:write`, a person | The fallback when no agent answers: a deterministic draft from the figures for each needed note with no draft (or the one named), written by Landledger (`kind: template`) |
+| `POST /api/notes/:id/accept` `{ version, text?, comment? }` | `requests:write`, a person (FP&A or controller) | Accepts the version shown, or an edited text as a new version by the analyst; never the agent's sponsor or the person who wrote the version (403); audited `note.accepted`, webhook `note.accepted` |
+| `POST /api/notes/:id/reject` `{ version, reason }` | `requests:write`, a person (FP&A or controller) | Rejects a version with a reason (the same people as accept); a new draft can follow |
+| `GET /api/close/:month/snapshot` | `read` | `CloseSnapshotView`: the frozen figures (by cost center, P&L class, provider, the reconciliation, the requests' lifecycle, the accrual, the notes' figures, the gates) and their sha256; `current` while the live figures still hash to it; 404 before step 7 |
+| `GET /api/datarails` | `read` | `DatarailsStatus`: the MCP and upload URLs, the filebox, loopback or not, `real` (false), the budget pulls and the uploads |
+| `POST /api/datarails/budgets/pull` `{ dataModel?, scenario?, note? }` | `admin`, a person (controller or CFO) | Reads the budget from Datarails over MCP (`list_data_models`, `list_aliased_fields`, `query_data_model`) into a **pending** pull (201 `DatarailsPullView`), with its sha256 and a preview against the budget in effect. Refused (503) for a host that isn't loopback unless `LANDLEDGER_DATARAILS_REAL=true` (wave 5, the user's decision) |
+| `POST /api/datarails/budgets/pulls/:id/accept` `{ sha256, note? }`, `…/reject` `{ reason }` | `admin`, a person (controller or CFO) | The same approval as a CSV budget import: accepted, it becomes the next budget version with source `datarails` (a locked month's budget is refused, 409) |
+| `POST /api/datarails/uploads` `{ month }` | `admin`, a person (controller or CFO) | Step 9: uploads the month's snapshot as actuals (invoiced as `actual`, estimated AI usage as `accrual`, cluster cost as `memo`, never actuals) and the accepted notes to the filebox (`POST /api/v1/fileboxes/upload_file`, Basic auth), records each file's sha256 and the response; audited `datarails.uploaded`, webhook `datarails.uploaded`. 409 before the notes are accepted |
+| `GET /api/close/:month/package?format=json\|html`, `GET /api/close/:month/package.zip` | `read` | The month-end package (`MonthEndPackage`): the snapshot, reconciliation, accruals, notes, exceptions, anomalies closed in the month, decisions in the month, the uploads and the chain proof; `html` a printable page; the zip holds one CSV each and a `manifest.csv` with every file's sha256 |
+| `GET /api/cost/window?services=a,b&from=&to=` | `read` | `CostWindowView`: the estimated cost of named services (as Explore names them) over a window (ISO date-times), each day's cost taken by the share of it inside the window, today's provisional figures included; labelled `estimated`. For Landflow's incident-cost flow into Landfall postmortems |
+
+`GET /api/periods` rows carry, additively, `reopened` and `round`. `RequestSummary.withinContract` (wave 4): a
+`tool_or_seat` request on a contract reserves seats only, not money, and shows its amount as _within contract_.
+
 ## Webhook events
 
 Standard Webhooks, from the outbox; subscriptions are managed by an admin (`/api/webhooks`). Each body is
@@ -173,4 +209,10 @@ Standard Webhooks, from the outbox; subscriptions are managed by an admin (`/api
 | `seat.released` | a seat request's seats go back to the contract (released, or expired unapplied after 30 days) | `SeatReleasedData`: `{ requestId, number, contractId, seats, reason, from, url }` |
 | `access_review.due` | a quarter's access review is due (from its first day), and each week after while not complete (`reminder: true`) | `AccessReviewDueData`: `{ quarter, reviewId, url, reminder? }` ([access-review.md](../access-review.md)) |
 | `access_review.missed` | a quarter ended without a completed review (once) | `AccessReviewDueData` with `missed: true` |
+| `notes.draft_requested` | the close reaches step 8 (the accrual accepted and the snapshot frozen), once per snapshot | `NotesDraftRequestedData`: `{ month, snapshotSha256, needed: NoteFigures[], draftUrl, url }` |
+| `note.accepted` | an analyst accepts a variance note | `NoteAcceptedData`: `{ month, costCenter, noteId, version, url }` |
+| `accrual.accepted` | a controller accepts the month's accrual proposal | `AccrualAcceptedData`: `{ month, accrualId, total, snapshotSha256, url }` |
+| `period.locked` | the second signature locks a month (also after a reopen) | `PeriodLockedData`: `{ month, round, signoffs, auditSeq, auditHash, snapshotSha256, url }` |
+| `period.reopened` | the CFO approves a `period_reopen` request | `PeriodReopenedData`: `{ month, round, requestId, reason, url }` |
+| `datarails.uploaded` | the month's snapshot and notes were uploaded (or the upload failed) | `DatarailsUploadedData`: `{ month, uploadId, snapshotSha256, ok, files }` |
 | `approval.anomaly` | an approval pattern: a split, automatic approvals again and again, a decision relayed seconds after its card, one approver for one requester | `{ anomaly: AnomalyView, url, escalation: false }` |

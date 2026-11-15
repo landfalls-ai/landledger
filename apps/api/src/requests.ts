@@ -1349,6 +1349,7 @@ export class Requests {
       const v = await this.allocation.approveIn(tx, change.versionId, by);
       return { change, effectiveFrom: v.effectiveFrom, version: v.version, by: by.actor };
     }
+    if (change.type === 'period_reopen') throw new ApiError('unavailable', 'Reopening a month is built in spec 012');
     await this.policies.approveIn(tx, change.policyId, decider.id);
     const p = await this.policies.byId(change.policyId, tx);
     await this.audit.append(
