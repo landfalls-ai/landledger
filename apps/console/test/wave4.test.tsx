@@ -207,6 +207,14 @@ const NOTES = (sponsorId: string) => ({
   notes: [NOTE(sponsorId)],
 });
 
+describe('Month-end’s month', () => {
+  it('falls back to the last month that ended when ?month= is not a month', async () => {
+    mockApi({ '/api/auth/me': [200, ME], '/api/close': [200, CLOSING], '/api/requests': [200, REQUESTS] });
+    renderAt('/close?month=');
+    expect(await screen.findByTestId('month')).not.toHaveTextContent('Invalid');
+  });
+});
+
 describe('Variance notes (spec 015)', () => {
   it('lets an analyst who is not the sponsor accept a draft, and shows what it cites', async () => {
     mockApi({ '/api/auth/me': [200, ME], '/api/notes': [200, NOTES('usr_9')], '/api/requests': [200, REQUESTS] });

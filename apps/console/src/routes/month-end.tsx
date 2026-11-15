@@ -62,7 +62,8 @@ function useRoles() {
 
 function useMonth(): [string, (m: string) => void] {
   const [params, setParams] = useSearchParams();
-  const month = params.get('month') ?? lastEnded();
+  const asked = params.get('month');
+  const month = asked && /^\d{4}-(0[1-9]|1[0-2])$/.test(asked) ? asked : lastEnded();
   return [month, (m) => setParams({ month: m })];
 }
 

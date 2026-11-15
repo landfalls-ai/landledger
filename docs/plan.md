@@ -139,6 +139,19 @@ Each wave ends with something finance can use, checked live, with screenshots at
   - **The month-end package.** One page and a zip.
   - **`GET /api/cost/window`.** An incident's estimated cost.
   - **Seats.** A seat within its contract reserves no money (spec 020).
+  - **Live, 15 Nov 2026: October 2026 is closed and locked.**
+    - **Start and accrual.** admin@landbright.test (controller) started the close at 03:44 UTC, then proposed and
+      accepted a $0.00 accrual. The month's AI calls ran on Ollama, and no contract was in term. Accepting froze
+      snapshot `9502767b…`.
+    - **Notes.** Landflow's _Variance note drafter_ flow drafted the month's note with the `landflow notes` key
+      (v1). A second draft from the same key superseded it (v2). Yoav Ben-David accepted v2 in his own session.
+    - **Datarails.** The admin uploaded October to fake-datarails (HTTP 201, upload `up_3e814a2f30b74a04`).
+    - **The lock.** The admin signed, and then Dana Shalev (CFO) signed in her own session at 04:32:53 UTC. That
+      locked the month: audit entry 122, anchored at once with hash `21da5d1f…77be8a`. The chain verified whole
+      over 123 entries.
+    - **November, dry run.** Steps 1 (the month hasn't ended) and 5 (6 anomalies still open) are red.
+    - **Budget pull.** _Budget FY27_ was pulled from fake-datarails (28 rows, December 2026 to March 2027,
+      $1,741.50) and left pending.
   - **Not yet:** Landlens's cost per workload (still open; Explore's `GET /api/spend` already groups by namespace and
     workload), Landflow's notes and incident-cost flows (Landflow's to build, integrations.md), a real Datarails
     tenant (wave 5).
