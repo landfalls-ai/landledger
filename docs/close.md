@@ -47,7 +47,7 @@ A month moves `open → closing → locked`.
 | 4 | No dev-fixture or dev-anomaly rows | No record, invoice or anomaly in the month comes from a dev fixture or the dev spike | **never** |
 | 5 | No open anomalies | Every anomaly whose window starts in the month is closed | yes |
 | 6 | No outstanding access-review revokes | No revoke decided in a review is still waiting to take effect | yes |
-| 7 | Accrual accepted | A controller accepted the month's accrual ([accruals.md](accruals.md)), and the snapshot it froze is still current | yes |
+| 7 | Accrual accepted | A named controller accepted the month's accrual ([accruals.md](accruals.md)), and the snapshot it froze is still current. An acceptance by an account that looks like a service, made before the review of wave 4 refused one, doesn't count: the accrual is proposed and accepted again | yes |
 | 8 | Variance notes accepted | Every note the snapshot needs is accepted ([variance-notes.md](variance-notes.md)) | yes |
 | 9 | Datarails upload done | An upload of the current snapshot succeeded after the notes were accepted ([datarails.md](datarails.md)) | yes |
 | 10 | Period locked | Two signatures | **never** |

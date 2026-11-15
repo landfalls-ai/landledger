@@ -22,6 +22,7 @@ import { day as dayOf, type Sql, type Tx } from './db.js';
 import { ApiError, notFound } from './errors.js';
 import { newId, sha256 } from './ids.js';
 import { localParts } from './business-hours.js';
+import { isServiceLike } from './owners.js';
 import { actorOf, type Principal, refuseServiceLike } from './principal.js';
 import type { Journal } from './journal.js';
 import { isNotional, type Snapshots } from './snapshot.js';
@@ -309,7 +310,9 @@ export class Accruals {
       const latest = prev[0];
       if (latest?.outcome === 'accepted') {
         const snap = latest.snapshot_id ? await this.snapshots.byId(latest.snapshot_id, tx) : null;
-        if (snap && (await this.snapshots.isCurrent(snap)))
+        // An acceptance by an account that looks like a service (before should-fix 6 refused one) doesn't count: a
+        // named controller accepts the month again.
+        if (snap && (await this.snapshots.isCurrent(snap)) && !(await this.acceptedByService(latest.id, tx)))
           throw new ApiError(
             'conflict',
             `${month}'s accrual v${latest.version} is accepted and its snapshot is current: nothing to propose again`,
@@ -452,6 +455,20 @@ export class Accruals {
     });
     void result;
     return this.view(id);
+  }
+
+  /**
+   * The account that accepted `accrualId` when it looks like a service (Administrator, a bot), else null. Review of wave
+   * 4, should-fix 6: such an acceptance, made before the rule, doesn't accept step 7.
+   */
+  async acceptedByService(
+    accrualId: string,
+    tx: Tx = this.sql,
+  ): Promise<{ name: string; email: string | null } | null> {
+    const [u] = await tx<{ name: string; email: string | null }[]>`
+      SELECT u.name, u.email FROM accrual_decisions d JOIN users u ON u.id = d.decided_by
+      WHERE d.accrual_id = ${accrualId} AND d.outcome = 'accepted'`;
+    return u && isServiceLike(u) ? u : null;
   }
 
   private select() {

@@ -302,6 +302,16 @@ export class Close {
         summary: 'The figures moved since the snapshot',
         problems: ["The month's figures moved since the accrual was accepted: propose it again"],
       };
+    // Should-fix 6: an acceptance by an account that looks like a service (made before the rule) doesn't count.
+    const service = await this.accruals.acceptedByService(a.id);
+    if (service)
+      return {
+        ok: false,
+        summary: `Accepted by ${service.name}, which looks like a service account`,
+        problems: [
+          `v${a.version} was accepted by ${service.name} (${service.email ?? 'no email'}), not a named person: a controller proposes and accepts it again`,
+        ],
+      };
     return {
       ok: true,
       summary: `v${a.version}, ${Money.parse(a.total, USD).posted().toCsv()} accrued; snapshot ${s.sha256.slice(0, 12)}…`,

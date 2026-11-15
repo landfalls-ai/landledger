@@ -49,8 +49,10 @@ In one transaction, accepting does five things:
 - sends the `accrual.accepted` webhook;
 - sends `notes.draft_requested` ([variance-notes.md](variance-notes.md)).
 
-Once a proposal is accepted, proposing again returns 409. The exception is when the snapshot has gone out of date,
-for example because a late invoice moved the reconciliation. Then a new accrual freezes a new snapshot.
+Once a proposal is accepted, proposing again returns 409. The exceptions: the snapshot has gone out of date, for
+example because a late invoice moved the reconciliation (then a new accrual freezes a new snapshot), or the accepted
+version was accepted by an account that looks like a service, before the review of wave 4 refused one (then a named
+controller accepts the month again; step 7 is red until then).
 
 ## Reversal
 

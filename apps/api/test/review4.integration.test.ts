@@ -892,3 +892,36 @@ describe.skipIf(!integrationEnabled('db'))('review of wave 4: world B (no CFO ye
     expect(l!.snapshot_id).not.toBeNull();
   });
 });
+
+describe.skipIf(!integrationEnabled('db'))(
+  'review of wave 4: world C (an accrual accepted before should-fix 6)',
+  () => {
+    let w: World;
+    beforeAll(async () => {
+      w = await world();
+    }, 180_000);
+    afterAll(async () => {
+      await w?.close();
+    });
+
+    it('should-fix 6: an acceptance by an account that looks like a service, made before the rule, does not count', async () => {
+      await w.login('admin');
+      expect((await w.as('michal', 'POST', `/api/close/${OCT}/start`, {})).statusCode).toBe(200);
+      await w.explainRed();
+      const p = (await w.as('michal', 'POST', `/api/accruals/${OCT}/propose`, {})).json();
+      // As October's was: Administrator's acceptance, recorded before the rule (the check is on the name, so a disguise
+      // gets past it here, and the decision row still names the Administrator account).
+      const disguised = { ...w.principal('admin'), name: 'Ada Admin', email: 'ada@landbright.test' };
+      await w.services.accruals.accept(p.id, { sha256: p.sha256, note: 'before the rule' }, disguised);
+      const step = w.step(await w.closeOf(), 'accrual_accepted');
+      expect(step.state).toBe('red');
+      expect(step.problems.join(' ')).toMatch(/Administrator .*not a named person/);
+      // A named controller proposes and accepts it again.
+      const again = await w.as('michal', 'POST', `/api/accruals/${OCT}/propose`, {});
+      expect(again.statusCode, again.body).toBe(201);
+      const ok = await w.as('yoav', 'POST', `/api/accruals/${again.json().id}/accept`, { sha256: again.json().sha256 });
+      expect(ok.statusCode, ok.body).toBe(200);
+      expect(w.step(await w.closeOf(), 'accrual_accepted').state).toBe('done');
+    });
+  },
+);
