@@ -44,11 +44,22 @@ Each import is a new version of the invoice (`invoices`, `invoice_lines`: append
   invoice number, `x_Source = invoice` and the key `invoice:<provider>:<number>:<estimate key>`. A link
   (`invoice_estimate_links`) names the estimate it replaces.
 - **A model with no estimate**, and every other line (credits, tax, purchases, SKU-only lines), posts on its own over
-  the whole month (`invoice:<provider>:<number>:line:<n>`), tagged with the provider and model.
+  the whole month, tagged with the provider and model. A Usage line of a model is keyed
+  `invoice:<provider>:<number>:line:<n>:<model>`, so a re-issued invoice that puts another charge on the same line
+  number never inherits its links; every other line is `…:line:<n>`.
 - **A locked month** never moves: the true-up (invoiced − the month's estimates still shown, per model) is booked in
   the open month with `ChargeClass = Correction` and the locked month's charge period (`…:trueup:<model>`), and links
   those estimates `trued_up` so a second invoice for the same model and month subtracts only what is left (B2). Other
-  lines go the same way.
+  lines go the same way. A billed model always holds a record, even a $0.00 true-up, so a later estimate is linked
+  `late` to it (review of wave 4, B1).
+- **A re-import without a model it billed** gives up every claim on that model (review of wave 4, B1). In a locked
+  month its records are reversed first and what its links still keep out of the locked month is read after that, as a
+  void reads it; that comes back in the open month as restores, one per estimate. The provider's other live invoices
+  of the month then re-plan over the freed estimates, as after a void, so none counts beside an invoice that bills
+  its model.
+- **Generations.** A key entered again after it was reversed with nothing in its place takes a new generation
+  (`…#g2`, `…#g3`): a link names a record's key, and a link to the old generation (a `late` estimate, a `trued_up`
+  claim) never comes back to life when the invoice bills the model again.
 - **An estimate that arrives after its month was invoiced** (a late ingest) is linked `late` at once: it drops out of
   every figure, and its reconciliation row says _N estimates after invoice: re-reconcile_. The next import or void of
   that provider and month re-plans the split over every estimate (B1).
@@ -67,6 +78,11 @@ month imported, re-imported and voided, and the month locking at any point. Afte
 across all months is what its live invoices bill for each model they bill, plus every estimate of the models none
 bills; and once its month locks, that month's own figure never changes again. Two invoices in a locked month and a
 late estimate are examples beside it. The split itself is property-tested in `apps/api/test/invoices.test.ts`.
+
+Each fast-check seed runs 18 sequences in a database of its own. `LANDLEDGER_PROPERTY_SEEDS` names the seeds (`1-3000`
+or `3,451`); unset, one random seed runs. The review of wave 4 found two classes of failing sequence, both fixed and
+kept as regression cases: a re-import that drops a model another live invoice bills (about 16% of seeds), and, after
+the lock, a $0.00 line for a model with nothing to claim (about 0.4%).
 
 ## Corrections and voids
 

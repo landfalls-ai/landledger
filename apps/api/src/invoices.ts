@@ -273,6 +273,14 @@ const fingerprint = (r: CostRecord) =>
     r.ChargeDescription ?? '',
   ].join('|');
 
+/**
+ * A key entered again after it was reversed with nothing in its place takes a new generation (`#g2`, `#g3`, review of
+ * wave 4, B1): links name a record's key, and a link made to the old generation (a `late` estimate, a `trued_up`
+ * claim) must never come back to life when the invoice bills the same model again.
+ */
+const GENERATION = /#g\d+$/;
+export const baseKey = (key: string) => key.replace(GENERATION, '');
+
 const LIVE = `NOT EXISTS (SELECT 1 FROM cost_record_keys x WHERE x.correction_of_id = r.record_id) AND r.correction_of_id IS NULL`;
 /** A key with a live invoiced entry (an entry no reversal answers), whatever month either was booked in. */
 const LIVE_KEY = (col: string) =>
@@ -378,7 +386,17 @@ export class Invoices {
     const rows = await tx<CostRow[]>`
       SELECT r.* FROM cost_records r
       WHERE r.source = 'invoice' AND starts_with(r.source_key, ${prefix}) AND ${tx.unsafe(LIVE)}`;
-    return new Map(rows.map((r) => [`${r.basis}:${r.source_key as string}`, fromRow(r)]));
+    return new Map(rows.map((r) => [`${r.basis}:${baseKey(r.source_key as string)}`, fromRow(r)]));
+  }
+
+  /** The key a fresh entry takes: the base key, or its next generation when the base key was entered before. */
+  private async freshKey(tx: Tx, key: string, basis: string): Promise<string> {
+    const [{ n }] = (await tx`
+      SELECT count(DISTINCT source_key)::int AS n FROM cost_record_keys
+      WHERE basis = ${basis} AND (source_key = ${key} OR starts_with(source_key, ${`${key}#g`}))`) as unknown as [
+      { n: number },
+    ];
+    return n ? `${key}#g${n + 1}` : key;
   }
 
   /**
@@ -437,6 +455,53 @@ export class Invoices {
     for (const v of byKey.values())
       byModel.set(modelOf(v.last), (byModel.get(modelOf(v.last)) ?? zero()).plus(v.amount));
     return { byKey, byModel };
+  }
+
+  /**
+   * An estimate back in the open month (an estimated Correction with the estimate's dimensions): what an invoice's
+   * links keep out of a locked month once the invoice no longer bills it (a void, or a re-import without its model).
+   */
+  private restore(
+    h: { amount: Money; last: CostRecord },
+    prefix: string,
+    key: string,
+    openMonth: string,
+    run: string,
+    opts: { description: string },
+  ): CostRecord {
+    return assertValid({
+      ...h.last,
+      BilledCost: zero(),
+      EffectiveCost: h.amount,
+      ListCost: h.amount,
+      ContractedCost: h.amount,
+      ListUnitPrice: null,
+      ContractedUnitPrice: null,
+      PricingQuantity: null,
+      PricingUnit: null,
+      ConsumedQuantity: null,
+      ConsumedUnit: null,
+      ...billingPeriod(openMonth),
+      ChargeClass: 'Correction',
+      ChargeDescription: opts.description,
+      x_RecordId: newId('rec'),
+      x_Basis: 'estimated',
+      x_Source: 'invoice',
+      x_SourceKey: `${prefix}restore:${key}`,
+      x_SourceCost: h.amount.toDecimal(),
+      x_RateCardVersion: null,
+      x_IngestRunId: run,
+      x_CorrectionOfId: null,
+    });
+  }
+
+  /** The estimate keys an invoice's live records claim, by any link (split, late or trued_up). */
+  private async claims(tx: Tx, prefix: string): Promise<Set<string>> {
+    const rows = await tx<{ k: string }[]>`
+      SELECT DISTINCT l.estimated_source_key AS k FROM invoice_estimate_links l
+      JOIN cost_record_keys k ON k.record_id = l.invoiced_record_id
+      WHERE starts_with(k.source_key, ${prefix}) AND ${tx.unsafe(LIVE_KEY('k.source_key'))}`;
+    return new Set(rows.map((r) => r.k));
   }
 
   /** An invoiced record of `inv` with `cost` (the shape every line, share and true-up starts from). */
@@ -530,11 +595,12 @@ export class Invoices {
       run: string;
       dev: boolean;
       live: Map<string, CostRecord>;
-      hidden: Map<string, Money>;
+      hidden: { byKey: Map<string, { amount: Money; last: CostRecord }>; byModel: Map<string, Money> };
       split: Set<string>;
     },
   ): { records: CostRecord[]; links: { estimateKey: string; key: string; kind: 'split' | 'trued_up' }[] } {
-    const { estimates, locked, openMonth, run, dev, live, hidden, split } = ctx;
+    const { estimates, locked, openMonth, run, dev, live, split } = ctx;
+    const hidden = ctx.hidden.byModel;
     const records: CostRecord[] = [];
     const links: { estimateKey: string; key: string; kind: 'split' | 'trued_up' }[] = [];
     const prefix = prefixOf(inv.providerKey, inv.number);
@@ -561,15 +627,28 @@ export class Invoices {
     if (locked) {
       const liveUsage = new Map<string, CostRecord[]>();
       for (const r of live.values()) {
-        const k = r.x_SourceKey;
+        const k = baseKey(r.x_SourceKey);
         if (r.x_Basis !== 'invoiced' || r.ChargeCategory !== 'Usage' || lineKeys.has(k)) continue;
         if (k.startsWith(`${prefix}trueup:`) || k.startsWith(`${prefix}restore:`)) continue;
-        liveUsage.set(modelOf(r), [...(liveUsage.get(modelOf(r)) ?? []), r]);
+        liveUsage.set(modelOf(r), [...(liveUsage.get(modelOf(r)) ?? []), { ...r, x_SourceKey: k }]);
       }
       const models = new Set([...usage.keys(), ...liveUsage.keys(), ...hidden.keys()]);
       for (const model of [...models].sort()) {
         const lines = usage.get(model) ?? [];
-        const ests = lines.length ? (estimates.get(model) ?? []) : [];
+        // A model this version no longer bills gives up every claim (review of wave 4, B1): what its links still keep
+        // out of the locked month (read after its records were reversed) comes back in the open month as restores,
+        // one per estimate, as a void books them; no record or link of it claims an estimate any more.
+        if (!lines.length) {
+          for (const [key, h] of ctx.hidden.byKey)
+            if (modelOf(h.last) === model && !h.amount.isZero())
+              records.push(
+                this.restore(h, prefix, key, openMonth, run, {
+                  description: `Estimate back: ${h.last.ResourceName ?? model} is no longer on ${inv.provider} invoice ${inv.number}; it stays replaced in locked ${inv.month}`,
+                }),
+              );
+          continue;
+        }
+        const ests = estimates.get(model) ?? [];
         const t = Money.sum(
           lines.map((l) => l.amount),
           USD,
@@ -579,7 +658,7 @@ export class Invoices {
           USD,
         );
         const h = hidden.get(model) ?? zero();
-        const kept = lines.length ? (liveUsage.get(model) ?? []) : [];
+        const kept = liveUsage.get(model) ?? [];
         records.push(...kept);
         const keptSum = Money.sum(
           kept.map((r) => r.EffectiveCost),
@@ -587,25 +666,22 @@ export class Invoices {
         );
         const trueUp = t.minus(e).plus(h).minus(keptSum);
         const unclaimed = ests.filter((x) => !split.has(x.x_SourceKey));
-        if (trueUp.isZero() && !unclaimed.length) continue;
-        const display = lines[0]?.model ?? kept[0]?.ResourceName ?? model;
-        const qty =
-          lines.length && lines.every((l) => l.quantity)
-            ? lines.reduce((a, l) => a.plus(l.quantity!), Decimal.ZERO)
-            : null;
-        const unit = lines.length && lines.every((l) => l.unit === lines[0]!.unit) ? lines[0]!.unit : null;
+        // A billed model always holds a record, even at $0.00 (review of wave 4, B1): a later estimate is linked
+        // `late` to it, so it never counts beside the invoice.
+        if (trueUp.isZero() && !unclaimed.length && kept.length) continue;
+        const display = lines[0]!.model!;
+        const qty = lines.every((l) => l.quantity) ? lines.reduce((a, l) => a.plus(l.quantity!), Decimal.ZERO) : null;
+        const unit = lines.every((l) => l.unit === lines[0]!.unit) ? lines[0]!.unit : null;
         const key = `${prefix}trueup:${model}`;
         const lineNos = lines.map((l) => l.line).join(', ');
         records.push(
           inOpenMonth({
-            ...this.base(inv, lines[0] ?? null, display, trueUp, run, dev),
+            ...this.base(inv, lines[0]!, display, trueUp, run, dev),
             ChargeCategory: 'Usage',
             ChargeFrequency: 'Usage-Based',
             ConsumedQuantity: qty && unit ? qty : null,
             ConsumedUnit: qty && unit ? unit : null,
-            ChargeDescription: lines.length
-              ? `${display} on ${inv.provider} invoice ${inv.number} (line ${lineNos}): ${amount(t)} invoiced less ${amount(e)} estimated${h.isZero() ? '' : `, ${amount(h)} of it replaced before the lock`}${keptSum.isZero() ? '' : ` and ${amount(keptSum)} posted then`}, in locked ${inv.month}`
-              : `${display} is no longer on ${inv.provider} invoice ${inv.number}: ${amount(h)} of estimates back, ${amount(keptSum)} posted before the lock reversed, in locked ${inv.month}`,
+            ChargeDescription: `${display} on ${inv.provider} invoice ${inv.number} (line ${lineNos}): ${amount(t)} invoiced less ${amount(e)} estimated${h.isZero() ? '' : `, ${amount(h)} of it replaced before the lock`}${keptSum.isZero() ? '' : ` and ${amount(keptSum)} posted then`}, in locked ${inv.month}`,
             x_SourceKey: key,
           }),
         );
@@ -627,7 +703,9 @@ export class Invoices {
           records.push({
             ...this.base(inv, l, display, l.amount, run, dev),
             ChargeDescription: `${display} on ${inv.provider} invoice ${inv.number}, line ${l.line}; no estimate to replace`,
-            x_SourceKey: `${prefix}line:${l.line}`,
+            // The model is in the key (review of wave 4, B1): a `late` link names this line's key, so a re-issued
+            // invoice that puts another charge on the same line number must never keep that estimate replaced.
+            x_SourceKey: `${prefix}line:${l.line}:${model}`,
           }),
         );
         continue;
@@ -684,6 +762,8 @@ export class Invoices {
     by: Principal,
     userId: string,
     input: { fileName?: string; note: string; origin: 'entered' | 'dev-fixture'; fileSha: string },
+    /** Re-plan the provider's other live invoices of the month if this version frees estimates (false in a re-plan). */
+    replan = true,
   ): Promise<{ id: string; months: string[] }> {
     const id = invoiceId(inv.providerKey, inv.number);
     await tx`SELECT pg_advisory_xact_lock(hashtext(${`invoice:${id}`}))`;
@@ -710,22 +790,39 @@ export class Invoices {
               ${tx.json({ invoice: inv.number, provider: inv.provider, origin: input.origin, version: (prev?.version ?? 0) + 1 })},
               ${userId})`;
     const prefix = prefixOf(inv.providerKey, inv.number);
-    const live = await this.liveOf(tx, prefix);
-    const want = this.desired(inv, {
-      estimates: dev ? new Map() : await this.estimatesOf(tx, inv.providerKey, prefix, inv.month),
-      locked,
-      openMonth,
-      run,
-      dev,
-      live,
-      hidden: locked && !dev ? (await this.hiddenBy(tx, prefix)).byModel : new Map(),
-      split: locked && !dev ? await this.splitClaims(tx, prefix) : new Set(),
-    });
+    const claimedBefore = dev || !replan ? new Set<string>() : await this.claims(tx, prefix);
+    const plan = async (live: Map<string, CostRecord>) =>
+      this.desired(inv, {
+        estimates: dev ? new Map() : await this.estimatesOf(tx, inv.providerKey, prefix, inv.month),
+        locked,
+        openMonth,
+        run,
+        dev,
+        live,
+        hidden: locked && !dev ? await this.hiddenBy(tx, prefix) : { byKey: new Map(), byModel: new Map() },
+        split: locked && !dev ? await this.splitClaims(tx, prefix) : new Set(),
+      });
     const ctx = { ingestRunId: run, newId: () => newId('rec') };
+    const months = new Set<string>();
+    let reversed = 0;
+    let live = await this.liveOf(tx, prefix);
+    // A locked month: the records this version no longer wants are reversed first, so what the links still keep out
+    // is read after the reversals, as a void reads it (review of wave 4, B1). Otherwise an estimate linked `late` to
+    // a reversed record would come back twice: once itself, and once in a restore.
+    if (locked && !dev) {
+      const first = new Set((await plan(live)).records.map((r) => `${r.x_Basis}:${r.x_SourceKey}`));
+      const gone = [...live].filter(([key]) => !first.has(key)).flatMap(([, old]) => correct(old, null, periods, ctx));
+      if (gone.length) {
+        await tx`INSERT INTO cost_records ${tx(gone.map((r) => toRow(assertValid(r))))}`;
+        gone.forEach((r) => months.add(r.BillingPeriodStart.slice(0, 7)));
+        reversed += gone.length;
+        live = await this.liveOf(tx, prefix);
+      }
+    }
+    const want = await plan(live);
     const toAppend: CostRecord[] = [];
     let added = 0;
     let fresh = 0;
-    let reversed = 0;
     let unchanged = 0;
     const entered = new Map<string, string>();
     for (const r of want.records) {
@@ -738,7 +835,12 @@ export class Invoices {
       if (old) {
         const [rev, again] = correct(
           old,
-          { ...r, ChargePeriodStart: old.ChargePeriodStart, ChargePeriodEnd: old.ChargePeriodEnd },
+          {
+            ...r,
+            x_SourceKey: old.x_SourceKey,
+            ChargePeriodStart: old.ChargePeriodStart,
+            ChargePeriodEnd: old.ChargePeriodEnd,
+          },
           periods,
           ctx,
         );
@@ -747,7 +849,7 @@ export class Invoices {
         reversed++;
         added++;
       } else {
-        const rec = assertValid(r);
+        const rec = assertValid({ ...r, x_SourceKey: await this.freshKey(tx, r.x_SourceKey, r.x_Basis) });
         toAppend.push(rec);
         entered.set(r.x_SourceKey, rec.x_RecordId);
         added++;
@@ -760,7 +862,6 @@ export class Invoices {
         toAppend.push(...correct(old, null, periods, ctx));
         reversed++;
       }
-    const months = new Set<string>();
     if (toAppend.length) {
       await tx`INSERT INTO cost_records ${tx(toAppend.map((r) => toRow(assertValid(r))))}`;
       toAppend.forEach((r) => months.add(r.BillingPeriodStart.slice(0, 7)));
@@ -829,7 +930,45 @@ export class Invoices {
       },
       tx,
     );
+    // Estimates this version gave up (a model no longer billed) are free again: every other live invoice of the
+    // provider and month re-plans over them, as after a void, so none counts beside an invoice that bills its model
+    // (review of wave 4, B1).
+    if (claimedBefore.size) {
+      const after = await this.claims(tx, prefix);
+      if ([...claimedBefore].some((k) => !after.has(k)))
+        await this.replanOthers(tx, inv.provider, inv.number, inv.month, id, by, userId, months);
+    }
     return { id, months: [...months] };
+  }
+
+  /** Re-posts the provider's other live invoices of a month over the estimates as they now stand. */
+  private async replanOthers(
+    tx: Tx,
+    provider: string,
+    number: string,
+    month: string,
+    exceptId: string,
+    by: Principal,
+    userId: string,
+    months: Set<string>,
+    why = 'was re-imported without a model it billed',
+  ) {
+    for (const other of await this.othersOf(tx, provider.toLowerCase(), month, exceptId)) {
+      const r = await this.post(
+        tx,
+        other.inv,
+        by,
+        userId,
+        {
+          fileName: other.fileName ?? undefined,
+          note: `Re-planned after ${provider} invoice ${number} ${why}`,
+          origin: 'entered',
+          fileSha: other.fileSha,
+        },
+        false,
+      );
+      r.months.forEach((m) => months.add(m));
+    }
   }
 
   /**
@@ -867,29 +1006,8 @@ export class Invoices {
         for (const [key, h] of (await this.hiddenBy(tx, prefix)).byKey) {
           if (h.amount.isZero()) continue;
           restores.push(
-            assertValid({
-              ...h.last,
-              BilledCost: zero(),
-              EffectiveCost: h.amount,
-              ListCost: h.amount,
-              ContractedCost: h.amount,
-              ListUnitPrice: null,
-              ContractedUnitPrice: null,
-              PricingQuantity: null,
-              PricingUnit: null,
-              ConsumedQuantity: null,
-              ConsumedUnit: null,
-              ...billingPeriod(periods.openMonth),
-              ChargeClass: 'Correction',
-              ChargeDescription: `Estimate back after ${prev.provider} invoice ${prev.number} was voided; it stays replaced in locked ${month}`,
-              x_RecordId: newId('rec'),
-              x_Basis: 'estimated',
-              x_Source: 'invoice',
-              x_SourceKey: `${prefix}restore:${key}`,
-              x_SourceCost: h.amount.toDecimal(),
-              x_RateCardVersion: null,
-              x_IngestRunId: run,
-              x_CorrectionOfId: null,
+            this.restore(h, prefix, key, periods.openMonth, run, {
+              description: `Estimate back after ${prev.provider} invoice ${prev.number} was voided; it stays replaced in locked ${month}`,
             }),
           );
         }
@@ -931,15 +1049,7 @@ export class Invoices {
       // The estimates it claimed are free again: every other live invoice of the provider and month re-plans its
       // split over them (a new version each), so they never count beside an invoice that bills their model.
       if (prev.origin !== 'dev-fixture')
-        for (const other of await this.othersOf(tx, prev.provider.toLowerCase(), month, id)) {
-          const r = await this.post(tx, other.inv, by, userId, {
-            fileName: other.fileName ?? undefined,
-            note: `Re-planned after ${prev.provider} invoice ${prev.number} was voided`,
-            origin: 'entered',
-            fileSha: other.fileSha,
-          });
-          r.months.forEach((m) => months.add(m));
-        }
+        await this.replanOthers(tx, prev.provider, prev.number, month, id, by, userId, months, 'was voided');
     });
     await this.afterPost([...months]);
     return this.view(id);
