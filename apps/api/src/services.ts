@@ -25,6 +25,7 @@ import { Reservations } from './reservations.js';
 import { SecretBox } from './secrets.js';
 import { Spend } from './spend.js';
 import { Agents, AgentValueClient } from './agents.js';
+import { AccessReviews } from './access-review.js';
 import { Anomalies } from './anomalies.js';
 import { Contracts } from './contracts.js';
 import { Invoices } from './invoices.js';
@@ -57,6 +58,7 @@ export interface Services {
   relayChannels: RelayChannels;
   invoices: Invoices;
   anomalies: Anomalies;
+  accessReviews: AccessReviews;
   agents: Agents;
   contracts: Contracts;
   landflow: LandflowClient | null;
@@ -198,6 +200,7 @@ export function createServices(
     anomalies,
     agents,
     contracts,
+    accessReviews: new AccessReviews(sql, audit, webhooks, owners, { consoleUrl: config.consoleUrl }, now),
     landflow,
     log,
     fetchImpl,
@@ -233,6 +236,8 @@ export function startBackgroundJobs(services: Services, log: (msg: string, err?:
   loop('anomalies', 3_600_000, async () => (await services.anomalies.scan(), 0));
   // Spec 009: contract.renewal_due once per contract and renewal date, every hour.
   loop('renewals', 3_600_000, () => services.contracts.renewalAlerts());
+  // Spec 011: access_review.due once a quarter while its review is not complete, checked every hour.
+  loop('access review', 3_600_000, async () => (await services.accessReviews.dueNotice(), 0));
   timers.add(setTimeout(() => void services.anomalies.scan().catch((e) => log('anomalies failed', e)), 120_000));
   const { config } = services;
   if (config.auditAnchorMinutes > 0) {

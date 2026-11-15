@@ -139,6 +139,10 @@ The schemas are in `libs/contracts/src/wave3.ts`. Amounts are six-decimal string
 | `GET /api/contracts/:id` | `read` | One contract (`ContractView`) |
 | `GET /api/contracts/seats?landbrightApp=` | `read` | The contract that grants a Landbright app, its seat price and seats left (`ContractSeats`), for Landflow's tool-or-seat flow; 404 when no contract names the app |
 | `POST /api/contracts/import` `{ csv, fileName?, note?, origin?: entered\|dev-fixture }` | `admin`, a person (controller or CFO) | Imports contracts; the same vendor and product again is a new version; 201 `ContractsView`; 400 with `details.problems` (nothing imported); 422 for a non-USD line; a key gets 403 |
+| `GET /api/access-reviews` | `read` | Every access review, newest quarter first, with counts; the current `quarter` and whether its review is `due` ([access-review.md](../access-review.md)) |
+| `GET /api/access-reviews/:id` | `read` | One review: each item (`person`, `key`, `link`, `relay_channel`, `owner`) with its snapshot, who it is `about`, and its attestation |
+| `POST /api/access-reviews` | `admin`, a person (controller or CFO) | Opens this quarter's review with a snapshot of every item; 201; 409 when the quarter has one; a key gets 403 |
+| `POST /api/access-reviews/:id/items/:itemId/attest` `{ decision: keep\|revoke, comment }` | `admin`, a person (controller or CFO) | Keeps or revokes one item (a comment is required to revoke); never an item about yourself (403); once (409); the last completes the review; audited |
 | `GET /api/forecast?months=12` (1–24) | `read` | The year ahead ([spend.md](../spend.md#the-year-ahead)): per month the run rate over its days with P10/P50/P90 (`null` without enough data), actual, reserved, committed (approved monthly requests beyond their reserved months), total, budget and state (`none` without a budget); annualised (run rate × 365 with its band, commitments × 12, Σ months, Σ budgets); the commitments. `status: insufficient` keeps _Not enough data yet_ |
 
 ## Webhook events
@@ -161,4 +165,5 @@ Standard Webhooks, from the outbox; subscriptions are managed by an admin (`/api
 | `audit.anchor` | every `LANDLEDGER_AUDIT_ANCHOR_MINUTES` | `{ seq, hash, at }`: keep them to prove later that no entry was cut off |
 | `cost.anomaly` | a cost per cost center, service, agent or model jumps against its 14-day baseline (once per key and day) | `{ anomaly: AnomalyView, url }` ([anomalies.md](../anomalies.md)) |
 | `contract.renewal_due` | a contract enters its notice window (once per contract and renewal date; checked hourly) | `{ contract: ContractView, url }` ([contracts.md](../contracts.md#renewals)) |
+| `access_review.due` | a quarter's access review is due (once a quarter, from its first day, while not complete) | `AccessReviewDueData`: `{ quarter, reviewId, url }` ([access-review.md](../access-review.md)) |
 | `approval.anomaly` | an approval pattern: a split, automatic approvals again and again, a decision relayed seconds after its card, one approver for one requester | `{ anomaly: AnomalyView, url }` |

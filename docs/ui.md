@@ -27,11 +27,14 @@ The clickable prototype is `ui/prototype.html` (static, sample data, no network)
 | Money | Overview | `#overview` | yes |
 | | Explore | `#explore` | yes |
 | | Budgets | `#budgets` | |
+| | Reconciliation | `#reconciliation` | |
 | Control | Approvals | `#approvals` (inbox), `#request` (one request) | yes, with a count |
+| | Anomalies | `#anomalies` | |
 | | Contracts | `#contracts` | |
 | Value | Agents | `#agents` | |
 | Close | Month-end | `#close` | |
 | Setup | Rates and rules | `#rules` | |
+| | Access review | `#access-review` | |
 | | Audit log | `#audit` | |
 
 On a phone the rest sit under **More**.
@@ -107,6 +110,12 @@ who did it and when; a locked period can't change, and corrections post to the o
 - **Allocation rules:** in order; each maps a selector (namespace, label, agent, workflow) to a cost center, team,
   product, P&L class and the capitalisable flag; shared-cost splits and their basis.
 - **Policies:** the thresholds and steps per request kind and cost center.
+
+## Access review (`#access-review`)
+
+Each quarter's review, one card per kind (people with roles, API keys, Slack links, relay channels, cost center
+owners), each item with what it grants and Keep or Revoke… (a reason to revoke). An item about you says another
+controller or the CFO attests it. Who attested what and when stays on the item ([access-review.md](access-review.md)).
 
 ## Audit log (`#audit`)
 

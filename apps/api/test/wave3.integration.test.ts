@@ -881,4 +881,127 @@ describe.skipIf(!integrationEnabled('db'))('wave 3: plan and reconcile', () => {
       });
     });
   });
+
+  // 011 Access review --------------------------------------------------------------------------------------------------
+
+  describe('access review (spec 011)', () => {
+    let reviewId = '';
+    type Item = { id: string; kind: string; subjectId: string; label: string; attestation: unknown };
+
+    it('sends access_review.due once for the quarter, before any review', async () => {
+      await services.webhooks.create(
+        { url: 'https://receiver.test/hook', events: ['access_review.due'], description: 'test' } as never,
+        principal('dana'),
+      );
+      expect(await services.accessReviews.dueNotice()).toBe(true);
+      expect(await services.accessReviews.dueNotice()).toBe(false);
+      const due = await sql<{ data: { quarter: string; reviewId: string | null; url: string } }[]>`
+        SELECT payload->'data' AS data FROM outbox WHERE event_type = 'access_review.due'`;
+      expect(due.map((d) => d.data)).toEqual([
+        { quarter: '2026-Q4', reviewId: null, url: expect.stringMatching(/\/access-review$/) },
+      ]);
+      const listed = await as('avi', 'GET', '/api/access-reviews');
+      expect(listed.json()).toMatchObject({ quarter: '2026-Q4', due: true, reviews: [] });
+    });
+
+    it('is opened by the controller or the CFO only, once a quarter, with every holder of access', async () => {
+      expect((await as('tal', 'POST', '/api/access-reviews')).statusCode).toBe(403);
+      expect((await as('avi', 'POST', '/api/access-reviews')).statusCode).toBe(403);
+      const key = await app.inject({
+        method: 'POST',
+        url: '/api/access-reviews',
+        headers: { authorization: `Bearer ${readKey}` },
+      });
+      expect(key.statusCode).toBe(403);
+      await services.owners.set(
+        'ENG-AGENTS',
+        { owner: { email: people.shira.email }, deputies: [{ email: people.roni.email }] } as never,
+        principal('dana'),
+      );
+      await services.links.create(
+        { kind: 'slack', externalId: 'U_SHIRA' },
+        { ...principal('shira'), sessionId: 'test' },
+      );
+      await services.relayChannels.create(
+        { kind: 'slack', name: 'Finance approvals', signingSecret: 'x'.repeat(32), teamId: 'T_DEV', appId: 'A_DEV' },
+        principal('yoav'),
+      );
+      const res = await as('yoav', 'POST', '/api/access-reviews');
+      expect(res.statusCode, res.body).toBe(201);
+      const v = res.json();
+      reviewId = v.id;
+      expect(v).toMatchObject({ quarter: '2026-Q4', status: 'open', openedBy: 'Yoav Ben David' });
+      const kinds = new Set(v.items.map((i: Item) => i.kind));
+      expect([...kinds].sort()).toEqual(['key', 'link', 'owner', 'person', 'relay_channel']);
+      const labels = v.items.map((i: Item) => i.label);
+      expect(labels).toEqual(expect.arrayContaining(['Tal Levi', 'Avi Auditor', 'reader', 'Shira Navon · slack']));
+      const reader = v.items.find((i: Item) => i.kind === 'key' && i.label === 'reader');
+      expect(reader.detail).toMatch(/read, admin/);
+      expect((await as('dana', 'POST', '/api/access-reviews')).statusCode).toBe(409);
+    });
+
+    it('takes keep or revoke per item from another controller or the CFO, audited, and completes on the last', async () => {
+      const url = (itemId: string) => `/api/access-reviews/${reviewId}/items/${itemId}/attest`;
+      const v = (await as('avi', 'GET', `/api/access-reviews/${reviewId}`)).json();
+      const items: Item[] = v.items;
+      const item = (kind: string, label: string) => items.find((i) => i.kind === kind && i.label === label)!;
+      // Nobody attests their own: Yoav's person row, Dana's key, Shira's link, Yoav's relay channel.
+      expect(
+        (await as('yoav', 'POST', url(item('person', 'Yoav Ben David').id), { decision: 'keep' })).statusCode,
+      ).toBe(403);
+      expect((await as('dana', 'POST', url(item('key', 'reader').id), { decision: 'keep' })).statusCode).toBe(403);
+      expect(
+        (await as('yoav', 'POST', url(item('relay_channel', 'Finance approvals').id), { decision: 'keep' })).statusCode,
+      ).toBe(403);
+      // An auditor reads and never attests; a key never does; revoking needs a reason.
+      expect((await as('avi', 'POST', url(item('person', 'Tal Levi').id), { decision: 'keep' })).statusCode).toBe(403);
+      expect((await as('shira', 'POST', url(item('person', 'Tal Levi').id), { decision: 'keep' })).statusCode).toBe(
+        403,
+      );
+      const key = await app.inject({
+        method: 'POST',
+        url: url(item('person', 'Tal Levi').id),
+        headers: { authorization: `Bearer ${readKey}` },
+        payload: { decision: 'keep' },
+      });
+      expect(key.statusCode).toBe(403);
+      expect((await as('yoav', 'POST', url(item('key', 'reader').id), { decision: 'revoke' })).statusCode).toBe(400);
+      const revoked = await as('yoav', 'POST', url(item('key', 'reader').id), {
+        decision: 'revoke',
+        comment: 'A test key with admin: revoke it in Settings',
+      });
+      expect(revoked.statusCode, revoked.body).toBe(200);
+      expect(
+        (await as('roni', 'POST', url(item('key', 'reader').id), { decision: 'keep' })).statusCode,
+        'attested once',
+      ).toBe(409);
+      // The rest, each by someone it is not about.
+      let last: { status: string; counts: { total: number; attested: number; revoke: number } } | null = null;
+      for (const i of items) {
+        if (i.kind === 'key' && i.label === 'reader') continue;
+        for (const who of ['yoav', 'roni', 'dana'] as const) {
+          const res = await as(who, 'POST', url(i.id), { decision: 'keep' });
+          if (res.statusCode === 403) continue;
+          expect(res.statusCode, res.body).toBe(200);
+          last = res.json();
+          break;
+        }
+      }
+      expect(last).toMatchObject({
+        status: 'completed',
+        counts: { total: items.length, attested: items.length, revoke: 1 },
+      });
+      const audit = await sql<{ action: string; actor: string }[]>`
+        SELECT action, actor FROM audit_log WHERE subject_id = ${reviewId} ORDER BY seq`;
+      expect(audit[0]).toMatchObject({ action: 'access_review.opened', actor: people.yoav.email });
+      expect(audit.filter((a) => a.action === 'access_review.attested')).toHaveLength(items.length);
+      expect(audit.at(-1)!.action).toBe('access_review.completed');
+      expect((await as('dana', 'POST', url(item('person', 'Tal Levi').id), { decision: 'keep' })).statusCode).toBe(409);
+      expect((await as('avi', 'GET', '/api/access-reviews')).json()).toMatchObject({ due: false });
+      // Attestations are append only, in the database too.
+      await expect(
+        sql`UPDATE access_review_attestations SET decision = 'revoke' WHERE item_id = ${items[0]!.id}`,
+      ).rejects.toThrow();
+    });
+  });
 });

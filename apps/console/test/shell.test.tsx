@@ -20,7 +20,7 @@ describe('the shell', () => {
       ['Approvals', 'Anomalies', 'Contracts'],
       ['Agents'],
       ['Month-end'],
-      ['Rates and rules', 'Audit log'],
+      ['Rates and rules', 'Access review', 'Audit log'],
     ]);
     expect(screen.getAllByText('Yoav Ben David').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Finance · controller').length).toBeGreaterThan(0);
@@ -49,6 +49,7 @@ describe('the shell', () => {
       'Agents',
       'Month-end',
       'Rates and rules',
+      'Access review',
       'Audit log',
       'Yoav Ben DavidFinance · controller',
     ]);

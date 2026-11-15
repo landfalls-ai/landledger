@@ -1,6 +1,6 @@
 # Feature 011: Access review (wave 3, "Plan and reconcile")
 
-**Status**: specified 2026-11-15 · **Plan**: [plan.md](plan.md) · **Tasks**: [tasks.md](tasks.md)
+**Status**: built 2026-11-15 · **Plan**: [plan.md](plan.md) · **Tasks**: [tasks.md](tasks.md)
 
 ## Why
 

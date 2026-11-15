@@ -8,6 +8,7 @@ import {
   AgentsQuery,
   ContractImportInput,
   AnomaliesQuery,
+  AttestInput,
   type ApiScope,
   ForecastQuery,
   InvoiceImportInput,
@@ -97,5 +98,22 @@ export function registerWave3(
   app.post('/api/contracts/import', async (r, reply) => {
     need(r, 'admin');
     return reply.status(201).send(await services.contracts.import(parse(ContractImportInput, r.body), r.principal));
+  });
+
+  // 011 Access review --------------------------------------------------------------------------------------------------
+  const ItemParams = z.object({ id: z.string().min(1).max(100), itemId: z.string().min(1).max(100) });
+  app.get('/api/access-reviews', async (r) => (need(r, 'read'), services.accessReviews.list()));
+  app.get(
+    '/api/access-reviews/:id',
+    async (r) => (need(r, 'read'), services.accessReviews.view(parse(Id, r.params).id)),
+  );
+  app.post('/api/access-reviews', async (r, reply) => {
+    need(r, 'admin');
+    return reply.status(201).send(await services.accessReviews.open(r.principal));
+  });
+  app.post('/api/access-reviews/:id/items/:itemId/attest', async (r) => {
+    need(r, 'admin');
+    const p = parse(ItemParams, r.params);
+    return services.accessReviews.attest(p.id, p.itemId, parse(AttestInput, r.body), r.principal);
   });
 }

@@ -416,6 +416,8 @@ export interface AccessItemView {
   /** What it grants, in words (`CFO · read, requests:write, admin`). */
   detail: string;
   snapshot: Record<string, unknown>;
+  /** The people (`usr_…`) it is about: they never attest it. */
+  about: string[];
   attestation: { decision: 'keep' | 'revoke'; comment: string; by: string; at: string } | null;
 }
 

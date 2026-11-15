@@ -110,6 +110,15 @@ export const SCREENS: Screen[] = [
     ],
   },
   {
+    path: '/access-review',
+    wave: 3,
+    purpose: 'Each quarter, who holds what, confirmed by a person.',
+    shows: [
+      'People with roles, keys with scopes, Slack links, relay channels, cost center owners',
+      'Keep or revoke per item, by the controller or the CFO, never an item about yourself',
+    ],
+  },
+  {
     path: '/audit',
     wave: 2,
     purpose: 'Every decision, rule, rate and period change, newest first.',

@@ -1,4 +1,5 @@
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { invoicedShare } from '../src/lib/format';
 import { ME, mockApi, renderAt } from './render';
@@ -411,5 +412,105 @@ describe('Contracts (spec 009)', () => {
     renderAt('/contracts');
     await screen.findByTestId('renewals-due');
     expect(screen.queryByLabelText('Contracts CSV')).not.toBeInTheDocument();
+  });
+});
+
+const ITEMS = [
+  {
+    id: 'ari_tal',
+    kind: 'person',
+    subjectId: 'usr_tal',
+    label: 'Tal Levi',
+    detail: 'engineer · from Engineering',
+    snapshot: {},
+    about: ['usr_tal'],
+    attestation: null,
+  },
+  {
+    id: 'ari_me',
+    kind: 'person',
+    subjectId: 'usr_1',
+    label: 'Yoav Ben David',
+    detail: 'controller · from Finance Controllers',
+    snapshot: {},
+    about: ['usr_1'],
+    attestation: null,
+  },
+  {
+    id: 'ari_key',
+    kind: 'key',
+    subjectId: 'key_1',
+    label: 'landflow requests',
+    detail: 'read, requests:write · last used 2026-11-15',
+    snapshot: {},
+    about: ['usr_dana'],
+    attestation: {
+      decision: 'revoke',
+      comment: 'Not used by any flow',
+      by: 'Roni Amar',
+      at: '2026-11-16T09:00:00.000Z',
+    },
+  },
+];
+const REVIEW = {
+  id: 'arv_1',
+  quarter: '2026-Q4',
+  status: 'open',
+  openedBy: 'Roni Amar',
+  openedAt: '2026-11-16T08:00:00.000Z',
+  completedAt: null,
+  items: ITEMS,
+  counts: { total: 3, attested: 1, revoke: 1 },
+};
+
+describe('Access review (spec 011)', () => {
+  it('opens the quarter’s review when none is open', async () => {
+    const fetchMock = mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/requests': [200, { requests: [], counts: { waiting: 0, mine: 0, decided: 0 } }],
+      '/api/access-reviews': [200, { quarter: '2026-Q4', due: true, reviews: [] }],
+    });
+    renderAt('/access-review');
+    const due = await screen.findByTestId('review-due');
+    await userEvent.click(within(due).getByRole('button', { name: 'Open the 2026-Q4 review' }));
+    expect(fetchMock.mock.calls.some(([u, i]) => u === '/api/access-reviews' && i?.method === 'POST')).toBe(true);
+  });
+
+  it('lists each kind with keep or revoke, never on an item about you, and shows who attested', async () => {
+    const { counts: _c, items: _i, ...summary } = REVIEW;
+    const fetchMock = mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/requests': [200, { requests: [], counts: { waiting: 0, mine: 0, decided: 0 } }],
+      '/api/access-reviews/arv_1': [200, REVIEW],
+      '/api/access-reviews': [200, { quarter: '2026-Q4', due: true, reviews: [{ ...summary, counts: REVIEW.counts }] }],
+    });
+    renderAt('/access-review');
+    const people = await screen.findByTestId('review-person');
+    expect(screen.getByTestId('review-status')).toHaveTextContent('1 of 3 attested');
+    expect(within(people).getByTestId('keep-ari_tal')).toBeInTheDocument();
+    expect(within(people).queryByTestId('keep-ari_me')).toBeNull();
+    expect(within(people).getByTestId('yours-ari_me')).toHaveTextContent('About you');
+    expect(screen.getByTestId('attested-ari_key')).toHaveTextContent('Revoke');
+    expect(screen.getByTestId('item-ari_key')).toHaveTextContent('Roni Amar');
+    await userEvent.click(screen.getByTestId('revoke-ari_tal'));
+    const why = screen.getByLabelText('Why revoke');
+    expect(screen.getByRole('button', { name: 'Revoke' })).toBeDisabled();
+    await userEvent.type(why, 'Left the team');
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+    const post = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/items/ari_tal/attest'));
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ decision: 'revoke', comment: 'Left the team' });
+  });
+
+  it('shows the review to an auditor without keep or revoke', async () => {
+    const { counts: _c, items: _i, ...summary } = REVIEW;
+    mockApi({
+      '/api/auth/me': [200, { ...ME, user: { ...ME.user, roles: ['auditor'] } }],
+      '/api/requests': [200, { requests: [], counts: { waiting: 0, mine: 0, decided: 0 } }],
+      '/api/access-reviews/arv_1': [200, REVIEW],
+      '/api/access-reviews': [200, { quarter: '2026-Q4', due: true, reviews: [{ ...summary, counts: REVIEW.counts }] }],
+    });
+    renderAt('/access-review');
+    await screen.findByTestId('review-person');
+    expect(screen.queryByTestId('keep-ari_tal')).toBeNull();
   });
 });

@@ -10,6 +10,7 @@ import {
   type LucideIcon,
   ShieldCheck,
   SlidersHorizontal,
+  UserCheck,
   Wallet,
 } from 'lucide-react';
 
@@ -46,6 +47,7 @@ export const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
     label: 'Setup',
     items: [
       { href: '/rules', label: 'Rates and rules', icon: SlidersHorizontal },
+      { href: '/access-review', label: 'Access review', icon: UserCheck },
       { href: '/audit', label: 'Audit log', icon: ShieldCheck },
     ],
   },
