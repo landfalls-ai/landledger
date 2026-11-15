@@ -90,6 +90,20 @@ Each wave ends with something finance can use, checked live, with screenshots at
   relay link and which cost center ownership, confirmed by an admin person each quarter (review of wave 2).
 - FX rates, so requests and budgets in other currencies stop being refused (`422` until then).
 - **Finance gets:** AI cost tied to invoices, a forecast on calendar day 10, an alert the hour a cost jumps.
+- **Built 15 Nov 2026** (specs 005–011; [invoices.md](invoices.md), [spend.md](spend.md#the-year-ahead),
+  [anomalies.md](anomalies.md), [agents.md](agents.md), [contracts.md](contracts.md),
+  [access-review.md](access-review.md), [integrations.md](integrations.md)): invoice import and reconciliation per
+  provider and model within ±2%; the forecast band (P10–P90) and the year ahead with commitments, and decision 8 (no
+  budget → Finance); cost anomalies (median and MAD) and approval patterns, as webhooks and a Clickland alert rule;
+  agents' cost per outcome and a keep, scale, review or retire suggestion; contracts with renewals in their notice
+  window, contract requests for their TCV and term, seat requests on a contract; the quarterly access review. Live:
+  the November fixture invoices posted (Anthropic $23.50 with no Landflow estimate to replace, since the live agents
+  run on Ollama; Ollama $0 replacing 12 estimates, within tolerance); the forecast says _Not enough data yet_ (Clickland
+  has under 3 full days); a $25 `dev-anomaly` spike was flagged, fired Clickland's alert and was reversed (0 rows left,
+  never in the ledger); Agents shows six Landflow agents at $0, _Triage the alert_ 27 runs and no outcome
+  (_Retire_); Linear (notice in 17 days) and Notion imported; the 2026-Q4 access review opened by the admin, 6 of 11
+  items kept, the 5 about the admin left for another controller or the CFO. Not yet: FX rates (still `422`);
+  Landbright's seat cost and external policy step, and Landflow's tool-or-seat flow (integrations.md).
 
 ### Wave 4 · Month-end
 
