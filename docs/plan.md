@@ -121,6 +121,27 @@ Each wave ends with something finance can use, checked live, with screenshots at
 - Landlens: cost per workload from Landledger's API (moved from wave 3).
 - The Datarails connector against `fake-datarails`: budgets in over MCP, actuals and notes out through the upload API.
 - **Finance gets:** technology lines ready on business day 1 after month-end, for the controller to review and book.
+- **Built 15 Nov 2026** (specs 012–020; [close.md](close.md), [accruals.md](accruals.md),
+  [variance-notes.md](variance-notes.md), [datarails.md](datarails.md), [spend.md](spend.md#an-incidents-cost)):
+  - **The close.** A ten-step checklist whose gates Landledger computes, never ticked by hand. A step is explained
+    with an audited note, never step 4 or 10. The lock takes two signatures, a controller and the CFO, and anchors
+    the audit chain at once. The wave 1 override is gone. A month is reopened only by a `period_reopen` request the
+    CFO approves, and it locks again in a new round.
+  - **Accruals.** Usage estimates not yet invoiced, plus contracts' monthly value. A controller accepts them as shown.
+    They reverse through the invoice links, and come out as a journal-entry CSV, never posted to a GL.
+  - **Forecast history.** Stored daily. The day-10 forecast is measured at close.
+  - **Variance notes.** Drafted by an agent's `notes:draft` key, with every cited figure checked against the snapshot.
+    An analyst who isn't the sponsor accepts them. Every version is kept, with a template fallback.
+  - **The snapshot.** Frozen at step 7 with a sha256, which the notes, the upload, the package and the audit log
+    cite.
+  - **`fake-datarails`.** Runs on :4819. Budgets come in over MCP as a pending pull. Actuals and notes go out through
+    the FileBox upload. Hosts that aren't loopback are refused.
+  - **The month-end package.** One page and a zip.
+  - **`GET /api/cost/window`.** An incident's estimated cost.
+  - **Seats.** A seat within its contract reserves no money (spec 020).
+  - **Not yet:** Landlens's cost per workload (still open; Explore's `GET /api/spend` already groups by namespace and
+    workload), Landflow's notes and incident-cost flows (Landflow's to build, integrations.md), a real Datarails
+    tenant (wave 5).
 
 ### Wave 5 · Real systems (your decision, one at a time)
 

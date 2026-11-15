@@ -49,4 +49,11 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_CLICKLAND_VALUE_KEY` | unset | A Clickland key with `read`, for Agent Value on the Agents page and in AI budget evidence (in the untracked `apps/api/.env.local`); without it the page shows cost only |
 | `LANDLEDGER_RENEWAL_WINDOW_DAYS` | `30` | Days before a contract's notice date its renewal shows first and `contract.renewal_due` goes out, 0 to 365 ([contracts.md](../contracts.md#renewals)) |
 | `LANDLEDGER_CLICKLAND_ALERTS_KEY` | unset | A Clickland key with `alerts:write`, for `anomaly clickland-alert` (in the untracked `apps/api/.env.local`) |
+| `LANDLEDGER_CLOSE_UNALLOCATED_PCT` | `5` | Close step 3: the most Unallocated may be, percent of the month's spend (0 to 99.99) ([close.md](../close.md)) |
+| `LANDLEDGER_DATARAILS_URL` | `http://127.0.0.1:4819` | Datarails' base URL: `fake-datarails` on this machine ([datarails.md](../datarails.md)) |
+| `LANDLEDGER_DATARAILS_MCP_URL`, `LANDLEDGER_DATARAILS_UPLOAD_URL` | `${URL}/mcp`, `${URL}/api/v1/fileboxes/upload_file` | The MCP server budgets are read from, and the FileBox upload actuals and notes go to |
+| `LANDLEDGER_DATARAILS_MCP_TOKEN` | the fake's dev token when both URLs are loopback, else unset | Bearer token for the MCP server |
+| `LANDLEDGER_DATARAILS_USER`, `LANDLEDGER_DATARAILS_PASSWORD` | the fake's dev user when both URLs are loopback, else unset | Basic auth for the upload |
+| `LANDLEDGER_DATARAILS_FILEBOX` | `fb_technology_costs` | The FileBox the month's files go to |
+| `LANDLEDGER_DATARAILS_REAL` | unset | `true` lets the connector call a host that isn't loopback: a real tenant, wave 5 and the user's decision. Unset, such a host gets 503 |
 | `LANDLEDGER_INTEGRATION` | unset | Tests: a comma list of real services to test against (`db`, or `all`) |

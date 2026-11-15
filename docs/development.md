@@ -48,6 +48,7 @@ test fails on any table that doesn't.
 | 25532 | Postgres (owner `landledger` / `landledger-dev`; the API as `landledger_app` / `landledger-app-dev`) |
 | 4810 | The API (`apps/api`) |
 | 4811 | The console (`apps/console`, Vite; proxies `/api` to 4810) |
+| 4819 | `fake-datarails` (compose project `landledger-fake`, `pnpm fake:up` / `pnpm fake:down`): the Datarails stand-in, MCP at `/mcp` and the FileBox upload ([datarails.md](datarails.md)) |
 | 4402 | Landbright (sign-in), a sibling project |
 | 24318 | Clickland's OTLP/HTTP collector, where the API sends its telemetry |
 
@@ -60,17 +61,18 @@ test fails on any table that doesn't.
 | Ingest | `apps/api/src/ingest/` (`sources.ts` clients, `build.ts` records, `runner.ts` runs), `libs/pricing`, the CLI `apps/api/src/cli.ts`; [ingest.md](ingest.md) |
 | Allocation | `libs/allocation/src/index.ts` (engine), `apps/api/src/allocation.ts` (rule sets, generations, `DEV_RULES`); [allocation.md](allocation.md) |
 | Spend | `apps/api/src/spend.ts` (Overview, Explore, Budgets), `budgets.ts`, `export.ts`, `mcp.ts`, `metrics.ts`; console `routes/overview.tsx`, `explore.tsx`, `budgets.tsx`; [spend.md](spend.md) |
-| Tables | `libs/schema/migrations/0001_core.sql` … `0011_review_wave2.sql`; the runner in `libs/schema/src/index.ts` |
+| Tables | `libs/schema/migrations/0001_core.sql` … `0014_month_end.sql`; the runner in `libs/schema/src/index.ts` |
 | Wire contracts | `libs/contracts/src/index.ts`, `sources.ts` (Landflow and Clickland), `spend.ts` (the read views) |
 | API | `apps/api/src/app.ts` (routes), `auth.ts` + `oidc.ts` (sign-in), `principal.ts` (who is calling), `audit.ts` (hash chain), `anchors.ts` (its head, out to Clickland and webhooks), `ledger.ts` (periods, records), `webhooks.ts` (outbox) |
 | Approvals | `apps/api/src/requests.ts` (raise, confirm, path, evidence, decide, relay, expire), `relays.ts` (Slack channels, person links), `owners.ts` (cost center owners and deputies), `reservations.ts`, `exceptions.ts`, `evidence-pack.ts`, `business-hours.ts`, `policies.ts`, `proposals.ts`; migrations `0010_requests.sql`, `0011_review_wave2.sql`; console `routes/approvals.tsx`, `request.tsx`, `profile.tsx`, `audit.tsx`; tests `apps/api/test/approvals.integration.test.ts`, `review2.integration.test.ts`; [approvals.md](approvals.md) |
+| Month-end (wave 4) | `apps/api/src/close.ts` (the ten gates, the four-eyes lock), `snapshot.ts`, `accruals.ts`, `forecast-history.ts`, `notes.ts`, `datarails.ts`, `package.ts`, `cost-window.ts`, `wave4-routes.ts`; `apps/fake-datarails/`; migration `0014_month_end.sql`; console `routes/month-end.tsx`; tests `apps/api/test/wave4.integration.test.ts`, `apps/fake-datarails/test/`, `apps/console/test/wave4.test.tsx`; [close.md](close.md), [accruals.md](accruals.md), [variance-notes.md](variance-notes.md), [datarails.md](datarails.md) |
 | Console | `apps/console/src/router.tsx`, `nav.ts` (the navigation of [ui.md](ui.md)), `components/shell/`, `routes/` |
 
 ## Conventions
 
 - **Money**: amounts are `Money` (bigint micro-units); rates and quantities `Decimal` from strings; never `number`.
   Products round half-even to the micro-unit; anything shown or posted rounds half away from zero ([money.md](money.md)).
-- **Migrations** are numbered `NNNN_name.sql`, applied in one transaction under an advisory lock, and never edited once
+- **Migrations** are numbered `NNNN_name.sql`, each applied in its own transaction under a session advisory lock (checksums checked first; a `tuple concurrently updated` from parallel test databases is retried), and never edited once
   shipped (the runner refuses a changed checksum): a change is a new file.
 - **Append only**: `cost_records`, `cost_record_keys`, `fx_rates`, `rate_lines`, `audit_log`, `audit_anchors`, `allocations`, `allocation_generations`, `budget_imports`, `budgets`, `version_notes`, `invoice_estimate_links`, `cost_center_codes`, `decisions`, `evidence_snapshots`, `evidence_serves`, `cost_center_owners`, `exception_reports` refuse `UPDATE`, `DELETE`
   and `TRUNCATE` in the database; `periods`, `ingest_runs` and `rate_card_versions` only move forward.
@@ -88,6 +90,9 @@ pnpm test:integration                         # against a real Postgres (LANDLED
 `pnpm test:integration` needs `pnpm dev:up`; each run creates `landledger_test_<random>` databases and drops them.
 `LANDLEDGER_INTEGRATION` takes a comma list of the real services to test against (`db` today, or `all`); tests for a
 service that isn't named skip.
+
+`fake-datarails` has its own tests (`pnpm --filter @landledger/fake-datarails test`, in-process, no Docker); the
+wave 4 integration tests start one in-process too, so `pnpm fake:up` is only for the live stack.
 
 Per package: `pnpm --filter @landledger/money test`, `pnpm --filter @landledger/api test:integration`, and so on.
 

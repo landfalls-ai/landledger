@@ -34,6 +34,7 @@ libs/pricing        rate lookup by day, provider and model; priceAiCall (three i
 libs/allocation     the rules engine: selectors → cost center, team, product, P&L class, capitalisable; direct and spread layers
 libs/schema         Postgres migrations (append-only list)
 libs/tokens         @land/tokens, copied from Landflow with a drift test (as Clickland does)
+apps/fake-datarails the Datarails stand-in on :4819 (MCP read tools, FileBox upload), wave 4
 deploy/             compose (infra, fakes), Kubernetes later (namespace landledger-dev)
 specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 ```
@@ -61,7 +62,13 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 | `invoices`, `reconciliations` | provider invoices and how estimated usage matched them | append only |
 | `invoice_estimate_links` | an invoice line and the estimates it replaces, by the estimate's source key | append only; reads never add a linked estimate to its invoice ([money.md](money.md#estimated-and-invoiced)) |
 | `cost_center_codes` | every cost center code, plus `SHARED-POOL` and `UNALLOCATED` | append only; allocations and budgets reference it |
-| `periods` | each month: open, closing, locked; who closed and locked it | one step forward at a time, by a person; locked is final and refuses inserts; a month locks only when whole (ended, every source-day complete, no provisional rows, every record allocated) unless a controller overrides with a reason |
+| `periods` | each month: open, closing, locked; who closed and locked it | one step forward at a time, by a person; locked is final and refuses inserts; wave 4: a month locks by the close's four-eyes signatures once steps 1–9 are done or explained, never by an override; a reopen is a `period_reopen` request the CFO approves ([close.md](close.md)) |
+| `close_explanations`, `close_signoffs`, `close_locks`, `period_reopens` | the close: explained steps, lock signatures per round, each lock's gates and anchored audit entry, reopens | append only |
+| `close_snapshots` | the month's figures frozen at step 7 as canonical JSON with its sha256 | append only |
+| `accruals`, `accrual_lines`, `accrual_decisions` | accrual proposals, their lines and who accepted them ([accruals.md](accruals.md)) | append only |
+| `forecast_history` | the forecast to month-end stored each day per cost center | append only |
+| `variance_notes`, `variance_note_versions`, `variance_note_decisions`, `notes_requests` | notes, every version and its cites, decisions, the drafts asked of Landflow ([variance-notes.md](variance-notes.md)) | append only |
+| `datarails_pulls`, `datarails_pull_decisions`, `datarails_uploads` | budget pulls and their decisions, uploads with each file's sha256 and the response ([datarails.md](datarails.md)) | append only |
 | `audit_log` | every change above, each entry carrying the hash of the one before | append only |
 | `audit_anchors` | the chain's head (seq, hash) each time it was sent outside the database, and where | append only |
 | `outbox` | webhook deliveries (Standard Webhooks, the Clickland pattern) | retried, then kept |
@@ -78,6 +85,7 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 | exceptions | week | lists spend above a threshold that no approved request covers |
 | access review | hour | sends `access_review.due` once a quarter while its review is not complete |
 | renewals | hour | sends `contract.renewal_due` for contracts that entered their notice window |
+| forecast history | hour | stores the day's forecast to month-end (P10, P50, P90) per cost center and `TOTAL` once a day ([variance-notes.md](variance-notes.md#forecast-history-spec-014)) |
 | emit | minute | sends cost metrics to Clickland over OTLP; delivers the outbox |
 
 ## How it meets the land family
@@ -159,7 +167,8 @@ specs/NNN-name/     spec, plan, tasks per feature (the Landbright method)
 
 Landfall knows nothing about Landledger. When an incident closes, a Landflow flow (through Landflow's `landfall`
 plugin) asks Landledger for the cost of the incident's window on the affected services, and writes it to the
-postmortem through Landfall's generic interface and to a Clickland note. Revenue for cost-to-serve per customer is
+postmortem through Landfall's generic interface and to a Clickland note. The route is `GET /api/cost/window?services=&from=&to=`
+(wave 4, spec 019, [spend.md](spend.md#an-incidents-cost)), always labelled `estimated`. Revenue for cost-to-serve per customer is
 not in Landfall today (its billing app is empty); it comes later from a Stripe export or Datarails.
 
 ### Landlens: the cluster IDE
@@ -173,7 +182,10 @@ engineer changing replicas sees the money.
   user), read only, into `budgets` with source `datarails`.
 - **Actuals out:** at month-end, invoiced actuals, the accrual proposal and accepted variance notes upload to a
   Filebox through Datarails' Data Gateway Service. Notional cluster cost goes only as a memo line, never as actuals.
-- Built and tested against `fake-datarails`; a real tenant is wave 5 and your decision.
+- Built and tested against `fake-datarails` (wave 4, [datarails.md](datarails.md)): budgets in over MCP as a pending
+  pull a controller or the CFO accepts, actuals (estimated, invoiced, notional, the accrual) and the accepted notes
+  out from the frozen snapshot. A host that isn't loopback is refused unless `LANDLEDGER_DATARAILS_REAL=true`; a
+  real tenant is wave 5 and your decision.
 
 ### Claude and other MCP clients
 

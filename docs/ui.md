@@ -103,6 +103,29 @@ invoices (within ±2%); unallocated spend under its limit; the accrual proposal 
 notes drafted by an agent and accepted by an analyst; the upload to Datarails; the period locked. Each step shows
 who did it and when; a locked period can't change, and corrections post to the open one.
 
+Built in wave 4 as `/close` with tabs, the month in `?month=` (the last month that ended by default):
+
+- **Checklist** (`/close`):
+  - the ten steps, each _Done_, _Explained_, _Red_ or _Waiting_, with its problems;
+  - step 2 per provider and model, each row explained on its own;
+  - _Explain…_ for a red step, which is never offered on steps 4 or 10;
+  - _Start the close_;
+  - the lock card, which shows:
+    - this round's signatures, and _Sign the lock as a controller / the CFO_;
+    - each lock with its audit entry and anchor hash;
+    - reopens, and a controller's _Ask to reopen_.
+  - A month still open is a dry run with nothing to act on.
+- **Accruals** (`/close/accruals`): propose, accept as shown, each line with its basis and reversal, the journal-entry
+  CSV.
+- **Variance notes** (`/close/notes`):
+  - every version, with its agent, sponsor and cited figures;
+  - _Accept_, _Edit…_ or _Reject_ for an analyst who isn't the sponsor;
+  - _Draft from the template_ when no agent answered.
+- **Datarails** (`/close/datarails`): the connection, the month's uploads with each file's sha256, budget pulls pending
+  a controller or the CFO.
+- **Package** (`/close/package`): the printable page, the zip, the snapshot, the chain proof, the decisions and the
+  files.
+
 ## Rates and rules (`#rules`)
 
 - **Rate card:** the current version and its effective date, the rates (per vCPU-hour, GiB-hour of memory, GB-month

@@ -143,3 +143,40 @@ its side; Landbright builds its own.
 - **Seats used = grants + standing SCIM members,** reported separately (grants through requests, and people holding
   the app through a SCIM group), each with its `as_of` time, so Landledger can tell seats it approved from seats that
   came with a group.
+
+## Wave 4: month-end
+
+### Landflow: variance notes
+
+Accepting the accrual (close step 7) sends `notes.draft_requested`, once per snapshot. Its `data` holds the month,
+the snapshot's sha256, every note needed with the figures it may cite, and `draftUrl`. Landflow's flow writes each
+note and posts it to `POST /api/notes/:month/drafts`, using a key that holds only `notes:draft`. On this machine that
+key is named `landflow notes` and is kept as `LANDLEDGER_NOTES_KEY` in `~/.config/land-family/landledger-landflow.env`.
+
+Each draft names:
+
+- its agent;
+- its sponsor, the person who answers for the agent and who never accepts the note;
+- the Landflow run.
+
+Each cited figure must match the snapshot to the cent, or the draft is refused with 422. Landflow can read the
+figures first from `GET /api/notes/:month/figures`.
+
+If no agent answers, a person drafts from the template ([variance-notes.md](variance-notes.md)). Building Landflow's
+flow is Landflow's work.
+
+### Landflow and Landfall: an incident's cost
+
+When an incident closes, Landflow's flow calls `GET /api/cost/window?services=…&from=…&to=` with a `read` key. It
+writes the answer, labelled _estimated_, into Landfall's postmortem ([spend.md](spend.md#an-incidents-cost)).
+Landfall itself knows nothing of Landledger.
+
+### Datarails
+
+The connector talks to `fake-datarails` on this machine ([datarails.md](datarails.md)). It reads budgets over MCP
+and sends actuals and notes through the FileBox upload. A real tenant is wave 5.
+
+### Landlens
+
+Landlens is meant to read a workload's cost. That was moved from wave 3 to wave 4, and it is still open. Explore's
+`GET /api/spend` already groups by namespace and workload, and `GET /api/cost/window` takes service names.

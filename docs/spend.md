@@ -109,6 +109,28 @@ resource per `service.name` with `k8s.namespace.name` (or `docker.compose.projec
 `landledger.day`, `landledger.cost_center` and `agent`. The newest point per day is the figure. Only what was spent:
 never rates, budgets or contracts. Compose services are named `<project>/<service>`.
 
+## Forecast history
+
+From wave 4, the forecast to month-end is stored once a day, per cost center and for the whole month (`TOTAL`), with
+its P10–P90 band. This keeps the forecast on calendar day 10 as it stood. At close it is measured against the
+snapshot's actual: was it within ±10%? Variance notes cite that day-10 forecast, so they all use the same one
+(`GET /api/forecast/history`, [variance-notes.md](variance-notes.md#forecast-history-spec-014)).
+
+## An incident's cost
+
+`GET /api/cost/window?services=a,b&from=&to=` needs the `read` scope (wave 4, spec 019). It returns the cost of the
+named services over a window: `from` and `to` are ISO date-times, and the window can be at most 31 days.
+
+- **Names.** Services are named as Explore names them.
+- **How the cost is split.** The ledger is daily. Each day's cost is taken by the share of that day inside the
+  window, exact to the micro-unit.
+- **Today.** Today's figure is what has accrued so far, so its share is of the hours elapsed, not of the whole day.
+- **Unknown names.** A name with no cost in the window comes back with `known: false` and a zero amount.
+- **Labelling.** The answer is always labelled `estimated`: a share of daily cost, never an invoiced figure.
+
+Landflow's incident flow writes this cost into Landfall's postmortem
+([architecture.md](architecture.md#landfall-stays-agnostic)).
+
 ## Open
 
 - Invoiced figures (wave 3), teams and products in the dev data.
