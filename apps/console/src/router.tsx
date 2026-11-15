@@ -16,6 +16,7 @@ import { AccessReviewPage } from './routes/access-review';
 import { ContractsPage } from './routes/contracts';
 import { ReconciliationPage } from './routes/reconciliation';
 import { SCREENS } from './routes/screens';
+import { AccrualsPage, ClosePage, DatarailsPage, NotesPage, PackagePage } from './routes/month-end';
 
 /** Built screens; the rest are placeholders that name their wave. */
 const BUILT = new Set([
@@ -30,6 +31,7 @@ const BUILT = new Set([
   '/audit',
   '/rules',
   '/access-review',
+  '/close',
 ]);
 
 export const routes: RouteObject[] = [
@@ -51,6 +53,11 @@ export const routes: RouteObject[] = [
       { path: 'requests/:id', element: <RequestPage /> },
       { path: 'audit', element: <AuditPage /> },
       { path: 'profile', element: <ProfilePage /> },
+      { path: 'close', element: <ClosePage /> },
+      { path: 'close/accruals', element: <AccrualsPage /> },
+      { path: 'close/notes', element: <NotesPage /> },
+      { path: 'close/datarails', element: <DatarailsPage /> },
+      { path: 'close/package', element: <PackagePage /> },
       ...SCREENS.filter((s) => !BUILT.has(s.path)).map((s) => ({
         path: s.path.slice(1),
         element: <Placeholder screen={s} />,

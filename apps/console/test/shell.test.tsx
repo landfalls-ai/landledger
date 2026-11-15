@@ -68,12 +68,13 @@ describe('the shell', () => {
     expect(document.documentElement.dataset.theme).toBeUndefined();
   });
 
-  it('shows each unbuilt screen as a placeholder that names its wave', async () => {
+  it('has every screen built by wave 4: Month-end and its tabs, titled by the nav', async () => {
     mockApi({ '/api/auth/me': [200, ME] });
-    renderAt('/close');
-    const placeholder = await screen.findByTestId('placeholder');
-    expect(within(placeholder).getByText('Coming in wave 4')).toBeInTheDocument();
+    renderAt('/close/accruals?month=2026-10');
+    expect(await screen.findByTestId('accruals-page')).toBeInTheDocument();
+    expect(screen.queryByTestId('placeholder')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: 'Month-end' })).toBeInTheDocument();
+    expect(within(screen.getByRole('navigation', { name: 'Month-end' })).getAllByRole('link')).toHaveLength(5);
   });
 });
 
