@@ -159,7 +159,12 @@ Each wave ends with something finance can use, checked live, with screenshots at
     - signatures bound to the snapshot each signer was shown, a package stored and hashed per lock round, and a
       segregation-of-duties rule ([close.md](close.md#the-four-eyes-lock));
     - contract billing terms (Decision 11) and a reopen that waits for the CFO.
-    October 2026 was reopened and re-closed by named people (round 1; [history.md](history.md)).
+    - **Live, 15 Nov 2026: October 2026 re-closed by named people (round 1).** Yoav Ben-David (controller) asked to
+      reopen it (R-5) and Dana Shalev (CFO) approved; Michal Oren (FP&A) started round 1; Yoav proposed and accepted
+      the accrual again (v2, $0.00; v1 was Administrator's, which no longer counts), freezing snapshot `1de276d8…`;
+      Landflow drafted the note and Michal accepted it; Yoav uploaded to fake-datarails and signed as controller;
+      Dana signed as CFO. Locked at audit entry 149, anchored with hash `1858cfbf…915698`; the stored package's
+      sha256 is `871401fd…4fc3dd`. Round 0 stays in the history. The invoices property test held over seeds 1–3,000.
   - **Not yet:** Landlens's cost per workload (still open; Explore's `GET /api/spend` already groups by namespace and
     workload), Landflow's notes and incident-cost flows (Landflow's to build, integrations.md), who approved each
     explanation, a cutoff statement, and our own FP&A product (wave 5).

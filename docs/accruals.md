@@ -80,6 +80,8 @@ should-fix 11; `journal_lines`, append only). `GET /api/accruals/journal?month=`
 `gl_account`, `gl_name`, `account`, `account_name`, `debit`, `credit`, `currency`, `cost_center`, `pl_class`, `memo`,
 `frozen` and `coa_version`. Before acceptance, both show what accepting would freeze now (`frozen: false`).
 
+- **Nothing to book.** An accepted accrual of $0.00, with no reversal due, freezes an empty journal: it reads frozen,
+  with who accepted it and when, and so does its roll-forward.
 - **Entry ids** run per month: `JE-2026-10-0001`, `JE-2026-10-0002`, … Each entry balances.
 - **Kinds.** `accrual` (debit technology expense by P&L class and cost center, credit `LIAB-ACCRUED`); `prepaid`
   (debit expense, credit `ASSET-PREPAID`); `supersede`, the mirror of an earlier accepted version's entry when a

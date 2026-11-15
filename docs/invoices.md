@@ -82,7 +82,8 @@ late estimate are examples beside it. The split itself is property-tested in `ap
 Each fast-check seed runs 18 sequences in a database of its own. `LANDLEDGER_PROPERTY_SEEDS` names the seeds (`1-3000`
 or `3,451`); unset, one random seed runs. The review of wave 4 found two classes of failing sequence, both fixed and
 kept as regression cases: a re-import that drops a model another live invoice bills (about 16% of seeds), and, after
-the lock, a $0.00 line for a model with nothing to claim (about 0.4%).
+the lock, a $0.00 line for a model with nothing to claim (about 0.4%). After the fix the property held over seeds
+1–3,000 (15 Nov 2026: 3,000 seeds × 18 sequences = 54,000 sequences, six processes of 500 seeds, about 65 minutes).
 
 ## Corrections and voids
 

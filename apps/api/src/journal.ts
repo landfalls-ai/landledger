@@ -510,9 +510,12 @@ export class Journal {
     const rows = await this.rowsOf(month);
     const coa = await this.mapping();
     let lines: JournalLineView[];
+    // An accepted accrual that books nothing (a $0.00 month) froze an empty journal: nothing to book, not a draft.
+    let empty = false;
     if (rows.length) lines = rows.map((r) => this.lineView(r));
     else {
       const entries = await this.pending(month, preview);
+      empty = !entries.length && preview?.status === 'accepted';
       lines = entries.flatMap((e, k) =>
         e.map((l, i) => ({
           entryId: `JE-${month}-draft-${k + 1}`,
@@ -544,14 +547,16 @@ export class Journal {
     const last = rows.at(-1);
     return {
       month,
-      frozen: rows.length > 0,
+      frozen: rows.length > 0 || empty,
       frozenAt: last
         ? rows
             .map((r) => r.frozen_at)
             .sort((a, b) => b.getTime() - a.getTime())[0]!
             .toISOString()
-        : null,
-      frozenBy: last ? (last.frozen_email ?? last.frozen_by) : null,
+        : empty
+          ? (preview!.acceptedAt ?? null)
+          : null,
+      frozenBy: last ? (last.frozen_email ?? last.frozen_by) : empty ? (preview!.acceptedBy ?? null) : null,
       coaVersion: rows[0]?.coa_version ?? coa.version,
       lines,
       debits: sum('debit'),
@@ -608,7 +613,9 @@ export class Journal {
   async rollForward(month: string, preview: AccrualView | null = null): Promise<AccrualRollForward> {
     const frozenRows = await this.sql<JournalRow[]>`
       SELECT * FROM journal_lines WHERE month <= ${`${month}-01`} ORDER BY month, entry_id, line`;
-    const thisFrozen = frozenRows.some((r) => dayOf(r.month).slice(0, 7) === month);
+    const thisFrozen =
+      frozenRows.some((r) => dayOf(r.month).slice(0, 7) === month) ||
+      (preview?.status === 'accepted' && !(await this.pending(month, preview)).length);
     type L = { month: string; kind: string; account: string; debit: Money; credit: Money; key: string | null };
     const lines: L[] = frozenRows.map((r) => ({
       month: dayOf(r.month).slice(0, 7),

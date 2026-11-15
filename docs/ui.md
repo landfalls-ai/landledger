@@ -117,7 +117,7 @@ Built in wave 4 as `/close` with tabs, the month in `?month=` (the last month th
     - each lock with its audit entry, anchor hash and package sha256;
     - reopens, and a controller's _Ask to reopen_.
   - A month still open is a dry run with nothing to act on.
-- **Accruals** (`/close/accruals`): propose, accept as shown, each line with its basis and reversal (prepaid lines
+- **Accruals** (`/close/accruals`): propose (again, whenever step 7 is red), accept as shown, each line with its basis and reversal (prepaid lines
   apart from the liability); the frozen journal by entry with its GL accounts and the CSV; the roll-forward with
   aging; the chart-of-accounts mapping, which a controller edits and proposes as a request.
 - **Variance notes** (`/close/notes`):

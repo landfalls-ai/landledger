@@ -296,10 +296,11 @@ function LockCard({ month, c }: { month: string; c: CloseView }) {
             ))}
           </ul>
         )}
-        {c.duties && (c.status !== 'locked' || c.reopened) && (
+        {c.duties && !c.dryRun && (
           <p className="text-[12.5px] text-t2" data-testid="duties">
-            Duties: started by {c.duties.startedBy ?? '—'} · accrual accepted by {c.duties.accrualAcceptedBy ?? '—'} ·
-            controller’s signature {c.duties.controllerSignedBy ?? '—'}.{' '}
+            {c.status === 'locked' && !c.reopened ? `Round ${c.round}’s duties` : 'Duties'}: started by{' '}
+            {c.duties.startedBy ?? '—'} · accrual accepted by {c.duties.accrualAcceptedBy ?? '—'} · controller’s
+            signature {c.duties.controllerSignedBy ?? '—'}.{' '}
             <span className="text-t3">At least two different people do these three, besides the CFO.</span>
           </p>
         )}
@@ -565,9 +566,20 @@ export function AccrualsPage() {
     queryFn: () => get<AccrualsView>(`/api/accruals?month=${month}`),
     retry: quiet,
   });
+  // Step 7 red with a version accepted (the figures moved, or it was accepted by an account that looks like a service):
+  // the accrual is proposed again.
+  const close = useQuery({
+    queryKey: ['close', month],
+    queryFn: () => get<CloseView>(`/api/close?month=${month}`),
+    retry: quiet,
+  });
+  const step7Red = close.data?.steps.find((s) => s.key === 'accrual_accepted')?.state === 'red';
   const propose = useMutation({
     mutationFn: () => send<AccrualView>('POST', `/api/accruals/${month}/propose`, {}),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['accruals', month] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['accruals', month] });
+      void qc.invalidateQueries({ queryKey: ['close', month] });
+    },
   });
   const v = q.data;
   return (
@@ -588,7 +600,7 @@ export function AccrualsPage() {
       ) : (
         <div className="grid gap-3.5">
           <div className="flex flex-wrap gap-2">
-            {(r.signer || r.fpa) && (!v.current || v.current.status !== 'accepted') && (
+            {(r.signer || r.fpa) && (!v.current || v.current.status !== 'accepted' || step7Red) && (
               <Button
                 variant="primary"
                 disabled={propose.isPending}
@@ -681,6 +693,11 @@ function JournalCard({ month }: { month: string }) {
             {entries.size} entr{entries.size === 1 ? 'y' : 'ies'}
           </p>
         )}
+        {j && j.frozen && !entries.size && (
+          <p className="text-t3">
+            Nothing to book: the accepted accrual is $0.00 and no earlier accrual reversed this month.
+          </p>
+        )}
         {[...entries.entries()].map(([id, lines]) => (
           <div key={id} className="rounded-[9px] border border-hair px-2.5 py-2" data-testid="journal-entry">
             <p className="flex flex-wrap items-center justify-between gap-2">
@@ -705,7 +722,7 @@ function JournalCard({ month }: { month: string }) {
             </ul>
           </div>
         ))}
-        {j && !j.lines.length && <p className="text-t3">No entry for the month.</p>}
+        {j && !j.frozen && !j.lines.length && <p className="text-t3">No entry for the month.</p>}
         {q.isError && <ErrorNote error={q.error} />}
       </CardBody>
     </Card>
