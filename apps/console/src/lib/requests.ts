@@ -30,8 +30,17 @@ export function useWaitingCount(): number {
 
 export const kindLabel = (k: keyof typeof REQUEST_KIND_LABEL) => REQUEST_KIND_LABEL[k];
 
-/** `a month` or `once`, after an amount. */
-export const perLabel = (r: { recurrence: 'monthly' | 'once' }) => (r.recurrence === 'monthly' ? 'a month' : 'once');
+/**
+ * `a month` or `once`, after an amount. A seat on a contract adds `· within contract`: it reserves seats, not money,
+ * until Landbright prices seats (wave 4).
+ */
+export const perLabel = (r: {
+  recurrence: 'monthly' | 'once';
+  withinContract?: boolean;
+  kind?: string;
+  seat?: unknown;
+}) =>
+  `${r.recurrence === 'monthly' ? 'a month' : 'once'}${r.withinContract || (r.kind === 'tool_or_seat' && r.seat) ? ' · within contract' : ''}`;
 
 /** `$1,840` for whole dollars, `$1,840.50` otherwise. */
 export const amountWords = (amount: string): string => usd(amount).replace(/\.00$/, '');

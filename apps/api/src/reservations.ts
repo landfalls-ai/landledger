@@ -53,7 +53,18 @@ export interface Reservable {
   start_day: Date;
   end_day: Date | null;
   evidence: Record<string, unknown>;
+  /** Wave 4: a `tool_or_seat` request with a `seat` on a contract adds no money (`withinContract`). */
+  kind?: string;
+  seat?: unknown;
 }
+
+/**
+ * Wave 4 (the wave 3 leftover): a `tool_or_seat` request on a contract reserves seats only, not money, until
+ * Landbright prices seats; the contract's own value is already in the forecast as contracted. Its amount shows as
+ * "within contract".
+ */
+export const withinContract = (r: { kind?: string; seat?: unknown }): boolean =>
+  r.kind === 'tool_or_seat' && r.seat !== null && r.seat !== undefined;
 
 /**
  * What a request adds in a month: a one-off amount in its start month; a monthly amount for every month of its window,
@@ -61,6 +72,7 @@ export interface Reservable {
  */
 export function addsInMonth(r: Reservable, month: string): Money {
   const total = Money.ofMicros(r.amount_micros, r.currency.trim());
+  if (withinContract(r)) return Money.zero(total.currency);
   const start = day(r.start_day);
   const end = r.end_day ? day(r.end_day) : null;
   const zero = Money.zero(total.currency);
@@ -226,6 +238,11 @@ export class Reservations {
       if (!r) throw notFound('Request');
       if (r.status !== 'approved' && r.status !== 'applied')
         throw new ApiError('conflict', `Request is ${r.status}: only an approved request reserves budget`);
+      if (withinContract(r))
+        throw new ApiError(
+          'conflict',
+          'A seat on a contract reserves seats, not money: its amount is within the contract until Landbright prices seats',
+        );
       const month = input.month ?? this.now().toISOString().slice(0, 7);
       const cap = addsInMonth(r, month);
       if (cap.isZero()) throw new ApiError('bad_request', `${month} is outside the request's window`);

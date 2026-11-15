@@ -68,7 +68,7 @@ import type { Contracts } from './contracts.js';
 import type { RateCards } from './ratecards.js';
 import { isServiceLike, type CostCenterOwners } from './owners.js';
 import type { PersonLinks, RelayChannels } from './relays.js';
-import { addsInMonth, type Reservations } from './reservations.js';
+import { addsInMonth, type Reservations, withinContract } from './reservations.js';
 import { addMonths, amount, type Spend } from './spend.js';
 import type { Webhooks } from './webhooks.js';
 
@@ -1272,7 +1272,8 @@ export class Requests {
         );
       } else {
         // A contract reserves seats, never its TCV as money (spec 009); a seat request reserves both (spec 010).
-        if (r.kind !== 'contract')
+        // A seat on a contract reserves seats only, not money (wave 4: within contract until Landbright prices seats).
+        if (r.kind !== 'contract' && !withinContract(r))
           held = await this.reservations.reserveApprovedIn(tx, { ...r, status: 'approved' }, actor.actor);
         if (this.contracts && (r.contract || r.seat)) await this.contracts.approvedIn(tx, r, deciderId);
       }
@@ -1835,6 +1836,7 @@ export class Requests {
               : r.status[0]!.toUpperCase() + r.status.slice(1),
         stepCount: steps.length,
         budgetLeftAfter: left,
+        ...(withinContract(r) ? { withinContract: true } : {}),
       });
     }
     return out;

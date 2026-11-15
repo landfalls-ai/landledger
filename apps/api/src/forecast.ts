@@ -66,6 +66,8 @@ export interface Commitment {
 }
 
 interface CommitRow {
+  kind?: string;
+  seat?: unknown;
   id: string;
   number: number;
   title: string;
@@ -131,10 +133,11 @@ export async function commitmentsIn(
   if (fromDay > last) return [];
   const rows = await sql<CommitRow[]>`
     SELECT r.id, r.number, r.title, r.cost_center, r.amount_micros::text AS amount_micros, r.currency, r.recurrence,
-           r.start_day, r.end_day, r.status, r.evidence,
+           r.start_day, r.end_day, r.status, r.evidence, r.kind, r.seat,
            (SELECT array_agg(month ORDER BY month) FROM reservations s WHERE s.request_id = r.id) AS months
     FROM requests r
     WHERE r.status IN ('approved', 'applied') AND r.recurrence = 'monthly' AND r.kind <> 'contract'
+      AND NOT (r.kind = 'tool_or_seat' AND r.seat IS NOT NULL)
       AND r.start_day <= ${last}::date AND (r.end_day IS NULL OR r.end_day >= ${first}::date)
       AND NOT EXISTS (SELECT 1 FROM reservations s WHERE s.request_id = r.id AND s.month = ${first}::date)
     ORDER BY r.number`;
@@ -274,10 +277,12 @@ export async function yearAhead(
   const shown = out.slice(0, months);
   const allActive = await sql<(CommitRow & { months: Date[] | null })[]>`
     SELECT r.id, r.number, r.title, r.cost_center, r.amount_micros::text AS amount_micros, r.currency, r.recurrence,
-           r.start_day, r.end_day, r.status, r.evidence,
+           r.start_day, r.end_day, r.status, r.evidence, r.kind, r.seat,
            (SELECT array_agg(month ORDER BY month) FROM reservations s WHERE s.request_id = r.id) AS months
     FROM requests r
     WHERE r.status IN ('approved', 'applied') AND r.recurrence = 'monthly' AND r.kind <> 'contract'
+      -- A seat on a contract adds no money beside the contract's contracted line (wave 4).
+      AND NOT (r.kind = 'tool_or_seat' AND r.seat IS NOT NULL)
       AND (r.end_day IS NULL OR r.end_day >= ${today}::date)
     ORDER BY r.number`;
   const annualRate = perDay

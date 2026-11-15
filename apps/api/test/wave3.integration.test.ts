@@ -1305,6 +1305,28 @@ describe.skipIf(!integrationEnabled('db'))('wave 3: plan and reconcile', () => {
       const decided = (await outbox('request.decided')).find((d) => (d.request as { id: string }).id === id)!;
       expect((decided.request as { seat: { status: string } }).seat.status).toBe('reserved');
       expect((await services.contracts.view(linear)).seats).toMatchObject({ used: 34, reserved: 1, left: 5 });
+      // Wave 4 (the wave 3 leftover): seats only, never money beside the contract; the amount is "within contract".
+      expect(r.reservations).toEqual([]);
+      expect((decided as { reservations: unknown[] }).reservations).toEqual([]);
+      const [{ n }] = await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM reservations WHERE request_id = ${id}`;
+      expect(n).toBe(0);
+      const listed = (await as('tal', 'GET', '/api/requests?box=mine'))
+        .json()
+        .requests.find((x: { id: string }) => x.id === id);
+      expect(listed.withinContract).toBe(true);
+      expect(shown.evidence.adds).toBe('0.000000');
+      expect(
+        (await commitmentsIn(sql, '2026-12', '2026-12-01')).some((c) => c.requestId === id),
+        'a seat on a contract is no commitment beside the contracted line',
+      ).toBe(false);
+      const more = await app.inject({
+        method: 'POST',
+        url: '/api/reservations',
+        headers: { authorization: `Bearer ${readKey}` },
+        payload: { requestId: id, month: '2026-12' },
+      });
+      expect(more.statusCode).toBe(409);
+      expect(more.json().error.message).toMatch(/reserves seats, not money/);
       const applied = await as('tal', 'POST', `/api/requests/${id}/applied`, { note: 'Landbright granted' });
       expect(applied.statusCode, applied.body).toBe(200);
       expect(applied.json().request.seat.status).toBe('applied');

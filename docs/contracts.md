@@ -97,8 +97,11 @@ contract is never approved by policy, whatever its amount: a person decides it.
   left after this request, the seat price asked and the contract's own, and a note when none is left: _No seat is
   left on Linear Business: approving buys a seat beyond the contract (40 paid)_. The approver decides with that in
   front of them.
-- **On approval:** the seat price is reserved monthly like any request, and the seats are reserved on the contract
-  (`seat_reservations`, `reserved`). `request.decided` carries `request.seat` (`{ contractId, vendor, product, seats,
+- **On approval:** the seats are reserved on the contract (`seat_reservations`, `reserved`) and **no money** (wave 4,
+  [spec 020](../specs/020-seat-within-contract/spec.md)): the contract's value is already in the forecast as
+  _contracted_, so the seat price would count twice. Until Landbright prices seats, the request's amount shows as
+  _within contract_ (`RequestSummary.withinContract`): it adds nothing to the evidence, budgets, commitments or the
+  year ahead, and `POST /api/reservations` for it is a 409. `request.decided` carries `request.seat` (`{ contractId, vendor, product, seats,
   seatPrice, status }`) so Landflow can answer Landbright without another call.
 - **On applied** (`POST /api/requests/:id/applied`, after Landbright granted): the reservation is `applied` and counts
   as used.
