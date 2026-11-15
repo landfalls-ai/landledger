@@ -256,6 +256,10 @@ export const Period = z.object({
   closingAt: z.string().nullable(),
   lockedBy: z.string().nullable(),
   lockedAt: z.string().nullable(),
+  /** Wave 4: a locked month reopened by an approved `period_reopen` request, waiting to be locked again. */
+  reopened: z.boolean().optional(),
+  /** Wave 4: how many times the month was reopened. */
+  round: z.number().int().optional(),
 });
 export type Period = z.infer<typeof Period>;
 

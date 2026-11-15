@@ -1,0 +1,26 @@
+# fake-datarails (compose project `landledger-fake`, OrbStack only): the Datarails stand-in Landledger's connector talks
+# to in wave 4 (spec 017). A real tenant stays off: the connector refuses non-loopback hosts unless
+# LANDLEDGER_DATARAILS_REAL=true (wave 5, the user's decision).
+#   pnpm fake:up   # builds the dist, then COMPOSE_BAKE=false docker --context orbstack compose -p landledger-fake -f deploy/compose.fake.yml up -d --build --wait
+# Development credentials only; the defaults match .env.example.
+name: landledger-fake
+
+services:
+  datarails:
+    build: ../apps/fake-datarails
+    image: landledger-fake-datarails:dev
+    environment:
+      FAKE_DATARAILS_MCP_TOKEN: ${LANDLEDGER_DATARAILS_MCP_TOKEN:-fake-datarails-dev-token}
+      FAKE_DATARAILS_USER: ${LANDLEDGER_DATARAILS_USER:-landledger-sync}
+      FAKE_DATARAILS_PASSWORD: ${LANDLEDGER_DATARAILS_PASSWORD:-fake-datarails-dev}
+    ports:
+      - '127.0.0.1:4819:4819'
+    volumes:
+      - datarails-data:/data
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:4819/health']
+      interval: 3s
+      retries: 20
+
+volumes:
+  datarails-data:

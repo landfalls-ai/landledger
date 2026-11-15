@@ -13,6 +13,7 @@ import { seed } from '../src/seed.js';
 import { createServices, type Services } from '../src/services.js';
 import { signWebhook } from '../src/webhooks.js';
 import { fakeLandbright, ISSUER, oidcConfig, type Person } from './fake-oidc.js';
+import { person } from './fakes.js';
 
 const config = (over: Partial<Config> = {}): Config => ({
   port: 0,
@@ -377,18 +378,26 @@ describe.skipIf(!integrationEnabled('db'))('the API against Postgres', () => {
       closingBy: expect.stringMatching(/^usr_/),
     });
     expect((await post('/api/periods/2026-10/lock', { headers: asKey })).statusCode).toBe(403); // a key never locks
-    // The record was appended by hand, never allocated: the month isn't whole, so the lock needs an override.
+    // The record was appended by hand, never allocated: step 1 is red, and a lock has no override (wave 4, spec 012).
     const notWhole = await post('/api/periods/2026-10/lock', { cookies: yoav });
     expect(notWhole.statusCode).toBe(409);
-    expect(notWhole.json().error.details.problems).toEqual(['1 record(s) booked in 2026-10 have no stored allocation']);
-    const locked = await app.inject({
+    expect(notWhole.json().error.details.problems).toContain(
+      'step 1: 1 record(s) booked in 2026-10 have no stored allocation',
+    );
+    const override = await app.inject({
       method: 'POST',
       url: '/api/periods/2026-10/lock',
       cookies: yoav,
       payload: { override: { reason: 'A test record, appended without allocation' } },
     });
-    expect(locked.json()).toMatchObject({ status: 'locked', lockedBy: expect.stringMatching(/^usr_/) });
-    expect((await post('/api/periods/2026-10/lock', { cookies: yoav })).json().error.message).toMatch(/never reopens/);
+    expect(override.statusCode).toBe(400);
+    expect(override.json().error.message).toMatch(/no override/);
+    // The primitive underneath the four-eyes lock (tests and the seed only) locks it here.
+    const [y] = await sql<{ id: string }[]>`SELECT id FROM users WHERE email = ${YOAV.email!}`;
+    await services.periods.advance('2026-10', 'locked', person(y!.id, YOAV.email!, ['controller']), {
+      reason: 'A test record, appended without allocation',
+    });
+    expect((await post('/api/periods/2026-10/lock', { cookies: yoav })).json().error.message).toMatch(/is locked/);
     expect((await post('/api/periods/2026-10/close', { cookies: yoav })).statusCode).toBe(409);
 
     // Locked: October takes nothing more; late data is a correction in November, dated 30 October.

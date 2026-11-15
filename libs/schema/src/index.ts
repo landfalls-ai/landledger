@@ -106,37 +106,48 @@ export async function migrate(
   log: (line: string) => void = () => {},
   migrations: Migration[] = loadMigrations(),
 ): Promise<string[]> {
+  // One connection, so the session's advisory lock holds across the transactions (wave 4: one transaction per file
+  // keeps each within Postgres' lock table, which the whole schema in one transaction outgrew).
   const sql = postgres(url, { onnotice: () => {}, max: 1 });
   try {
-    return await sql.begin(async (tx) => {
-      await tx`SELECT pg_advisory_xact_lock(hashtext('landledger:migrate'))`;
-      await tx`CREATE TABLE IF NOT EXISTS _migrations (
-        name text PRIMARY KEY,
-        checksum text NOT NULL,
-        applied_at timestamptz NOT NULL DEFAULT now())`;
-      const done = new Map(
-        (await tx<{ name: string; checksum: string }[]>`SELECT name, checksum FROM _migrations`).map((r) => [
-          r.name,
-          r.checksum,
-        ]),
-      );
-      const applied: string[] = [];
-      for (const m of migrations) {
-        const had = done.get(m.name);
-        if (had !== undefined) {
-          if (had !== m.checksum)
-            throw new Error(`${m.name} changed after it was applied: add a new migration instead of editing it`);
-          continue;
+    await sql`SELECT pg_advisory_lock(hashtext('landledger:migrate'))`;
+    await sql`CREATE TABLE IF NOT EXISTS _migrations (
+      name text PRIMARY KEY,
+      checksum text NOT NULL,
+      applied_at timestamptz NOT NULL DEFAULT now())`;
+    const done = new Map(
+      (await sql<{ name: string; checksum: string }[]>`SELECT name, checksum FROM _migrations`).map((r) => [
+        r.name,
+        r.checksum,
+      ]),
+    );
+    for (const m of migrations) {
+      const had = done.get(m.name);
+      if (had !== undefined && had !== m.checksum)
+        throw new Error(`${m.name} changed after it was applied: add a new migration instead of editing it`);
+    }
+    const applied: string[] = [];
+    for (const m of migrations) {
+      if (done.has(m.name)) continue;
+      // A role is the server's: two databases set up at once (parallel test files) can race on it. The file's
+      // transaction rolled back whole, so it is tried again.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await sql.begin(async (tx) => {
+            await tx.unsafe(m.sql);
+            await tx`INSERT INTO _migrations (name, checksum) VALUES (${m.name}, ${m.checksum})`;
+          });
+          break;
+        } catch (error) {
+          if (attempt >= 5 || !/concurrently updated/.test((error as Error).message)) throw error;
+          await new Promise((r) => setTimeout(r, 50 * attempt));
         }
-        await tx.savepoint(async (sp) => {
-          await sp.unsafe(m.sql);
-          await sp`INSERT INTO _migrations (name, checksum) VALUES (${m.name}, ${m.checksum})`;
-        });
-        applied.push(m.name);
-        log(`postgres: applied ${m.name}`);
       }
-      return applied;
-    });
+      applied.push(m.name);
+      log(`postgres: applied ${m.name}`);
+    }
+    await sql`SELECT pg_advisory_unlock(hashtext('landledger:migrate'))`;
+    return applied;
   } finally {
     await sql.end();
   }

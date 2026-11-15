@@ -1,0 +1,26 @@
+{
+  "name": "@landledger/fake-datarails",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A fake Datarails on 127.0.0.1:4819 for wave 4: an MCP server with the read tools Landledger's connector uses (data models, aliased fields, business metrics, a budget query) and the FileBox upload API with Basic auth. Development credentials only; never a real tenant.",
+  "type": "module",
+  "main": "dist/server.js",
+  "types": "dist/server.d.ts",
+  "exports": {
+    ".": "./dist/server.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/main.js",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

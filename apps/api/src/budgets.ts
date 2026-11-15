@@ -8,7 +8,7 @@ import type { BudgetImportView } from '@landledger/contracts';
 import { Decimal, Money, REPORTING_CURRENCY } from '@landledger/money';
 import { cells } from './csv.js';
 import type { AuditLog } from './audit.js';
-import { day, type Sql, type Tx } from './db.js';
+import { day, inTransaction, type Sql, type Tx } from './db.js';
 import { ApiError } from './errors.js';
 import { newId, sha256 } from './ids.js';
 import { actorOf, type Principal } from './principal.js';
@@ -91,7 +91,10 @@ export class Budgets {
     input: { csv: string; fileName?: string; note: string },
     by: Principal | { actor: 'seed' },
     origin: 'entered' | 'dev-seed' = 'entered',
+    /** Wave 4 (spec 017): a Datarails pull accepted is imported like a CSV, in the decision's transaction. */
+    opts: { source?: 'csv' | 'datarails'; tx?: Tx } = {},
   ) {
+    const source = opts.source ?? 'csv';
     if ('kind' in by) {
       if (by.kind !== 'person' && by.kind !== 'dev')
         throw new ApiError(
@@ -102,7 +105,7 @@ export class Budgets {
         throw new ApiError('forbidden', 'Importing budgets is for the controller or the CFO');
     }
     const actor = 'kind' in by ? actorOf(by) : { actor: 'seed', actorKind: 'system' as const };
-    return this.sql.begin(async (tx) => {
+    return inTransaction(opts.tx ?? this.sql, async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext('budgets'))`;
       const { rows, problems } = parseBudgetCsv(input.csv, await this.codes(tx));
       if (problems.length)
@@ -124,7 +127,7 @@ export class Budgets {
       const id = newId('bud');
       await tx`
         INSERT INTO budget_imports (id, version, source, file_name, note, origin, row_count, checksum, imported_by)
-        VALUES (${id}, ${next}, 'csv', ${input.fileName ?? null}, ${input.note}, ${origin}, ${rows.length}, ${checksum}, ${actor.actor})`;
+        VALUES (${id}, ${next}, ${source}, ${input.fileName ?? null}, ${input.note}, ${origin}, ${rows.length}, ${checksum}, ${actor.actor})`;
       await tx`INSERT INTO budgets ${tx(
         rows.map((r) => ({
           import_id: id,
@@ -142,7 +145,7 @@ export class Budgets {
           subjectId: id,
           data: {
             version: Number(next),
-            source: 'csv',
+            source,
             fileName: input.fileName ?? null,
             rows: rows.length,
             checksum,

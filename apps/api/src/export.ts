@@ -64,8 +64,8 @@ const STYLES =
   '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>' +
   '</styleSheet>';
 
-/** A zip with every entry stored (method 0). */
-function zip(files: { name: string; data: Buffer }[]): Buffer {
+/** A zip with every entry stored (method 0); also the month-end package's download (spec 018). */
+export function zip(files: { name: string; data: Buffer }[]): Buffer {
   const parts: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;

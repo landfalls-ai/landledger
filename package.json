@@ -11,6 +11,8 @@
     "dev:up": "COMPOSE_BAKE=false docker --context orbstack compose -p landledger-infra -f deploy/compose.infra.yml up -d --wait",
     "dev:down": "docker --context orbstack compose -p landledger-infra -f deploy/compose.infra.yml down",
     "dev:logs": "docker --context orbstack compose -p landledger-infra -f deploy/compose.infra.yml logs -f",
+    "fake:up": "pnpm --filter @landledger/fake-datarails build && COMPOSE_BAKE=false docker --context orbstack compose -p landledger-fake -f deploy/compose.fake.yml up -d --build --wait",
+    "fake:down": "docker --context orbstack compose -p landledger-fake -f deploy/compose.fake.yml down",
     "db:migrate": "pnpm --filter @landledger/schema build && pnpm --filter @landledger/schema migrate",
     "db:seed": "nx run @landledger/api:seed --outputStyle=stream",
     "scim:token": "pnpm --filter @landledger/api scim:token",

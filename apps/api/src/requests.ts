@@ -1350,7 +1350,45 @@ export class Requests {
       const v = await this.allocation.approveIn(tx, change.versionId, by);
       return { change, effectiveFrom: v.effectiveFrom, version: v.version, by: by.actor };
     }
-    if (change.type === 'period_reopen') throw new ApiError('unavailable', 'Reopening a month is built in spec 012');
+    if (change.type === 'period_reopen') {
+      // Spec 012: the CFO approved reopening a locked month. Its ledger stays closed to inserts (corrections still post
+      // to the open month); notes and the upload can be done again, and two people lock it again in the next round.
+      const first = `${change.month}-01`;
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`period:${change.month}`}))`;
+      const [p] = await tx<{ status: string }[]>`SELECT status FROM periods WHERE month = ${first}`;
+      if (p?.status !== 'locked')
+        throw new ApiError('conflict', `${change.month} is not locked: there is nothing to reopen`);
+      const [{ locks, reopens }] = (await tx`
+        SELECT (SELECT count(*)::int FROM close_locks WHERE month = ${first}) AS locks,
+               (SELECT count(*)::int FROM period_reopens WHERE month = ${first}) AS reopens`) as unknown as [
+        { locks: number; reopens: number },
+      ];
+      if (reopens >= Math.max(locks, 1))
+        throw new ApiError('conflict', `${change.month} is reopened already: lock it again before another reopen`);
+      const round = reopens + 1;
+      await tx`
+        INSERT INTO period_reopens (month, round, request_id, reason, requested_by, approved_by)
+        VALUES (${first}, ${round}, ${r.id}, ${r.note}, ${r.requester_id}, ${decider.id})`;
+      await this.audit.append(
+        {
+          actor: by.actor,
+          actorKind: 'person',
+          action: 'period.reopened',
+          subjectType: 'period',
+          subjectId: change.month,
+          data: { round, requestId: r.id, reason: r.note },
+        },
+        tx,
+      );
+      await this.webhooks.enqueue(tx, 'period.reopened', {
+        month: change.month,
+        round,
+        requestId: r.id,
+        reason: r.note,
+        url: `${this.config.consoleUrl}/close?month=${change.month}`,
+      });
+      return { change, effectiveFrom: first, version: round, by: by.actor };
+    }
     await this.policies.approveIn(tx, change.policyId, decider.id);
     const p = await this.policies.byId(change.policyId, tx);
     await this.audit.append(
@@ -2235,7 +2273,7 @@ export class Requests {
   async raiseChange(
     tx: Tx,
     input: {
-      kind: Extract<RequestKind, 'rate_card_change' | 'rule_set_change' | 'policy_change'>;
+      kind: Extract<RequestKind, 'rate_card_change' | 'rule_set_change' | 'policy_change' | 'period_reopen'>;
       title: string;
       note: string;
       change: RequestChange;

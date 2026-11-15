@@ -78,6 +78,34 @@ export interface Config {
   clicklandApi?: { url: string; valueKey: string | null; alertsKey: string | null } | null;
   /** Wave 3 (spec 009): days before a contract's notice date its renewal shows (LANDLEDGER_RENEWAL_WINDOW_DAYS, 30). */
   renewalWindowDays?: number;
+  /** Wave 4 (spec 012): close step 3's limit on Unallocated spend, percent of the month (LANDLEDGER_CLOSE_UNALLOCATED_PCT, 5). */
+  closeUnallocatedPct?: string;
+  /**
+   * Wave 4 (spec 017): the Datarails connector. The fake on this machine by default; a host that isn't loopback is
+   * refused unless `real` (LANDLEDGER_DATARAILS_REAL=true), which is wave 5 and the user's decision.
+   */
+  datarails?: DatarailsConfig;
+}
+
+export interface DatarailsConfig {
+  mcpUrl: string;
+  uploadUrl: string;
+  /** The MCP bearer token (a real tenant uses OAuth per user; the fake takes a dev token). */
+  mcpToken: string | null;
+  user: string | null;
+  password: string | null;
+  filebox: string;
+  real: boolean;
+}
+
+/** True when a URL's host is this machine. */
+export function isLoopbackUrl(url: string): boolean {
+  try {
+    const h = new URL(url).hostname.replace(/^\[|\]$/g, '');
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+  } catch {
+    return false;
+  }
 }
 
 /** deploy/holidays.txt in the workspace (src/ and dist/ sit at the same depth). */
@@ -251,6 +279,28 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
       const n = Number(env.LANDLEDGER_RENEWAL_WINDOW_DAYS ?? '30');
       if (!Number.isInteger(n) || n < 0 || n > 365) throw new Error('LANDLEDGER_RENEWAL_WINDOW_DAYS is 0 to 365');
       return n;
+    })(),
+    closeUnallocatedPct: (() => {
+      const v = env.LANDLEDGER_CLOSE_UNALLOCATED_PCT ?? '5';
+      if (!/^\d{1,2}(\.\d{1,2})?$/.test(v))
+        throw new Error('LANDLEDGER_CLOSE_UNALLOCATED_PCT is a percent, 0 to 99.99');
+      return v;
+    })(),
+    datarails: (() => {
+      const base = (env.LANDLEDGER_DATARAILS_URL ?? 'http://127.0.0.1:4819').replace(/\/$/, '');
+      const mcpUrl = env.LANDLEDGER_DATARAILS_MCP_URL ?? `${base}/mcp`;
+      const uploadUrl = env.LANDLEDGER_DATARAILS_UPLOAD_URL ?? `${base}/api/v1/fileboxes/upload_file`;
+      // The fake's development credentials are the defaults only while both ends are on this machine.
+      const fake = isLoopbackUrl(mcpUrl) && isLoopbackUrl(uploadUrl);
+      return {
+        mcpUrl,
+        uploadUrl,
+        mcpToken: env.LANDLEDGER_DATARAILS_MCP_TOKEN || (fake ? 'fake-datarails-dev-token' : null),
+        user: env.LANDLEDGER_DATARAILS_USER || (fake ? 'landledger-sync' : null),
+        password: env.LANDLEDGER_DATARAILS_PASSWORD || (fake ? 'fake-datarails-dev' : null),
+        filebox: env.LANDLEDGER_DATARAILS_FILEBOX ?? 'fb_technology_costs',
+        real: env.LANDLEDGER_DATARAILS_REAL === 'true',
+      };
     })(),
     auditAnchorMinutes: (() => {
       const n = Number(env.LANDLEDGER_AUDIT_ANCHOR_MINUTES ?? '60');

@@ -29,6 +29,13 @@ import { AccessReviews } from './access-review.js';
 import { Anomalies } from './anomalies.js';
 import { Contracts } from './contracts.js';
 import { Invoices } from './invoices.js';
+import { Accruals } from './accruals.js';
+import { Close } from './close.js';
+import { Datarails } from './datarails.js';
+import { ForecastHistory } from './forecast-history.js';
+import { Notes } from './notes.js';
+import { MonthEndPackages } from './package.js';
+import { Snapshots } from './snapshot.js';
 
 /** Everything the routes call. */
 export interface Services {
@@ -62,6 +69,16 @@ export interface Services {
   agents: Agents;
   contracts: Contracts;
   landflow: LandflowClient | null;
+  /** Wave 4, "Month-end" (specs 012–019). */
+  forecastHistory: ForecastHistory;
+  snapshots: Snapshots;
+  accruals: Accruals;
+  notes: Notes;
+  close: Close;
+  datarails: Datarails;
+  packages: MonthEndPackages;
+  /** The clock every service shares (a test's fixed time). */
+  now: () => Date;
   log: IngestLog;
   fetchImpl: typeof fetch;
 }
@@ -189,6 +206,72 @@ export function createServices(
     { minUsd: config.anomalyMinUsd ?? '1', consoleUrl: config.consoleUrl },
     now,
   );
+  const periods = new Periods(sql, audit, webhooks, now);
+  const accessReviews = new AccessReviews(
+    sql,
+    audit,
+    webhooks,
+    owners,
+    { consoleUrl: config.consoleUrl, timeZone: config.timeZone },
+    now,
+  );
+  // Wave 4: the stored forecast, the frozen snapshot, accruals, notes, the close, Datarails and the package.
+  const forecastHistory = new ForecastHistory(sql, spend, now);
+  const snapshots = new Snapshots(sql, audit, spend, budgets, invoices, forecastHistory);
+  const accruals = new Accruals(sql, audit, webhooks, spend, snapshots, config.consoleUrl, now);
+  let closeRef: Close | null = null;
+  const period = (month: string, tx?: Parameters<Close['period']>[1]) => closeRef!.period(month, tx);
+  const notes = new Notes(sql, audit, webhooks, snapshots, period, config.consoleUrl);
+  const close = new Close(
+    sql,
+    audit,
+    webhooks,
+    periods,
+    invoices,
+    anomalies,
+    accessReviews,
+    snapshots,
+    accruals,
+    notes,
+    requests,
+    { consoleUrl: config.consoleUrl, unallocatedPct: config.closeUnallocatedPct ?? '5' },
+    log,
+    now,
+  );
+  closeRef = close;
+  accruals.gates = { gates: (month) => close.gates(month), period };
+  const datarails = new Datarails(
+    sql,
+    audit,
+    webhooks,
+    budgets,
+    snapshots,
+    notes,
+    period,
+    config.datarails ?? {
+      mcpUrl: 'http://127.0.0.1:4819/mcp',
+      uploadUrl: 'http://127.0.0.1:4819/api/v1/fileboxes/upload_file',
+      mcpToken: 'fake-datarails-dev-token',
+      user: 'landledger-sync',
+      password: 'fake-datarails-dev',
+      filebox: 'fb_technology_costs',
+      real: false,
+    },
+    fetchImpl,
+  );
+  const packages = new MonthEndPackages(
+    sql,
+    audit,
+    close,
+    snapshots,
+    accruals,
+    notes,
+    invoices,
+    exceptions,
+    anomalies,
+    datarails,
+    now,
+  );
   return {
     config,
     sql,
@@ -197,7 +280,7 @@ export function createServices(
     sessions: new Sessions(sql, config, audit, oidc, box),
     dimensions: new Dimensions(sql),
     webhooks,
-    periods: new Periods(sql, audit, webhooks, now),
+    periods,
     records,
     rateCards,
     allocation,
@@ -218,15 +301,16 @@ export function createServices(
     anomalies,
     agents,
     contracts,
-    accessReviews: new AccessReviews(
-      sql,
-      audit,
-      webhooks,
-      owners,
-      { consoleUrl: config.consoleUrl, timeZone: config.timeZone },
-      now,
-    ),
+    accessReviews,
     landflow,
+    forecastHistory,
+    snapshots,
+    accruals,
+    notes,
+    close,
+    datarails,
+    packages,
+    now,
     log,
     fetchImpl,
   };
@@ -265,6 +349,11 @@ export function startBackgroundJobs(services: Services, log: (msg: string, err?:
   loop('seat expiry', 3_600_000, () => services.requests.expireSeats());
   // Spec 011: access_review.due once a quarter while its review is not complete, checked every hour.
   loop('access review', 3_600_000, async () => (await services.accessReviews.dueNotice(), 0));
+  // Wave 4 (spec 014): the day's forecast per cost center, stored once a UTC day (checked every hour; first after 3 min).
+  loop('forecast history', 3_600_000, async () => (await services.forecastHistory.record(), 0));
+  timers.add(
+    setTimeout(() => void services.forecastHistory.record().catch((e) => log('forecast history failed', e)), 180_000),
+  );
   timers.add(setTimeout(() => void services.anomalies.scan().catch((e) => log('anomalies failed', e)), 120_000));
   const { config } = services;
   if (config.auditAnchorMinutes > 0) {

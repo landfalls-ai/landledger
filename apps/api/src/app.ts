@@ -7,7 +7,7 @@ import {
   DIMENSION_LABEL,
   IngestRunInput,
   IngestRunsQuery,
-  LockInput,
+  LockSignInput,
   Month,
   MonthQuery,
   RecordsQuery,
@@ -42,6 +42,7 @@ import { toCsv, toXlsx, type Sheet } from './export.js';
 import { createMcpServer } from './mcp.js';
 import { registerScim } from './scim.js';
 import { registerWave3 } from './wave3-routes.js';
+import { registerWave4 } from './wave4-routes.js';
 import { actorOf, identify, type Principal, requireScope, SESSION_COOKIE } from './principal.js';
 import type { Services } from './services.js';
 
@@ -162,15 +163,30 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
   app.get('/api/rate-cards/:id', async (r) => (need(r, 'read'), dimensions.rateCard(parse(Id, r.params).id, on(r))));
 
   // The ledger (spec 001): months and cost records ------------------------------------------------------------------
-  app.get('/api/periods', async (r) => (need(r, 'read'), { periods: await periods.list() }));
+  app.get('/api/periods', async (r) => {
+    need(r, 'read');
+    const list = await periods.list();
+    return {
+      periods: await Promise.all(
+        list.map(async (p) => {
+          const { round, reopened } = await services.close.period(p.month);
+          return { ...p, reopened, round };
+        }),
+      ),
+    };
+  });
+  // Wave 4 (spec 012): closing starts the checklist; locking is a four-eyes signature, never an override.
   app.post('/api/periods/:month/close', async (r) => {
     need(r, 'admin');
-    return periods.advance(parse(MonthParam, r.params).month, 'closing', r.principal);
+    const month = parse(MonthParam, r.params).month;
+    await services.close.start(month, '', r.principal);
+    return (await periods.list()).find((p) => p.month === month);
   });
   app.post('/api/periods/:month/lock', async (r) => {
     need(r, 'admin');
-    const { override } = parse(LockInput, r.body ?? {});
-    return periods.advance(parse(MonthParam, r.params).month, 'locked', r.principal, override);
+    if (r.body && typeof r.body === 'object' && 'override' in r.body)
+      throw new ApiError('bad_request', 'A month has no override: a controller and the CFO sign its lock (Month-end)');
+    return services.close.sign(parse(MonthParam, r.params).month, parse(LockSignInput, r.body ?? {}), r.principal);
   });
   app.get('/api/records', async (r) => (need(r, 'read'), records.list(parse(RecordsQuery, r.query))));
 
@@ -572,5 +588,6 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
   app.delete('/api/mcp', noSessions);
 
   registerWave3(app, services, need);
+  registerWave4(app, services, need);
   return app;
 }
