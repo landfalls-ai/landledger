@@ -367,8 +367,16 @@ export const WebhookEvent = z.enum([
   'approval.anomaly',
   /** Wave 3: a contract entered its notice window, once per contract and renewal date (spec 009). */
   'contract.renewal_due',
-  /** Wave 3: a quarter's access review is due (spec 011). */
+  /** Wave 3: a quarter's access review is due (spec 011); again as a reminder while it is not complete. */
   'access_review.due',
+  /** Review of wave 3: a quarter ended with its access review not complete (recorded, once). */
+  'access_review.missed',
+  /** Review of wave 3: a contract's notice date is a week, then a day, away (spec 009). */
+  'contract.notice_reminder',
+  /** Review of wave 3: a contract's notice date passed with no new version since (spec 009). */
+  'contract.notice_missed',
+  /** Review of wave 3: seats went back to their contract (released or expired unapplied, spec 010). */
+  'seat.released',
 ]);
 export type WebhookEvent = z.infer<typeof WebhookEvent>;
 

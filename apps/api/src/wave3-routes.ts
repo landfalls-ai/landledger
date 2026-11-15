@@ -5,6 +5,8 @@
  */
 import {
   AcknowledgeInput,
+  AssignAnomalyInput,
+  CloseAnomalyInput,
   AgentsQuery,
   ContractImportInput,
   AnomaliesQuery,
@@ -75,6 +77,14 @@ export function registerWave3(
   app.post('/api/anomalies/:id/acknowledge', async (r) => {
     need(r, 'requests:write');
     return services.anomalies.acknowledge(parse(Id, r.params).id, parse(AcknowledgeInput, r.body).note, r.principal);
+  });
+  app.post('/api/anomalies/:id/assign', async (r) => {
+    need(r, 'requests:write');
+    return services.anomalies.assign(parse(Id, r.params).id, parse(AssignAnomalyInput, r.body), r.principal);
+  });
+  app.post('/api/anomalies/:id/close', async (r) => {
+    need(r, 'requests:write');
+    return services.anomalies.close(parse(Id, r.params).id, parse(CloseAnomalyInput, r.body), r.principal);
   });
   app.post('/api/anomalies/scan', async (r) => {
     need(r, 'admin');

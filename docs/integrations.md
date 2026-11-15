@@ -10,7 +10,9 @@ what they would have to add to do better. Keys live in the untracked `apps/api/.
 
 - **What fits today:** Clickland's alerts count **log and trace rows** in a window. The `landledger.cost.*` series
   Landledger sends are OTLP **metrics**, and no alert rule can watch a metric. So Landledger logs each cost anomaly
-  as an OTel log record (`landledger.event=cost.anomaly`, with the anomaly's attributes) through its own OTLP exporter.
+  (and each escalation, at twice the figure) as an OTel log record (`landledger.event=cost.anomaly`, with ids and
+  figures, never a summary or a name) through its own OTLP exporter. Approval patterns name people and are never
+  logged (review of wave 3, should-fix 10).
   One alert rule counts those records: query `landledger.event:cost.anomaly`, grouped by
   `landledger.anomaly.dimension`, above 0 in 60 minutes, every 5 minutes, `sev3`, labels
   `team: finance, app: landledger` ([anomalies.md](anomalies.md)).
@@ -24,7 +26,9 @@ what they would have to add to do better. Keys live in the untracked `apps/api/.
   2. **Or an events API:** `POST /api/events` (an `events:write` scope) for a client to post a typed event that
      alerts and Landfall see, without going through OTLP logs.
   3. A rule's **labels in the log query result**, so the alert's webhook could carry the anomaly's URL as
-     `runbookUrl` per group, not one fixed URL.
+     `runbookUrl` per group, not one fixed URL (the rule's `runbookUrl` is `LANDLEDGER_CONSOLE_URL/anomalies` today).
+  4. **Resolve or close an alert** from outside (`POST /api/alerts/:id/resolve` or an event that clears a group), so
+     closing an anomaly in Landledger closes it in Clickland too. Today the alert clears when its window runs out.
 
 ### Agent Value (spec 008)
 
@@ -33,10 +37,14 @@ what they would have to add to do better. Keys live in the untracked `apps/api/.
   and Clickland's hourly rate. It takes no cost from Clickland: cost comes from Landledger's ledger.
 - **Matching:** by agent name within Landflow's service (`landflow-host`). Clickland keys agents as `service/name`,
   and Landledger knows them by Landflow's agent id (`ag_…`) and name.
-- **Clickland would need,** to match without names:
+- **Clickland would need,** to match without names and to say what an agent is worth:
   1. Landflow's **agent id** on the value report's agent rows (Landflow's spans carry it as an attribute;
-     Clickland could expose it as `agentId`), so a renamed agent stays matched.
-  2. A **`month` window** or the `to` as given: it takes `from` and `to`, which is enough today.
+     Clickland could expose it as `agentId`), so a renamed agent stays matched. Until then a name shared by two agents
+     matches neither.
+  2. An **`outcomesInstrumented` flag per agent** (an outcome definition covers it), so "no outcome" can be told from
+     "not measured". Landledger already reads it when present; until then an agent is measured once it has an
+     outcome, and otherwise says _Outcomes not measured_ (should-fix 14). Sub-agents never get outcomes.
+  3. A **`month` window** or the `to` as given: it takes `from` and `to`, which is enough today.
 
 ## Landflow
 
@@ -85,8 +93,14 @@ With the `landflow requests` key (`read`, `requests:write`) and a webhook subscr
 6. **After the grant** (`grant.provisioned` or the grant's `active` for that request):
    `POST /api/requests/:id/applied` `{ note: "Granted in Landbright as REQ-n", links: [<Landbright request URL>] }`.
    The seat moves from reserved to used.
+7. **Access denied, or the grant revoked later:** `POST /api/requests/:id/seats/release`
+   `{ reason: "access_denied" | "grant_revoked" | "not_needed", note }` with the same key (the creating key may release
+   its own request's seat). The seat goes back to the contract and the request's reservations are released; webhook
+   `seat.released`. A seat approved and never applied goes back by itself 30 days after approval (`expired`).
 
-A revoked grant does not give the seat back today; the contract's next import (with a fresh _seats used_) does.
+**Landflow would need:** the tool-or-seat template itself (the steps above as a flow in Landflow's templates), and a
+step for "cost approved, access denied or grant revoked" that calls the seat-release endpoint, so a seat never stays
+reserved for a grant that didn't happen.
 
 ### Landbright would need
 
@@ -97,10 +111,35 @@ A revoked grant does not give the seat back today; the contract's next import (w
    scope, audited with the reference). Today every step is people voting, so the cost decision would have to be
    relayed as a person's vote, which it is not. Until then the flow can only comment, and access and cost are
    decided apart.
-3. **Seats used from grants** (later): the count of active grants per `landbrightApp`, so Landledger could read seats
-   used live instead of from the contract import.
+3. **Seats used from grants** (later): the count of active grants per `landbrightApp`, with the `as_of` time it was
+   taken, so Landledger could read seats used live instead of from the contract import (the contract CSV takes
+   `seats_used_as_of` today).
 
 ### Landbright: what Landledger already relies on
 
-- Sign-in (OIDC), roles from groups, SCIM 2.0 people, back-channel logout ([identity.md](identity.md)). Nothing new
-  for wave 3 beyond the above.
+- Sign-in (OIDC), roles from groups, SCIM 2.0 people, back-channel logout ([identity.md](identity.md)). Landbright
+  signs each logout delivery attempt afresh, with a new random `jti` and `iat` (its
+  `apps/control/src/logout/logout-sender.ts`), so a `jti` is never repeated by it; Landledger ends a person's sessions
+  created before each valid token's `iat` whatever its `jti`, and audits a seen `jti` as a replay. Nothing new for wave
+  3 beyond the above.
+
+## Landbright's seat-cost gate (proposed by Landbright)
+
+Landbright's answer to "Landbright would need" above, as it proposed it. Landledger records it here and is ready for
+its side; Landbright builds its own.
+
+- **An external step:** a policy step of `kind: 'external'`, settled by a system rather than by people voting, through
+  `POST /api/v1/requests/:id/steps/:step/settle` `{ outcome, reference }` with a dedicated `steps:settle` scope,
+  audited with the reference (Landledger's request id). Landflow holds that scope and settles it from Landledger's
+  `request.decided` (step 5 of the flow).
+- **The cost step first,** with its own deadline: access approvers in Landbright see a request whose cost is already
+  decided, and a cost step that runs out ends the request rather than waiting on it.
+- **Break-glass skips it:** an emergency grant goes through without the cost step, and the flow then raises the cost
+  request after the fact with `origin: { type: 'landbright_request', …, breakGlass: true }`. Landledger accepts the
+  flag (additive, review of wave 3) and lists every such request on the exceptions report (`breakGlass`) until it is
+  approved; the Request page says _break-glass: granted first, approved after_.
+- **An extension rides on the first request** (no new cost request) unless it crosses the contract's renewal date or
+  changes the number of seats; then it is a new seat request.
+- **Seats used = grants + standing SCIM members,** reported separately (grants through requests, and people holding
+  the app through a SCIM group), each with its `as_of` time, so Landledger can tell seats it approved from seats that
+  came with a group.

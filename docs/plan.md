@@ -103,12 +103,22 @@ Each wave ends with something finance can use, checked live, with screenshots at
   never in the ledger); Agents shows six Landflow agents at $0, _Triage the alert_ 27 runs and no outcome
   (_Retire_); Linear (notice in 17 days) and Notion imported; the 2026-Q4 access review opened by the admin, 6 of 11
   items kept, the 5 about the admin left for another controller or the CFO. Not yet: FX rates (still `422`);
-  Landbright's seat cost and external policy step, and Landflow's tool-or-seat flow (integrations.md).
+  Landbright's seat cost and external policy step, and Landflow's tool-or-seat flow (integrations.md); Landlens's
+  cost per workload (moved to wave 4).
+- **Review of wave 3, fixed 15 Nov 2026** (Fable's review: B1–B4, should-fix 1–17 and the nits): lock-safe invoices
+  (invoices only once their month is over, late estimates flagged, true-ups linked, one read rule as of the
+  estimate's month, voids re-planning), property-tested against Postgres; dev fixtures in no total; forecasts netted
+  against the run rate with a contracted line, one formula; seats priced, released and expiring, seats used as of a
+  date; contract imports above $25,000 held for a second person; access-review revokes done at once or tracked until
+  gone, with webhooks, sessions, added items, reminders and missed quarters; anomalies followed, re-alerted, assigned
+  and closed, never aged out; agents "not measured" rather than Retire. Live: the two dev-fixture invoices voided as admin@landbright.test through Reconciliation, month to date for
+  November $30.77 → $7.27 (−$23.50), the Ollama invoice's 12 estimates back.
 
 ### Wave 4 · Month-end
 
 - Periods and locking; the month-end checklist; the accrual proposal; variance notes drafted by an agent and accepted
   by an analyst; incident cost into Landfall postmortems through Landflow.
+- Landlens: cost per workload from Landledger's API (moved from wave 3).
 - The Datarails connector against `fake-datarails`: budgets in over MCP, actuals and notes out through the upload API.
 - **Finance gets:** technology lines ready on business day 1 after month-end, for the controller to review and book.
 
@@ -126,7 +136,7 @@ Each sends data outside this machine.
 | Landflow | a generic Approval step that waits on an outside decision, if the Wait node's webhook resume isn't enough | 2 |
 | Landbright | register the client; the finance groups (no code) | 1 |
 | Landbright | access bundles with seat cost call Landflow before granting | 3 |
-| Landlens | cost per workload from Landledger's API | 3 |
+| Landlens | cost per workload from Landledger's API | 4 |
 
 Each is asked of that repo's session first; none is needed for Landledger itself to run.
 

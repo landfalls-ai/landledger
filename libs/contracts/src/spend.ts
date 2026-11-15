@@ -216,9 +216,12 @@ export interface Overview {
      * forecast, no range, no state); `past`: a past month, actuals only.
      */
     status: 'ok' | 'insufficient' | 'past';
-    /** P50 plus what is committed beyond reservations (spec 006). */
+    /**
+     * P50 plus what is held beyond the run rate for the rest of the month: reservations and commitments (each less what
+     * the run rate already projects of it) and contracts (spec 006; the year ahead's current month is the same figure).
+     */
     amount: Amount | null;
-    /** P10 and P90 (with the commitments), the band from how much the days vary (spec 006). */
+    /** P10 and P90 (with what is held beyond the run rate), the band from how much the days vary (spec 006). */
     low: Amount | null;
     high: Amount | null;
     /** Spec 006: the band, without commitments; null without enough data. */
@@ -227,8 +230,12 @@ export interface Overview {
     p90?: Amount | null;
     /** In words: how the band was taken (σ per source, days left). */
     band?: string | null;
-    /** Approved monthly requests beyond their reserved months, for the rest of this month. */
+    /** Approved monthly requests beyond their reserved months, for the rest of this month (net of the run rate). */
     committed?: Amount;
+    /** Reservations still held, net of what the run rate already projects of their requests. */
+    reserved?: Amount;
+    /** What contracts hold for the rest of this month: annual value ÷ 12, pro rata by day. */
+    contracted?: Amount;
     commitments?: { requestId: string; number: string; title: string; costCenter: string; amount: Amount }[];
     /** Each source's driver: its consumed quantity per day (by unit) and cost per day over the run-rate window. */
     drivers?: { source: string; unit: string; perDay: string; costPerDay: Amount }[];

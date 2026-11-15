@@ -13,6 +13,7 @@ export const SUGGESTION: Record<AgentSuggestion, { label: string; tone: PillTone
   keep: { label: 'Keep', tone: 'nu' },
   review: { label: 'Review', tone: 'risk' },
   retire: { label: 'Retire', tone: 'over' },
+  not_measured: { label: 'Outcomes not measured', tone: 'nu' },
 };
 
 function Figure({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -49,10 +50,20 @@ function AgentCard({ a }: { a: AgentRow }) {
         />
         <Figure
           label="Runs · outcomes"
-          value={a.value ? `${a.value.runs} · ${a.value.outcomes}` : '—'}
-          sub={a.value?.successRate ? `${Math.round(Number(a.value.successRate) * 100)}% succeeded` : undefined}
+          value={
+            a.value ? (a.measured ? `${a.value.runs} · ${a.value.outcomes}` : `${a.value.runs} · not measured`) : '—'
+          }
+          sub={
+            a.value && a.measured
+              ? `self-reported${a.value.successRate ? `, ${Math.round(Number(a.value.successRate) * 100)}% succeeded` : ''}`
+              : undefined
+          }
         />
-        <Figure label="Cost per outcome" value={a.costPerOutcome ? usd(a.costPerOutcome) : '—'} />
+        <Figure
+          label="Cost per outcome"
+          value={a.costPerOutcome ? usd(a.costPerOutcome) : '—'}
+          sub={a.measured ? undefined : 'outcomes not measured'}
+        />
         <Figure
           label="Capacity freed"
           value={a.value ? `${a.value.hoursSaved} h` : '—'}
@@ -95,13 +106,14 @@ export function AgentsPage() {
       </div>
       <Lede>
         Each agent’s month: what it cost (Landledger’s ledger), what it did (Clickland’s Agent Value), what one outcome
-        costs, and the time it gave back. Capacity freed is <Tag dashed>capacity, not cash</Tag>. The suggestion is a
-        rule, shown beside it; the agent’s owner decides.
+        costs, and the time it gave back. Outcomes are <Tag dashed>self-reported</Tag> by the agents’ own telemetry, and
+        an agent no outcome definition covers says “Outcomes not measured” rather than Retire. Capacity freed is{' '}
+        <Tag dashed>capacity, not cash</Tag>. The suggestion is a rule, shown beside it; the agent’s owner decides.
       </Lede>
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
         {[
           ['Agents’ cost', usd(t.cost)],
-          ['Outcomes', String(t.outcomes)],
+          ['Outcomes (measured)', String(t.outcomes)],
           ['Hours freed', t.hoursSaved],
           ['Capacity', usd(t.capacity)],
         ].map(([label, value]) => (

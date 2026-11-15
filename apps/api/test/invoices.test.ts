@@ -24,7 +24,7 @@ describe('the invoice CSV', () => {
   it('reads the fixtures: Anthropic (two models and a credit) and Ollama at $0', () => {
     const anthropic = parseInvoiceCsv(
       readFileSync(new URL('../fixtures/invoices/anthropic-2026-11.csv', import.meta.url), 'utf8'),
-      '2026-11-16',
+      '2026-12-02',
     );
     expect(anthropic.problems).toEqual([]);
     expect(anthropic.invoices).toHaveLength(1);
@@ -34,7 +34,7 @@ describe('the invoice CSV', () => {
     expect(inv.lines.at(-1)).toMatchObject({ chargeCategory: 'Credit', model: null, sku: 'promotional-credit' });
     const ollama = parseInvoiceCsv(
       readFileSync(new URL('../fixtures/invoices/ollama-2026-11.csv', import.meta.url), 'utf8'),
-      '2026-11-16',
+      '2026-12-02',
     );
     expect(ollama.problems).toEqual([]);
     expect(ollama.invoices[0]!.lines.every((l) => l.amount.isZero())).toBe(true);
@@ -51,8 +51,9 @@ describe('the invoice CSV', () => {
         'Anthropic,A-1,2026-11,m,,,,1,USD',
         'Anthropic,A-1,2026-12,m,,1,Tokens,1,USD',
         'Anthropic,A-1,2026-11,m,,1,Tokens,1,EUR',
+        'Anthropic,A-1,2027-01,m,,1,Tokens,1,USD',
       ].join('\n'),
-      '2026-11-16',
+      '2026-12-02',
     );
     expect(out.problems).toEqual([
       'Line 2: period "2026-13" is not a month (YYYY-MM)',
@@ -60,10 +61,21 @@ describe('the invoice CSV', () => {
       'Line 4: amount "1.1234567" is a decimal with at most six decimals',
       'Line 5: a negative amount is a Credit or an Adjustment',
       'Line 6: a Usage line has a quantity and a unit',
-      "Line 7: period 2026-12 hasn't started yet",
+      // B1 (review of wave 3): the month must be over, in LANDLEDGER_TZ, before its invoice comes in.
+      "Line 7: period 2026-12 hasn't ended yet (UTC): an invoice is imported once its month is over",
+      "Line 9: period 2027-01 hasn't started yet",
     ]);
     expect(out.currency).toEqual(['Line 8: currency "EUR" — only USD until FX is set up']);
     expect(parseInvoiceCsv('provider,amount\nx,1', '2026-11-16').problems[0]).toMatch(/header is missing/);
+  });
+
+  it('takes the month as over only in LANDLEDGER_TZ (B1)', () => {
+    const csv = [HEADER, 'Anthropic,A-1,2026-11,m,,1,Tokens,1,USD'].join('\n');
+    // 1 December 01:30 in Jerusalem is still 30 November in UTC: refused there, taken here.
+    expect(parseInvoiceCsv(csv, '2026-11-30', 'UTC').problems).toEqual([
+      "Line 2: period 2026-11 hasn't ended yet (UTC): an invoice is imported once its month is over",
+    ]);
+    expect(parseInvoiceCsv(csv, '2026-12-01', 'Asia/Jerusalem').problems).toEqual([]);
   });
 });
 

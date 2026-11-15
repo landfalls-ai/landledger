@@ -25,7 +25,7 @@ import type { PricedVersion } from '@landledger/pricing';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { canonicalJson } from '../canonical.js';
 import type { AuditLog } from '../audit.js';
-import { day as dayOf, type Sql } from '../db.js';
+import { day as dayOf, type Sql, type Tx } from '../db.js';
 import { newId } from '../ids.js';
 import type { Records } from '../ledger.js';
 import type { RateCards } from '../ratecards.js';
@@ -71,6 +71,11 @@ export interface IngestOptions {
   now?: () => Date;
   /** After a run that entered records: allocation of the months it touched. */
   afterRun?: (run: IngestRun & { provisional: boolean }) => Promise<void>;
+  /**
+   * In the run's transaction, with the records it entered: estimates for a month already invoiced are linked `late`
+   * so they never count on top of the invoice (invoices.ts `coverLate`; review of wave 3, B1).
+   */
+  afterAppend?: (tx: Tx, records: readonly CostRecord[]) => Promise<unknown>;
 }
 
 /** How long after a UTC day ends its data is taken as complete (Clickland's samples land in batches). */
@@ -414,6 +419,7 @@ export class Ingest {
           out.push(...correct(original, null, state, ctx));
         }
       for (let i = 0; i < out.length; i += 500) await this.records.append(out.slice(i, i + 500), tx);
+      if (this.options.afterAppend && out.length) await this.options.afterAppend(tx, out);
       // The day is in the ledger now: its provisional rows go.
       await tx`DELETE FROM provisional_usage WHERE source = ${source} AND charge_period_start = ${`${day}T00:00:00Z`}::timestamptz`;
       return { newCount, correctedCount, unchangedCount };

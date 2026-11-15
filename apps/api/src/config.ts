@@ -65,6 +65,8 @@ export interface Config {
   holidays: Set<string>;
   /** Wave 3 (spec 005): reconciliation tolerance, percent (LANDLEDGER_RECONCILE_TOLERANCE_PCT, default 2). */
   reconcileTolerancePct?: string;
+  /** Review of wave 3: a variance this small is within whatever the percent (LANDLEDGER_RECONCILE_TOLERANCE_USD, 0.50). */
+  reconcileToleranceUsd?: string;
   /** Wave 3 (spec 007): the smallest daily jump that is an anomaly, USD (LANDLEDGER_ANOMALY_MIN_USD, default 1). */
   anomalyMinUsd?: string;
   /** Wave 3 (spec 007): the dev-only spike path (LANDLEDGER_DEV_ANOMALY=on), never in production. */
@@ -217,6 +219,11 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
       const v = env.LANDLEDGER_RECONCILE_TOLERANCE_PCT ?? '2';
       if (!/^\d{1,2}(\.\d{1,2})?$/.test(v))
         throw new Error('LANDLEDGER_RECONCILE_TOLERANCE_PCT is a percent, 0 to 99.99');
+      return v;
+    })(),
+    reconcileToleranceUsd: (() => {
+      const v = env.LANDLEDGER_RECONCILE_TOLERANCE_USD ?? '0.50';
+      if (!/^\d+(\.\d{1,6})?$/.test(v)) throw new Error('LANDLEDGER_RECONCILE_TOLERANCE_USD is an amount in USD');
       return v;
     })(),
     anomalyMinUsd: (() => {

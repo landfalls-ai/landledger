@@ -1,9 +1,13 @@
 /**
  * Agents' unit economics (spec 008): each AI agent's month as a unit. Cost from the ledger (Landflow's usage by the
  * `agent` tag, invoiced where an invoice replaced the estimate); runs, outcomes and value from Clickland's Agent Value,
- * matched by name within Landflow's service; cost per outcome, capacity freed (labelled capacity, not cash), the cost
- * center most of its cost goes to and that cost center's owner, and a suggestion (keep, scale, review, retire) with the
- * rule that gave it. An owner decides; Landledger only suggests.
+ * matched by name within Landflow's service (only where the name is unique on both sides: two agents with one name
+ * never share outcomes); cost per outcome, capacity freed (labelled capacity, not cash), the cost center most of its
+ * cost goes to and that cost center's owner, and a suggestion with the rule that gave it. Outcomes are self-reported
+ * (the agent's own telemetry), and zero outcomes mean nothing unless Clickland measures the agent's outcomes (it says
+ * it is instrumented, or reports some): otherwise the row says "Outcomes not measured" (review of wave 3). Retire is
+ * said only for a measured agent costing USD 10 or more a month whose outcomes cost far more than they are worth. An
+ * owner decides; Landledger only suggests. Exact decimals throughout.
  */
 import type { AgentEconomics, AgentRow, AgentSuggestion, AgentsView } from '@landledger/contracts';
 import { Decimal, Money, REPORTING_CURRENCY } from '@landledger/money';
@@ -27,6 +31,8 @@ const ValueReport = z.object({
       value: z.number(),
       cost: z.number().nullable().optional(),
       outcomes: z.number(),
+      /** Clickland's word that an outcome definition credits this agent (asked of Clickland; absent until then). */
+      outcomesInstrumented: z.boolean().optional(),
       adoption: z.object({ runs: z.number() }).partial().optional(),
       quality: z.object({ successRate: z.number().nullable() }).partial().optional(),
     }),
@@ -70,23 +76,49 @@ export interface SuggestInput {
   cost: Money;
   /** Clickland's value (capacity, not cash); null without a match. */
   value: Money | null;
+  /** Clickland measures its outcomes (instrumented, or some reported). */
+  measured: boolean;
 }
+
+/** No suggestion to retire below this a month: too little cost to act on. */
+export const RETIRE_FLOOR_USD = '10';
+/** Retire: outcomes measured, and they cost this many times what they are worth (or there are none in 10+ runs). */
+export const RETIRE_COST_TO_VALUE = '3';
 
 const pct = (r: number) => `${Math.round(r * 100)}%`;
 const $ = (m: Money) => `$${m.toDecimal().toFixed(2, 'halfEven')}`;
 
 /**
- * The first rule that holds: retire (10 or more runs, no outcome); review (one outcome costs more than it is worth, or
- * under 80% of 5 or more runs succeed); scale (10 or more outcomes, value at least 5 × cost, 90% or more succeed);
- * keep (otherwise, including too little to say).
+ * The first rule that holds: not measured (Clickland reports no outcome for it and doesn't say it is instrumented:
+ * nothing is said about value); retire (measured, USD 10 or more this month, 10 or more runs, and no outcome, or
+ * outcomes costing 3 × what they are worth or more); review (an outcome costs more than it is worth, or under 80% of 5
+ * or more runs succeed); scale (10 or more outcomes, value at least 5 × cost, 90% or more succeed); keep (otherwise,
+ * including too little to say).
  */
 export function suggest(x: SuggestInput): { suggestion: AgentSuggestion; why: string } {
   if (x.runs === null || x.outcomes === null || x.value === null)
     return { suggestion: 'keep', why: 'Keep: no runs or outcomes known for it (no match in Clickland’s Agent Value)' };
-  if (x.runs >= 10 && x.outcomes === 0)
+  if (!x.measured)
+    return {
+      suggestion: 'not_measured',
+      why: `Outcomes not measured: Clickland credits no outcome to it (${x.runs} runs); no outcome definition covers it, so its value can't be judged`,
+    };
+  const floor = Money.parse(RETIRE_FLOOR_USD, USD);
+  const heavy = x.cost.compare(floor) >= 0;
+  if (heavy && x.runs >= 10 && x.outcomes === 0)
     return {
       suggestion: 'retire',
-      why: `Retire: ${x.runs} runs this month and no outcome (rule: 10 or more runs, none)`,
+      why: `Retire: ${x.runs} runs, ${$(x.cost)} this month and no outcome, while its outcomes are measured (rule: measured, ${$(floor)} or more, 10 or more runs, none)`,
+    };
+  if (
+    heavy &&
+    x.runs >= 10 &&
+    x.outcomes > 0 &&
+    x.cost.compare(Money.fromDecimal(x.value.toDecimal().times(RETIRE_COST_TO_VALUE), USD)) >= 0
+  )
+    return {
+      suggestion: 'retire',
+      why: `Retire: its outcomes cost ${$(x.cost)} for ${$(x.value)} of capacity (rule: measured, ${$(floor)} or more, cost ${RETIRE_COST_TO_VALUE} × value or more)`,
     };
   if (x.outcomes > 0 && x.cost.compare(x.value) > 0)
     return {
@@ -105,20 +137,24 @@ export function suggest(x: SuggestInput): { suggestion: AgentSuggestion; why: st
   )
     return {
       suggestion: 'scale',
-      why: `Scale: ${x.outcomes} outcomes, worth ${$(x.value)} for ${$(x.cost)}${x.successRate !== null ? `, ${pct(x.successRate)} succeeded` : ''} (rule: 10 or more outcomes, value ≥ 5 × cost, 90% or more succeed)`,
+      why: `Scale: ${x.outcomes} self-reported outcomes, worth ${$(x.value)} for ${$(x.cost)}${x.successRate !== null ? `, ${pct(x.successRate)} succeeded` : ''} (rule: 10 or more outcomes, value ≥ 5 × cost, 90% or more succeed)`,
     };
   return {
     suggestion: 'keep',
     why:
-      x.runs < 10 && x.outcomes < 10
-        ? `Keep: ${x.runs} runs and ${x.outcomes} outcomes, too few to say more`
-        : `Keep: no rule to retire, review or scale holds`,
+      !heavy && x.outcomes === 0
+        ? `Keep: ${$(x.cost)} this month, under the ${$(floor)} floor for retiring`
+        : x.runs < 10 && x.outcomes < 10
+          ? `Keep: ${x.runs} runs and ${x.outcomes} outcomes, too few to say more`
+          : `Keep: no rule to retire, review or scale holds`,
   };
 }
 
 const per = (m: Money, n: number | null) =>
   n && n > 0 ? amount(Money.fromDecimal(m.toDecimal().divide(String(n), 6, 'halfEven'), USD)) : null;
-const fromNumber = (n: number) => Money.parse(Decimal.parse(n.toFixed(6)).toString(), USD);
+/** A JSON number from Clickland as an exact decimal (six places, the most a micro-unit holds); no float arithmetic. */
+const dec = (n: number) => Decimal.parse(n.toFixed(6));
+const fromNumber = (n: number) => Money.parse(dec(n).toString(), USD);
 
 // Agents --------------------------------------------------------------------------------------------------------------
 
@@ -196,7 +232,18 @@ export class Agents {
         };
       }
     const valued = (report?.agents ?? []).filter((v) => v.service === this.landflowService);
-    const byName = new Map(valued.map((v) => [v.name.toLowerCase(), v]));
+    // A name matches only when it is one agent on each side: two agents with one name never share outcomes.
+    const count = (names: string[]) => names.reduce((m, n) => m.set(n, (m.get(n) ?? 0) + 1), new Map<string, number>());
+    const ours = count([...acc.values()].map((a) => a.name.toLowerCase()));
+    const theirs = count(valued.map((v) => v.name.toLowerCase()));
+    const ambiguous = new Set(
+      [...new Set([...ours.keys(), ...theirs.keys()])].filter(
+        (n) => (ours.get(n) ?? 0) > 1 || (theirs.get(n) ?? 0) > 1,
+      ),
+    );
+    const byName = new Map(
+      valued.filter((v) => !ambiguous.has(v.name.toLowerCase())).map((v) => [v.name.toLowerCase(), v]),
+    );
     const matched = new Set<string>();
     const rows: AgentRow[] = [];
     const row = (id: string, name: string, a: Acc | null, v: ValueReport['agents'][number] | null): AgentRow => {
@@ -207,7 +254,8 @@ export class Agents {
       const outcomes = v ? v.outcomes : null;
       const runs = v ? (v.adoption?.runs ?? 0) : null;
       const successRate = v?.quality?.successRate ?? null;
-      const s = suggest({ runs, outcomes, successRate, cost: total, value });
+      const measured = !!v && (v.outcomesInstrumented === true || v.outcomes > 0);
+      const s = suggest({ runs, outcomes, successRate, cost: total, value, measured });
       return {
         id,
         name,
@@ -219,20 +267,32 @@ export class Agents {
         },
         costCenter: topCc ? { code: topCc, name: ccLabel(topCc, ccs) } : null,
         owner: topCc ? (ccs.get(topCc)?.owner ?? null) : null,
+        measured,
         value: v
           ? {
               runs: runs ?? 0,
               outcomes: v.outcomes,
-              successRate: successRate === null ? null : successRate.toFixed(2),
+              outcomesSource: 'self-reported',
+              successRate: successRate === null ? null : dec(successRate).toFixed(2, 'halfEven'),
               value: amount(value!),
-              hoursSaved: report && report.hourlyRate > 0 ? (v.value / report.hourlyRate).toFixed(2) : '0.00',
+              hoursSaved:
+                report && report.hourlyRate > 0
+                  ? dec(v.value).divide(dec(report.hourlyRate), 2, 'halfEven').toFixed(2, 'halfEven')
+                  : '0.00',
               clicklandKey: v.key,
             }
           : null,
-        costPerOutcome: per(total, outcomes),
-        valuePerOutcome: value ? per(value, outcomes) : null,
+        costPerOutcome: measured ? per(total, outcomes) : null,
+        valuePerOutcome: value && measured ? per(value, outcomes) : null,
         suggestion: s.suggestion,
-        why: a ? s.why : `${s.why}. Landledger has no cost for it in ${m}`,
+        why: [
+          a ? s.why : `${s.why}. Landledger has no cost for it in ${m}`,
+          ambiguous.has(name.toLowerCase())
+            ? `Two agents are named ${name}: Clickland's outcomes can't be told apart, so none are matched`
+            : null,
+        ]
+          .filter(Boolean)
+          .join('. '),
       };
     };
     for (const [id, a] of acc) {
@@ -240,7 +300,8 @@ export class Agents {
       if (v) matched.add(v.key);
       rows.push(row(id, a.name, a, v));
     }
-    for (const v of valued) if (!matched.has(v.key)) rows.push(row(v.key, v.name, null, v));
+    for (const v of valued)
+      if (!matched.has(v.key)) rows.push(row(v.key, v.name, null, ambiguous.has(v.name.toLowerCase()) ? null : v));
     rows.sort((x, y) => Decimal.parse(y.cost.total).compare(x.cost.total) || x.name.localeCompare(y.name));
     const sum = (f: (r: AgentRow) => string | null | undefined) =>
       amount(
@@ -259,7 +320,7 @@ export class Agents {
       totals: {
         cost: sum((r) => r.cost.total),
         invoiced: sum((r) => r.cost.invoiced),
-        outcomes: rows.reduce((n, r) => n + (r.value?.outcomes ?? 0), 0),
+        outcomes: rows.reduce((n, r) => n + (r.measured ? (r.value?.outcomes ?? 0) : 0), 0),
         hoursSaved: hours.toFixed(2, 'halfEven'),
         capacity: sum((r) => r.value?.value),
       },
@@ -280,9 +341,11 @@ export class Agents {
       name: r.name,
       month,
       cost: r.cost.total,
-      outcomes: r.value?.outcomes ?? null,
+      outcomes: r.measured ? (r.value?.outcomes ?? null) : null,
       costPerOutcome: r.costPerOutcome,
       valuePerOutcome: r.valuePerOutcome,
+      outcomesSource: 'self-reported',
+      measured: r.measured,
       suggestion: r.suggestion,
       why: r.why,
       buys: cpo && !cpo.isZero() ? monthly.toDecimal().divide(cpo.toDecimal(), 1, 'halfEven').toString() : null,

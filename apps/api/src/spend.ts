@@ -35,8 +35,9 @@ import { Decimal, Money, REPORTING_CURRENCY } from '@landledger/money';
 import { type Allocation, allocInputOf, type AllocRow, type RuleBook } from './allocation.js';
 import type { Budgets } from './budgets.js';
 import { day as dayOf, type Sql } from './db.js';
-import { band, commitmentsIn, halfWidth, Z90 } from './forecast.js';
+import { band, commitmentsIn, halfWidth, reservedIn, runningIncrements, Z90 } from './forecast.js';
 import { ApiError } from './errors.js';
+import { devExcluded, hiddenSql } from './read-rule.js';
 import type { RateCards } from './ratecards.js';
 
 const DAY_MS = 86_400_000;
@@ -379,6 +380,9 @@ export function reportingAmount(micros: string, currency: string, recordId: stri
 }
 
 export class Spend {
+  /** Set by services: what contracts hold in a month from a day (Contracts.contractedIn), in the forecast. */
+  contractedIn: ((month: string, fromDay: string) => Promise<Money>) | null = null;
+
   constructor(
     private readonly sql: Sql,
     private readonly allocation: Allocation,
@@ -410,7 +414,11 @@ export class Spend {
    * The lines a selection holds, with their direct allocation: the months they are booked in (`fromMonth` to
    * `toMonth`, with those months' provisional rows), or the days they were charged (`from` to `to`, inclusive).
    */
-  async lines(sel: Selection, provisional = true): Promise<{ lines: Line[]; book: RuleBook; inputs: AllocInput[] }> {
+  async lines(
+    sel: Selection,
+    provisional = true,
+    opts: { includeDev?: boolean } = {},
+  ): Promise<{ lines: Line[]; book: RuleBook; inputs: AllocInput[] }> {
     const s = this.sql;
     const byMonth = 'fromMonth' in sel;
     const start = byMonth ? `${sel.fromMonth}-01T00:00:00Z` : `${sel.from}T00:00:00Z`;
@@ -421,6 +429,7 @@ export class Spend {
     const where = byMonth
       ? s`r.billing_period_start >= ${start}::timestamptz AND r.billing_period_start < ${end}::timestamptz`
       : s`r.charge_period_start >= ${start}::timestamptz AND r.charge_period_start < ${end}::timestamptz`;
+    const dev = devExcluded(s, !!opts.includeDev);
     const ledger = await s<Row[]>`
       SELECT ${cols}, a.cost_center, a.team, a.product, a.pl_class, a.capitalisable, a.rule_id
       FROM cost_records r
@@ -428,21 +437,19 @@ export class Spend {
         SELECT a.* FROM allocations a JOIN allocation_generations g ON g.id = a.generation_id
         WHERE a.month = (r.billing_period_start AT TIME ZONE 'UTC')::date AND a.record_id = r.record_id
         ORDER BY g.number DESC LIMIT 1) a ON TRUE
-      WHERE ${where}
-        -- An estimate an invoice line replaces is never added to it (invoice_estimate_links, migrations 0006 and
-        -- 0012): left out while a live invoiced entry exists for the key of a record it is linked to, so a re-entered
-        -- invoice keeps it replaced and a voided one gives it back.
-        AND NOT (r.basis = 'estimated' AND EXISTS (
-          SELECT 1 FROM invoice_estimate_links l JOIN cost_record_keys k ON k.record_id = l.invoiced_record_id
-          JOIN cost_record_keys y ON y.source_key = k.source_key AND y.basis = 'invoiced' AND NOT y.is_reversal
-          WHERE l.estimated_source_key = r.source_key
-            AND NOT EXISTS (SELECT 1 FROM cost_record_keys x WHERE x.correction_of_id = y.record_id)))`;
+      WHERE ${where} AND ${dev}
+        -- An estimate an invoice line replaces is never added to it (invoice_estimate_links, 0006, 0012, 0013): left
+        -- out while the invoiced entry its split or late link names was live as of the estimate's own billing month,
+        -- so a re-entered invoice keeps it replaced, a void in an open month gives it back, and a locked month never
+        -- moves (read-rule.ts). A dev fixture's records and the dev-anomaly spike count nowhere.
+        AND NOT (r.basis = 'estimated' AND ${hiddenSql(s)})`;
     // Provisional rows are booked in the month they are charged in, so both selections read them by charge day.
     const prov = provisional
       ? await s<Row[]>`
           SELECT ${cols}, NULL AS cost_center, NULL AS team, NULL AS product, NULL AS pl_class, NULL AS capitalisable, NULL AS rule_id
           FROM provisional_usage r
-          WHERE r.charge_period_start >= ${start}::timestamptz AND r.charge_period_start < ${end}::timestamptz`
+          WHERE r.charge_period_start >= ${start}::timestamptz AND r.charge_period_start < ${end}::timestamptz
+            AND ${dev}`
       : [];
     const book = await this.allocation.book();
     const pending = [...ledger.filter((r) => r.cost_center === null), ...prov];
@@ -805,13 +812,21 @@ export class Spend {
     const daysLeft = hoursLeft.divide('24', 12, 'halfEven');
     const fullCosts = rr?.enough ? rr.sources.map((s) => s.fullCosts) : [];
     const p = ready ? band(project(ready.mid), halfWidth(fullCosts, daysLeft), mtd) : null;
-    // Committed: approved monthly requests beyond their reservations, for the rest of this month (from tomorrow).
-    const commits = isCurrent ? await commitmentsIn(this.sql, m, addDays(today, 1)) : [];
+    // Beyond the run rate (spec 006, one formula with the year ahead): reservations still held and approved monthly
+    // requests beyond them, each less what the run rate already projects of it, and what contracts hold, for the rest
+    // of this month (from tomorrow).
+    const tomorrow = addDays(today, 1);
+    const running = isCurrent ? await runningIncrements(this.sql, this, today) : new Map<string, Money>();
+    const commits = isCurrent ? await commitmentsIn(this.sql, m, tomorrow, running) : [];
     const committed = Money.sum(
       commits.map((c) => c.amount),
       USD,
     );
-    const forecast = isCurrent ? (p ? p.p50.plus(committed) : null) : mtd;
+    const held = isCurrent ? await reservedIn(this.sql, m, tomorrow, running) : null;
+    const reservedNet = held ? Money.sum(held.net.values(), USD) : zero();
+    const contracted = isCurrent && this.contractedIn ? await this.contractedIn(m, tomorrow) : zero();
+    const beyond = reservedNet.plus(committed).plus(contracted);
+    const forecast = isCurrent ? (p ? p.p50.plus(beyond) : null) : mtd;
 
     const budgets = await this.budgets.forMonth(m);
     const reserved = await this.reservedByCostCenter(m);
@@ -849,15 +864,20 @@ export class Spend {
         commits.filter((c) => c.costCenter === code).map((c) => c.amount),
         USD,
       );
+      const ccReservedNet = held?.net.get(code) ?? zero();
       const f = !isCurrent
         ? actual
         : rate === null
           ? null
-          : actual.plus(Money.fromDecimal(rate.times(hoursLeft).round(6, 'halfEven'), USD)).plus(ccCommitted);
+          : actual
+              .plus(Money.fromDecimal(rate.times(hoursLeft).round(6, 'halfEven'), USD))
+              .plus(ccReservedNet)
+              .plus(ccCommitted);
       const b = budgets.get(code)?.amount ?? null;
-      // Without a run rate, what is spent and committed can still put it over.
+      // Without a run rate, what is spent, reserved and committed can still put it over (review of wave 3).
       const plain = stateOf(actual, f, b);
-      const state = plain === 'early' && b && actual.plus(ccCommitted).compare(b) > 0 ? 'risk' : plain;
+      const held2 = actual.plus(reserved.get(code) ?? zero()).plus(ccCommitted);
+      const state = plain === 'early' && b && held2.compare(b) > 0 ? 'risk' : plain;
       return {
         code,
         name: ccLabel(code, ccs),
@@ -961,8 +981,8 @@ export class Spend {
       forecast: {
         status: !isCurrent ? 'past' : ready ? 'ok' : 'insufficient',
         amount: forecast ? amount(forecast) : null,
-        low: p ? amount(p.p10.plus(committed)) : !isCurrent ? amount(mtd) : null,
-        high: p ? amount(p.p90.plus(committed)) : !isCurrent ? amount(mtd) : null,
+        low: p ? amount(p.p10.plus(beyond)) : !isCurrent ? amount(mtd) : null,
+        high: p ? amount(p.p90.plus(beyond)) : !isCurrent ? amount(mtd) : null,
         p10: p ? amount(p.p10) : null,
         p50: p ? amount(p.p50) : null,
         p90: p ? amount(p.p90) : null,
@@ -970,6 +990,8 @@ export class Spend {
           ? `P10–P90: P50 ± ${Z90} × σ × √${daysLeft.toFixed(1, 'halfEven')} days left; σ² is the sum of each source's variance over its full days (${rr!.sources.map((x) => `${x.source} ${x.fullCosts.length}`).join(', ')})`
           : null,
         committed: amount(committed),
+        reserved: amount(reservedNet),
+        contracted: amount(contracted),
         commitments: commits.map((c) => ({
           requestId: c.requestId,
           number: c.number,

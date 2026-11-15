@@ -27,15 +27,24 @@ Clickland. Code: `apps/api/src/spend.ts` (reads), `budgets.ts`, `export.ts`, `mc
   _days_ the days left. Square roots are exact integer square roots on the decimals, never floats. P10 never falls below
   month to date. Overview shows the band in its forecast tile (`P10–P90`) and on the burn chart, and says how it was
   taken under the chart. Each source's driver (consumed units a day: core-hours, GiB-hours, tokens) comes with it.
-- **Committed** (spec 006): an approved or applied open-ended monthly request reserves only its first months. Beyond
-  them it still commits its amount, so each month it is active without a reservation adds its amount (pro rata from
-  tomorrow in the current month) to the forecast, to its cost center's forecast and to _at risk_. Reservations are
-  never counted twice: a month with the request's reservation counts the reservation instead.
+- **One formula** (spec 006, review of wave 3): forecast = month to date + run rate P50 for the days left + reserved
+  (net) + committed (net) + contracted, the same on Overview and in the year ahead (`forecast.reserved`,
+  `forecast.committed`, `forecast.contracted`; P10 and P90 add the same).
+- **Reserved and committed, net of the run rate** (should-fix 1): an approved or applied open-ended monthly request
+  reserves only its first months; beyond them it commits its amount (pro rata from tomorrow in the current month). A
+  request already running is in the run rate too, so each is netted: its matched cost (its `match` selector, on its
+  cost center) over the last seven full days, a day, above its reservation's baseline, times the days left, comes off
+  what it reserves or commits, never below zero. It is then counted once, and only what it has yet to ramp to is
+  added. A month with the request's reservation counts the reservation instead of the commitment.
+- **Contracted** (should-fix 2): each real contract's annual value ÷ 12 a month over its term, pro rata by day (from
+  tomorrow in the current month). Dev fixtures are left out.
 - **No budget** (decision 8, a default to confirm): a month with no budget is never _on track_; it says _no budget_.
   A request whose month, or first full month, has no budget for its cost center is never automatic and takes the
   Finance step; the Request page says why (`evidence.budgetMissing`).
 - **States** per cost center: _over_ when month to date is above budget; with a forecast, _at risk_ when it is over
-  budget (with what is committed) and _on track_ otherwise; without one, _early_ (no claim yet); _no budget_ without a budget. The month's line
+  budget (with what is reserved and committed, net) and _on track_ otherwise; without one, _early_ unless month to
+  date plus what is reserved and committed already passes the budget, then _at risk_ (should-fix 3); _no budget_
+  without a budget. The month's line
   says how much of the budget is used and how much of the month has been observed, not how much has passed.
 - **P&L classes**: the shared pool (idle capacity, before it is spread) is its own class, _Shared pool_; _Not
   classified_ is only what the rules sent nowhere.
@@ -109,7 +118,9 @@ never rates, budgets or contracts. Compose services are named `<project>/<servic
 
 `GET /api/forecast?months=12` and the _Year ahead_ card on Overview: for each month from this one, the run rate over
 its days (the days left of this one) with its P10–P90 band, what approved requests reserve and what they commit beyond
-their reservations, the total against its budget, and the state: _no budget_ where there is none. _Annualised_ is
-today's run rate × 365 with its band, and every approved monthly commitment × 12; the commitments are listed with the
-month their reservations reach. Without enough data for a run rate it says _Not enough data yet_, shows only what is
-reserved and committed, and claims no total.
+their reservations (both net of the run rate), what contracts hold, the total against its budget, and the state: _no
+budget_ where there is none. The current month's total is Overview's forecast, the same figure. _Annualised_ is over
+the next 12 months whatever `months` shows: today's run rate × 365 with its band, what approved monthly requests add
+from tomorrow bounded by their end dates (not monthly × 12), what contracts hold, and the 12 months' totals; the
+commitments are listed with the month their reservations reach. Without enough data for a run rate it says _Not
+enough data yet_, shows only what is reserved, committed and contracted, and claims no total.

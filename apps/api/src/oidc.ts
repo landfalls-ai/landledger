@@ -194,7 +194,7 @@ export class OidcClient {
    * A back-channel logout token (OpenID Connect Back-Channel Logout 1.0, section 2.6): signed by the issuer for this
    * client, with `iat`, `jti`, the back-channel logout event, a `sub` (Landledger keeps no `sid`), and no `nonce`.
    */
-  async verifyLogoutToken(token: string): Promise<{ sub: string; jti: string; sid: string | null }> {
+  async verifyLogoutToken(token: string): Promise<{ sub: string; jti: string; sid: string | null; iat: Date }> {
     const verify = async (refresh: boolean) =>
       jwtVerify(token, await this.jwks(refresh), {
         issuer: this.config.issuer,
@@ -222,7 +222,12 @@ export class OidcClient {
     if (typeof payload.iat !== 'number') throw fail('the logout token has no iat');
     if (typeof payload.sub !== 'string' || !payload.sub)
       throw fail('the logout token names no sub: Landledger ends sessions by subject');
-    return { sub: payload.sub, jti: payload.jti, sid: typeof payload.sid === 'string' ? payload.sid : null };
+    return {
+      sub: payload.sub,
+      jti: payload.jti,
+      sid: typeof payload.sid === 'string' ? payload.sid : null,
+      iat: new Date(payload.iat * 1000),
+    };
   }
 
   /** Where to send the browser to end the Landbright session too (RP-initiated logout), if Landbright offers it. */

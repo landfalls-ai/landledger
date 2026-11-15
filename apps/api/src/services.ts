@@ -88,6 +88,8 @@ export function createServices(
   const clickland = config.clickland
     ? new ClicklandClient(config.clickland.url, config.clickland.key, fetchImpl, config.clickland.labels)
     : null;
+  // Set below: ingest links estimates for an invoiced month to the invoice (review of wave 3, B1).
+  let invoicesRef: Invoices | null = null;
   const ingest = new Ingest(sql, records, rateCards, {
     landflow,
     clickland,
@@ -105,6 +107,7 @@ export function createServices(
       for (const month of new Set([run.day.slice(0, 7), now().toISOString().slice(0, 7)]))
         await allocation.allocatePending(month);
     },
+    afterAppend: (tx, recs) => invoicesRef?.coverLate(tx, recs) ?? Promise.resolve(0),
   });
   const policies = new Policies(sql);
   const reservations = new Reservations(sql, audit, spend, now);
@@ -141,6 +144,7 @@ export function createServices(
   const invoices = new Invoices(sql, audit, spend, config, now, async (months) => {
     for (const month of months) await allocation.allocatePending(month);
   });
+  invoicesRef = invoices;
   const exceptions = new Exceptions(sql, audit, webhooks, spend, policies, now, budgets, config.consoleUrl);
   const agents = new Agents(
     spend,
@@ -155,10 +159,24 @@ export function createServices(
     audit,
     webhooks,
     spend,
-    { windowDays: config.renewalWindowDays ?? 30, consoleUrl: config.consoleUrl },
+    {
+      windowDays: config.renewalWindowDays ?? 30,
+      consoleUrl: config.consoleUrl,
+      timeZone: config.timeZone,
+      businessDays: config.businessDays,
+      holidays: config.holidays,
+      devAuth: config.devAuth,
+    },
     now,
   );
   requests.contracts = contracts;
+  exceptions.contracts = contracts;
+  spend.contractedIn = async (month, fromDay) => (await contracts.contractedIn(month, fromDay)).total;
+  // Decision 9: an import above the second-person line raises a contract request, Landledger's own origin.
+  contracts.raiseRequest = async (input, by, origin) => {
+    const { request } = await requests.create(input as never, by, 'session', { origin });
+    return { id: request.id, number: request.number };
+  };
   // Spec 008: an AI budget request's evidence shows its agent's cost per outcome.
   requests.agentEconomics = (agentId, month, monthly) => agents.economics(agentId, month, monthly);
   const anomalies = new Anomalies(
@@ -200,7 +218,14 @@ export function createServices(
     anomalies,
     agents,
     contracts,
-    accessReviews: new AccessReviews(sql, audit, webhooks, owners, { consoleUrl: config.consoleUrl }, now),
+    accessReviews: new AccessReviews(
+      sql,
+      audit,
+      webhooks,
+      owners,
+      { consoleUrl: config.consoleUrl, timeZone: config.timeZone },
+      now,
+    ),
     landflow,
     log,
     fetchImpl,
@@ -236,6 +261,8 @@ export function startBackgroundJobs(services: Services, log: (msg: string, err?:
   loop('anomalies', 3_600_000, async () => (await services.anomalies.scan(), 0));
   // Spec 009: contract.renewal_due once per contract and renewal date, every hour.
   loop('renewals', 3_600_000, () => services.contracts.renewalAlerts());
+  // Spec 010 (review of wave 3): a seat approved but unapplied for 30 days goes back to its contract.
+  loop('seat expiry', 3_600_000, () => services.requests.expireSeats());
   // Spec 011: access_review.due once a quarter while its review is not complete, checked every hour.
   loop('access review', 3_600_000, async () => (await services.accessReviews.dueNotice(), 0));
   timers.add(setTimeout(() => void services.anomalies.scan().catch((e) => log('anomalies failed', e)), 120_000));

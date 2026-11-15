@@ -100,9 +100,25 @@ export const RequestOrigin = z.discriminatedUnion('type', [
     id: z.string().min(1).max(200),
     url: z.url({ protocol: /^https?$/ }).optional(),
     title: z.string().max(300).optional(),
+    /**
+     * Landbright granted the access first, under break-glass, and raises the cost request afterwards: it is listed in
+     * the exceptions report until it is approved (review of wave 3; additive).
+     */
+    breakGlass: z.boolean().optional(),
   }),
   z.object({ type: z.literal('console') }),
   z.object({ type: z.literal('mcp') }),
+  /**
+   * Landledger's own: a contract import held for a second person (a new contract, or a TCV raised by more than USD
+   * 25,000). Never accepted from a caller.
+   */
+  z.object({
+    type: z.literal('contract_import'),
+    fileName: z.string().max(300).optional(),
+    line: z.number().int().min(1),
+    contractId: z.string().max(100).optional(),
+    previousTcv: z.string().max(40).optional(),
+  }),
 ]);
 export type RequestOrigin = z.infer<typeof RequestOrigin>;
 
@@ -840,6 +856,21 @@ export interface ExceptionsReport {
   rows: ExceptionRow[];
   /** Shared pool and Unallocated have no owner to ask: reported apart, never exceptions. */
   unowned: { month: string; costCenter: string; actual: Amount }[];
+  /**
+   * Contracts entered by an import (under the second-person line) that no approved contract request covers (review of
+   * wave 3, Decision 9). Dev fixtures are never listed.
+   */
+  contracts: {
+    id: string;
+    version: number;
+    vendor: string;
+    product: string;
+    tcv: Amount;
+    importedBy: string;
+    importedAt: string;
+  }[];
+  /** Access Landbright granted under break-glass whose cost request is not approved yet (`origin.breakGlass`). */
+  breakGlass: { id: string; number: string; title: string; status: string; costCenter: string; amount: Amount }[];
 }
 
 // Webhook payloads (Standard Webhooks; `data` of each event) ------------------------------------------------------------

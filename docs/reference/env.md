@@ -39,11 +39,12 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_COST_METRICS_ENDPOINT` | `${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics` | Where the cost metrics are posted (OTLP/HTTP JSON) |
 | `LANDLEDGER_STEP_DEADLINE_HOURS` | `24` | Business hours a pending approval step waits before it escalates (then as long again before the request expires); 1–720 |
 | `LANDLEDGER_BUSINESS_DAYS` | `mon-fri` | The days that count toward a deadline, each whole in `LANDLEDGER_TZ`: a range `mon-fri` or a list `sun,mon,tue,wed,thu`. This machine: `sun-thu` (a default to confirm, `docs/plan.md`) |
-| `LANDLEDGER_TZ` | `UTC` | The IANA time zone business days are counted in (`Asia/Jerusalem` on this machine) |
-| `LANDLEDGER_HOLIDAYS_FILE` | `deploy/holidays.txt` | Dates that never count toward a deadline: one `YYYY-MM-DD` per line, `#` comments; `none` for no file. The file is empty for now |
+| `LANDLEDGER_TZ` | `UTC` | The IANA time zone business days are counted in (`Asia/Jerusalem` on this machine); also when a month is over for its invoice, "today" for renewals and seats, and the access review's days |
+| `LANDLEDGER_HOLIDAYS_FILE` | `deploy/holidays.txt` | Dates that never count toward a deadline, nor are a contract's notice date: one `YYYY-MM-DD` per line, `#` comments; `none` for no file. The file is empty for now |
 | `LANDLEDGER_RECONCILE_TOLERANCE_PCT` | `2` | Reconciliation's tolerance: a provider × model × month is within it when \|invoiced − estimated\| ≤ this percent of the estimate |
+| `LANDLEDGER_RECONCILE_TOLERANCE_USD` | `0.50` | Reconciliation's floor: a variance this small is within tolerance whatever the percent |
 | `LANDLEDGER_ANOMALY_MIN_USD` | `1` | The smallest daily jump above the median that is a cost anomaly, USD ([anomalies.md](../anomalies.md)) |
-| `LANDLEDGER_DEV_ANOMALY` | unset | `on` allows `anomaly spike` and `anomaly reverse` (the dev-only test spike); refused unless the API listens on loopback |
+| `LANDLEDGER_DEV_ANOMALY` | unset | `on` allows `anomaly spike` and `anomaly reverse` (the dev-only test spike); refused unless the API listens on loopback and the database is on this machine; a spike expires two hours on |
 | `LANDLEDGER_CLICKLAND_API_URL` | `LANDLEDGER_CLICKLAND_URL`, else `http://localhost:4710` | Clickland's API for wave 3: the alert rule and Agent Value |
 | `LANDLEDGER_CLICKLAND_VALUE_KEY` | unset | A Clickland key with `read`, for Agent Value on the Agents page and in AI budget evidence (in the untracked `apps/api/.env.local`); without it the page shows cost only |
 | `LANDLEDGER_RENEWAL_WINDOW_DAYS` | `30` | Days before a contract's notice date its renewal shows first and `contract.renewal_due` goes out, 0 to 365 ([contracts.md](../contracts.md#renewals)) |

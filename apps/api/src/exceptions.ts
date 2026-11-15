@@ -6,7 +6,8 @@
  * the uncovered part is above the cost center's automatic threshold (the infra policy's, USD 500 by default). The
  * shared pool and Unallocated have no owner to ask: reported apart. The weekly job stores each report with the sha256
  * of its canonical JSON, audits the hash and sends `report.exceptions`. Budget alerts: `budget.at_risk` once per cost
- * center, month and state.
+ * center, month and state. Also listed (review of wave 3): contracts an import entered that no approved contract
+ * request covers, and break-glass access whose cost request is not approved yet.
  */
 import { createHash } from 'node:crypto';
 import { SHARED_POOL, UNALLOCATED } from '@landledger/allocation';
@@ -20,6 +21,7 @@ import {
 import { Money, REPORTING_CURRENCY } from '@landledger/money';
 import type { AuditLog } from './audit.js';
 import type { Budgets } from './budgets.js';
+import type { Contracts } from './contracts.js';
 import type { Sql } from './db.js';
 import { ApiError } from './errors.js';
 import { newId } from './ids.js';
@@ -33,6 +35,9 @@ const USD = REPORTING_CURRENCY;
 const DEFAULT_THRESHOLD = '500';
 
 export class Exceptions {
+  /** Set by services: contracts entered without an approved contract request are exceptions (Decision 9). */
+  contracts: Pick<Contracts, 'list'> | null = null;
+
   constructor(
     private readonly sql: Sql,
     private readonly audit: AuditLog,
@@ -129,7 +134,44 @@ export class Exceptions {
         });
       }
     }
-    return { from, to, currency: USD, generatedAt: this.now().toISOString(), rows, unowned };
+    const contracts = this.contracts
+      ? (await this.contracts.list()).contracts
+          .filter((c) => c.origin === 'entered' && !c.covered)
+          .map((c) => ({
+            id: c.id,
+            version: c.version,
+            vendor: c.vendor,
+            product: c.product,
+            tcv: c.tcv,
+            importedBy: c.importedBy,
+            importedAt: c.importedAt,
+          }))
+      : [];
+    const breakGlass = (
+      await this.sql<
+        { id: string; number: number; title: string; status: string; cost_center: string; amount_micros: string }[]
+      >`
+        SELECT id, number, title, status, cost_center, amount_micros::text AS amount_micros FROM requests
+        WHERE (origin->>'breakGlass')::boolean IS TRUE AND status NOT IN ('approved', 'applied')
+        ORDER BY created_at, id`
+    ).map((r) => ({
+      id: r.id,
+      number: `R-${r.number}`,
+      title: r.title,
+      status: r.status,
+      costCenter: r.cost_center,
+      amount: amount(Money.ofMicros(r.amount_micros, USD)),
+    }));
+    return {
+      from,
+      to,
+      currency: USD,
+      generatedAt: this.now().toISOString(),
+      rows,
+      unowned,
+      contracts,
+      breakGlass,
+    };
   }
 
   /**

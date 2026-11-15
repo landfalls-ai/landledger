@@ -257,6 +257,8 @@ export type AfterApplied = (
 
 // The service ----------------------------------------------------------------------------------------------------------
 
+const isFinanceGroup = (g: string) => g.startsWith('Finance');
+
 export class Requests {
   /** Set by services: re-price or rebuild after a rate card or rule set is applied. */
   afterApplied: AfterApplied = async () => {};
@@ -424,7 +426,17 @@ export class Requests {
 
   // Raising and submitting -------------------------------------------------------------------------------------------
 
-  async create(input: z_CreateRequest, by: Principal, via: Via): Promise<{ request: RequestView; created: boolean }> {
+  async create(
+    input: z_CreateRequest,
+    by: Principal,
+    via: Via,
+    internal: { origin: RequestOrigin } | null = null,
+  ): Promise<{ request: RequestView; created: boolean }> {
+    if (
+      !internal &&
+      (input.origin?.type === 'contract_import' || input.related?.some((o) => o.type === 'contract_import'))
+    )
+      throw new ApiError('bad_request', 'A contract_import origin is Landledger’s own (a held contract import)');
     if (SELF_APPLIED_KINDS.includes(input.kind as RequestKind))
       throw new ApiError('bad_request', `A ${input.kind} request is raised by its own route (a proposal)`);
     if (input.amount.currency !== 'USD') throw new ApiError('unprocessable', 'Only USD until FX is set up');
@@ -455,7 +467,10 @@ export class Requests {
     // verified only when the key is bound to that Landflow workflow.
     let origin: RequestOrigin;
     let verified: boolean;
-    if (via === 'mcp') {
+    if (internal) {
+      origin = internal.origin;
+      verified = true;
+    } else if (via === 'mcp') {
       origin = { type: 'mcp' };
       verified = true;
     } else if (via === 'session') {
@@ -861,13 +876,17 @@ export class Requests {
       ledger.firstFullMonth?.stateWith === 'over';
     const kindLabel = REQUEST_KIND_LABEL[r.kind];
     const why: string[] = [];
+    // A seat beyond the contract's seats is a purchase nobody priced: a person always sees it (review of wave 3).
+    const seat = r.seat && this.contracts ? await this.contracts.seatEvidence(r).catch(() => null) : null;
+    const noSeatLeft = !!seat && seat.leftAfter < 0;
+    if (noSeatLeft) why.push(seat!.note ?? 'No seat is left on the contract: a person decides');
     if (policy.automaticBelow !== null) {
       const threshold = Money.parse(policy.automaticBelow, amt.currency);
       const so = await this.automaticThisMonth(r);
       const withCc = amt.plus(so.costCenter);
       const withAgent = so.agent ? amt.plus(so.agent) : null;
       const under = withCc.compare(threshold) < 0 && (!withAgent || withAgent.compare(threshold) < 0);
-      if (under && !atRisk)
+      if (under && !atRisk && !noSeatLeft)
         return {
           automatic: true,
           reason: `${words(amt)}${per} is under the automatic threshold of ${words(threshold)} for ${kindLabel.toLowerCase()} (policy v${policy.version})${so.costCenter.isZero() ? '' : `, with ${words(so.costCenter)} approved by policy on ${r.cost_center} this month`}: approved by policy, and reserved.`,
@@ -928,6 +947,24 @@ export class Requests {
       const def = policy.steps[0]!;
       why.push(`${def.label}: no step's condition held, so the first step decides`);
       steps.push(stepOf(def));
+    }
+    // Decision 8: with no budget, Finance sees it even when the policy has no at-risk step (review of wave 3, nit).
+    if (
+      noBudget &&
+      !policy.steps.some((d) => d.when.costCenterAtRisk) &&
+      !steps.some((st) => st.groups.some(isFinanceGroup))
+    ) {
+      why.push(`Finance: ${noBudgetWords(r.cost_center, ledger)}, and this policy has no at-risk step`);
+      steps.push({
+        key: 'finance_no_budget',
+        label: 'Finance (no budget)',
+        groups: ['Finance Controllers', 'Finance CFO'],
+        ownerId: null,
+        deputyIds: [],
+        deadlineHours: this.config.stepDeadlineHours,
+        escalateTo: ['Finance CFO'],
+        note: 'Added by Landledger: a month with no budget always reaches Finance (Decision 8).',
+      });
     }
     return {
       automatic: false,
@@ -1415,6 +1452,85 @@ export class Requests {
       await this.event(tx, 'request.applied', { request: summary, note: input.note ?? '', links: input.links ?? [] });
     });
     return this.view(id, by);
+  }
+
+  // Seats (spec 010, review of wave 3) -------------------------------------------------------------------------------
+
+  /**
+   * `POST /api/requests/:id/seats/release`: the cost was approved but Landbright denied the access, or the grant was
+   * revoked. The creating key, the requester (or sponsor) or an admin person. The seat goes back to its contract and the
+   * request's open reservations are released with it; audited, and `seat.released` is sent.
+   */
+  async releaseSeats(
+    id: string,
+    input: { reason: 'access_denied' | 'grant_revoked' | 'not_needed'; note?: string },
+    by: Principal,
+  ): Promise<RequestView> {
+    if (!this.contracts) throw new ApiError('internal', 'Contracts are not wired');
+    await this.sql.begin(async (tx) => {
+      const [r] = await tx<RequestRow[]>`SELECT * FROM requests WHERE id = ${id} FOR UPDATE`;
+      if (!r) throw notFound('Request');
+      if (!this.mayManage(r, by))
+        throw new ApiError('forbidden', 'The creating key, the requester or an admin person releases a request’s seat');
+      if (!r.seat) throw new ApiError('bad_request', 'This request holds no seat');
+      await this.seatReleased(tx, r, input.reason, input.note ?? '', actorOf(by));
+    });
+    return this.view(id, by);
+  }
+
+  /** The job: a seat approved but not applied within 30 days goes back to its contract (and its reservations). */
+  async expireSeats(): Promise<number> {
+    if (!this.contracts) return 0;
+    const due = await this.sql<{ id: string }[]>`
+      SELECT r.id FROM requests r JOIN seat_reservations s ON s.request_id = r.id
+      WHERE s.status = 'reserved' AND r.status = 'approved'
+        AND r.decided_at < ${new Date(this.now().getTime() - 30 * 86_400_000)}`;
+    let n = 0;
+    for (const { id } of due)
+      await this.sql.begin(async (tx) => {
+        const [r] = await tx<RequestRow[]>`SELECT * FROM requests WHERE id = ${id} FOR UPDATE`;
+        if (!r || r.status !== 'approved') return;
+        const [s] = await tx`SELECT 1 FROM seat_reservations WHERE request_id = ${id} AND status = 'reserved'`;
+        if (!s) return;
+        await this.seatReleased(tx, r, 'expired', 'Not applied within 30 days of approval', {
+          actor: 'seats',
+          actorKind: 'system',
+        });
+        n++;
+      });
+    return n;
+  }
+
+  private async seatReleased(
+    tx: Tx,
+    r: RequestRow,
+    reason: 'access_denied' | 'grant_revoked' | 'not_needed' | 'expired',
+    note: string,
+    actor: { actor: string; actorKind: ActorKind },
+  ): Promise<boolean> {
+    const released = await this.contracts!.releaseSeatIn(tx, r.id, reason);
+    if (!released) return false;
+    await this.reservations.releaseFor(tx, r.id, `seat released (${reason})${note ? `: ${note}` : ''}`);
+    await this.audit.append(
+      {
+        ...actor,
+        action: 'seat.released',
+        subjectType: 'request',
+        subjectId: r.id,
+        data: { contractId: released.contractId, seats: released.seats, from: released.from, reason, note },
+      },
+      tx,
+    );
+    await this.event(tx, 'seat.released', {
+      requestId: r.id,
+      number: `R-${r.number}`,
+      contractId: released.contractId,
+      seats: released.seats,
+      reason,
+      from: released.from,
+      url: `${this.config.consoleUrl}/requests/${r.id}`,
+    });
+    return true;
   }
 
   // Deadlines: escalate, then expire -------------------------------------------------------------------------------------

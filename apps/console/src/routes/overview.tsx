@@ -11,6 +11,7 @@ import { CopyButton } from '@/components/ui/copy-button';
 import { type Column, DataTable } from '@/components/ui/data-table';
 import { Pill, Tag } from '@/components/ui/pill';
 import { get, quiet } from '@/lib/api';
+import { useMe } from '@/lib/auth';
 import { toTsv } from '@/lib/copy';
 import { dayLabel, monthLabel, num, usd } from '@/lib/format';
 import { amountWords, perLabel, useRequests } from '@/lib/requests';
@@ -26,7 +27,11 @@ const share = (part: string, whole: string) => {
 function NeedsYou() {
   const q = useRequests('waiting');
   const c = useRequests('confirm');
-  const an = useOpenAnomalies().data?.anomalies ?? [];
+  const meId = useMe().data?.user.id;
+  // Not yet seen by anyone, or assigned to you: an acknowledged one stays open on Anomalies, not here.
+  const an = (useOpenAnomalies().data?.anomalies ?? []).filter(
+    (a) => a.status === 'open' || (meId && a.assignee?.id === meId),
+  );
   const due = (useContracts().data?.contracts ?? []).filter((c) => c.inNoticeWindow);
   const confirm = c.data?.requests ?? [];
   const rows = [...confirm, ...(q.data?.requests ?? [])];
@@ -274,12 +279,18 @@ export function OverviewPage() {
                   P10–P90 {usd(f.low)} – {usd(f.high)}
                 </span>
                 <br />
-                {f.committed && f.committed !== '0.000000' && (
-                  <>
-                    with <span className="figure">{usd(f.committed)}</span> committed beyond reservations
-                    <br />
-                  </>
-                )}
+                {[
+                  { v: f.reserved, what: 'reserved' },
+                  { v: f.committed, what: 'committed beyond reservations' },
+                  { v: f.contracted, what: 'under contract' },
+                ]
+                  .filter((x) => x.v && x.v !== '0.000000')
+                  .map((x) => (
+                    <span key={x.what}>
+                      + <span className="figure">{usd(x.v!)}</span> {x.what}
+                      <br />
+                    </span>
+                  ))}
               </>
             )}
             {overBy && overBy.compare('0') > 0 ? (

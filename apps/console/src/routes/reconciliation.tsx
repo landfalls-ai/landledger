@@ -31,11 +31,21 @@ const ROWS: Column<ReconciliationRow>[] = [
     header: 'Provider and model',
     cell: (r) => (
       <span>
-        <span className="font-medium text-t1">{r.model}</span>
+        <span className="font-medium text-t1">{r.model}</span>{' '}
+        {r.devFixture && (
+          <Tag dashed data-testid={`dev-${r.model}`}>
+            dev fixture: in no total
+          </Tag>
+        )}
         <small className="block text-t3">
           {r.provider}
           {r.invoices.length ? ` · ${r.invoices.join(', ')}` : ''}
         </small>
+        {r.note && (
+          <small className="block text-warn" data-testid={`late-${r.model}`}>
+            {r.lateEstimates} {r.note}
+          </small>
+        )}
       </span>
     ),
   },
@@ -136,6 +146,7 @@ function Import() {
   const [csv, setCsv] = useState('');
   const [fileName, setFileName] = useState<string | undefined>();
   const [fixture, setFixture] = useState(false);
+  const devApi = useMe().data?.authMode === 'dev';
   const run = useMutation({
     mutationFn: () =>
       send<{ invoices: InvoiceView[] }>('POST', '/api/invoices/import', {
@@ -175,10 +186,16 @@ function Import() {
           placeholder="…or paste the CSV here"
           aria-label="Invoice CSV"
         />
-        <label className="flex items-center gap-2 text-[13px] text-t2">
-          <input type="checkbox" checked={fixture} onChange={(e) => setFixture(e.target.checked)} /> A development
-          fixture (labelled as such everywhere)
-        </label>
+        {devApi && (
+          <label className="flex items-center gap-2 text-[13px] text-t2">
+            <input type="checkbox" checked={fixture} onChange={(e) => setFixture(e.target.checked)} /> A development
+            fixture (shown here, badged, and counted in no total)
+          </label>
+        )}
+        <p className="text-[12px] text-t3">
+          An invoice comes in once its month is over (in the ledger’s time zone); a month already locked takes its
+          true-up as a correction in the open month.
+        </p>
         <div>
           <Button variant="primary" disabled={!csv.trim() || run.isPending} onClick={() => run.mutate()}>
             Import
@@ -235,8 +252,9 @@ export function ReconciliationPage() {
       </div>
       <Lede>
         AI usage estimated from tokens × the rate card, against what the providers invoiced. A row is within tolerance
-        when the variance is at most ±{v.tolerancePct}% of the estimate. Estimates an invoice replaced are counted once,
-        as invoiced, everywhere else in Landledger.
+        when the variance is at most ±{v.tolerancePct}% of the estimate, or at most {usd(v.toleranceUsd)}. Estimates an
+        invoice replaced are counted once, as invoiced, everywhere else in Landledger; estimates that arrive after the
+        invoice are left out and flagged on their row. A development fixture is shown here, badged, and in no total.
       </Lede>
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
         {[

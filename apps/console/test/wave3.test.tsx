@@ -111,6 +111,7 @@ const FORECAST = {
       actual: '100.000000',
       reserved: '60.000000',
       committed: '0.000000',
+      contracted: '0.000000',
       total: '400.000000',
       budget: '500.000000',
       state: 'ok',
@@ -122,7 +123,8 @@ const FORECAST = {
       actual: '0.000000',
       reserved: '0.000000',
       committed: '120.000000',
-      total: '568.000000',
+      contracted: '400.000000',
+      total: '968.000000',
       budget: null,
       state: 'none',
     },
@@ -130,7 +132,8 @@ const FORECAST = {
   annualised: {
     runRate: { p10: '5000.000000', p50: '5840.000000', p90: '6700.000000' },
     commitments: '1440.000000',
-    total: '968.000000',
+    contracted: '4800.000000',
+    total: '1368.000000',
     budget: '500.000000',
   },
   commitments: [
@@ -162,12 +165,14 @@ describe('The year ahead (spec 006)', () => {
     const feb = await screen.findByTestId('ahead-2027-02');
     expect(feb).toHaveTextContent('$400.00–$496.00 run rate');
     expect(feb).toHaveTextContent('$120.00 committed');
+    expect(feb).toHaveTextContent('$400.00 contracted');
     expect(feb).toHaveTextContent('No budget');
     expect(screen.getByTestId('ahead-2026-11')).toHaveTextContent('On track');
     expect(screen.getByTestId('ahead-2026-11')).toHaveTextContent('$60.00 reserved');
     const a = screen.getByTestId('annualised');
     expect(a).toHaveTextContent('$5,840');
-    expect(a).toHaveTextContent('$1,440 a year of approved monthly requests (1)');
+    expect(a).toHaveTextContent('$1,440 over the next 12 months of approved monthly requests (1)');
+    expect(a).toHaveTextContent('$4,800 under contract');
     expect(within(a).getByText('R-9')).toBeInTheDocument();
   });
 });
@@ -188,8 +193,15 @@ const anomaly = (over: object) => ({
   score: null,
   costCenter: null,
   requests: [],
+  current: '45.000000',
+  currentAt: '2026-11-16T10:00:00.000Z',
+  alerts: 1,
   detectedAt: '2026-11-16T10:00:00.000Z',
   acknowledged: null,
+  assignee: null,
+  closed: null,
+  status: 'open',
+  named: [],
   dev: false,
   ...over,
 });
@@ -219,8 +231,11 @@ describe('Anomalies (spec 007)', () => {
               label: 'Tal Levi on ENG-AGENTS',
               summary: 'Tal Levi raised 4 infra change requests on ENG-AGENTS within 72 hours',
               observed: '570.000000',
+              current: '570.000000',
               requests: [{ id: 'req_1', number: 'R-7', title: 'Runner node A' }],
+              named: ['usr_1'],
             }),
+            anomaly({ id: 'anm_4', current: '95.000000', alerts: 2, label: 'Night digest' }),
           ],
         },
       ],
@@ -232,7 +247,7 @@ describe('Anomalies (spec 007)', () => {
     });
     renderAt('/anomalies');
     const cost = await screen.findByTestId('cost-anomalies');
-    expect(within(cost).getAllByText('Cost jump').length).toBe(2);
+    expect(within(cost).getAllByText('Cost jump').length).toBe(3);
     expect(within(screen.getByTestId('anomaly-anm_2')).getByText('dev test')).toBeInTheDocument();
     const approval = screen.getByTestId('approval-anomalies');
     expect(within(approval).getByText('Split under the threshold')).toBeInTheDocument();
@@ -240,11 +255,77 @@ describe('Anomalies (spec 007)', () => {
       'href',
       '/approvals/req_1',
     );
+    // A pattern that names the signed-in person: no action, said why.
+    expect(screen.getByTestId('anomaly-anm_3')).toHaveTextContent('This pattern names you');
+    expect(screen.queryByTestId('ack-anm_3')).toBeNull();
+    // Escalated: the figure now, the first, and how many alerts.
+    const esc = screen.getByTestId('anomaly-anm_4');
+    expect(esc).toHaveTextContent('Now $95.00 (first seen at $45.00)');
+    expect(esc).toHaveTextContent('Alerted 2×');
     await userEvent.click(screen.getByTestId('ack-anm_1'));
     await userEvent.type(screen.getByLabelText('Note'), 'The backfill');
     await userEvent.click(screen.getByRole('button', { name: 'Acknowledge' }));
     const [, init] = fetchMock.mock.calls.find(([p]) => p === '/api/anomalies/anm_1/acknowledge')!;
     expect(JSON.parse(String(init!.body))).toEqual({ note: 'The backfill' });
+  });
+
+  it('assigns by email and closes with an outcome and a note (should-fix 13)', async () => {
+    const userEvent = (await import('@testing-library/user-event')).default;
+    const fetchMock = mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/anomalies': [
+        200,
+        {
+          anomalies: [
+            anomaly({
+              status: 'acknowledged',
+              acknowledged: { by: 'shira.navon@landbright.test', at: '2026-11-16T11:00:00.000Z', note: 'Seen' },
+              assignee: {
+                id: 'usr_roni',
+                name: 'roni.amar@landbright.test',
+                by: 'shira.navon@landbright.test',
+                at: '2026-11-16T11:05:00.000Z',
+              },
+            }),
+            anomaly({
+              id: 'anm_9',
+              status: 'closed',
+              closed: {
+                by: 'roni.amar@landbright.test',
+                at: '2026-11-16T12:00:00.000Z',
+                outcome: 'false_positive',
+                note: 'A test run',
+              },
+            }),
+          ],
+        },
+      ],
+      '/api/anomalies/anm_1/assign': [200, anomaly({})],
+      '/api/anomalies/anm_1/close': [200, anomaly({})],
+      '/api/requests': [200, { requests: [], counts: { waiting: 0, mine: 0, decided: 0 } }],
+    });
+    renderAt('/anomalies?status=all');
+    expect(await screen.findByTestId('assignee-anm_1')).toHaveTextContent('Assigned to roni.amar@landbright.test');
+    expect(screen.getByTestId('closed-anm_9')).toHaveTextContent(
+      'Closed as false positive by roni.amar@landbright.test',
+    );
+    expect(screen.queryByTestId('close-anm_9')).toBeNull();
+    expect(screen.queryByTestId('ack-anm_1')).toBeNull();
+    await userEvent.click(screen.getByTestId('assign-anm_1'));
+    await userEvent.type(screen.getByLabelText('Assign to (email)'), 'yoav.bendavid@landbright.test');
+    await userEvent.type(screen.getByLabelText('Note'), 'Please look');
+    await userEvent.click(screen.getByRole('button', { name: 'Assign' }));
+    const assign = fetchMock.mock.calls.find(([p]) => p === '/api/anomalies/anm_1/assign')!;
+    expect(JSON.parse(String(assign[1]!.body))).toEqual({
+      assignee: { email: 'yoav.bendavid@landbright.test' },
+      note: 'Please look',
+    });
+    await userEvent.click(await screen.findByTestId('close-anm_1'));
+    await userEvent.selectOptions(screen.getByLabelText('Outcome'), 'fixed');
+    await userEvent.type(screen.getByLabelText('Note'), 'Capped the agent');
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    const close = fetchMock.mock.calls.find(([p]) => p === '/api/anomalies/anm_1/close')!;
+    expect(JSON.parse(String(close[1]!.body))).toEqual({ outcome: 'fixed', note: 'Capped the agent' });
   });
 });
 
@@ -261,9 +342,11 @@ const agentRow = (over: object) => ({
     value: '600.000000',
     hoursSaved: '10.00',
     clicklandKey: 'landflow-host/Triage lead',
+    outcomesSource: 'self-reported',
   },
   costPerOutcome: '5.625000',
   valuePerOutcome: '50.000000',
+  measured: true,
   suggestion: 'scale',
   why: 'Scale: 12 outcomes, worth $600.00 for $67.50, 100% succeeded (rule: 10 or more outcomes, value ≥ 5 × cost, 90% or more succeed)',
   ...over,
@@ -296,11 +379,13 @@ describe('Agents (spec 008)', () => {
                 value: '0.000000',
                 hoursSaved: '0.00',
                 clicklandKey: 'x',
+                outcomesSource: 'self-reported',
               },
               costPerOutcome: null,
               valuePerOutcome: null,
-              suggestion: 'retire',
-              why: 'Retire: 14 runs this month and no outcome (rule: 10 or more runs, none). Landledger has no cost for it in 2026-11',
+              measured: false,
+              suggestion: 'not_measured',
+              why: 'Outcomes not measured: Clickland credits no outcome to it (14 runs); no outcome definition covers it, so its value can’t be judged',
             }),
           ],
           totals: {
@@ -326,7 +411,9 @@ describe('Agents (spec 008)', () => {
     expect(lead).toHaveTextContent('owner Shira Navon');
     expect(within(lead).getByTestId('suggestion-ag_1')).toHaveTextContent('Scale');
     expect(within(lead).getByTestId('why-ag_1')).toHaveTextContent(/rule: 10 or more outcomes/);
-    expect(screen.getByTestId('suggestion-landflow-host/Night digest')).toHaveTextContent('Retire');
+    expect(screen.getByTestId('suggestion-landflow-host/Night digest')).toHaveTextContent('Outcomes not measured');
+    expect(screen.getByTestId('agent-landflow-host/Night digest')).toHaveTextContent('14 · not measured');
+    expect(lead).toHaveTextContent('self-reported');
     expect(screen.getByText('capacity, not cash')).toBeInTheDocument();
     expect(screen.getByTestId('clickland-note')).toHaveTextContent('Compute is not attributed');
   });
@@ -352,7 +439,10 @@ const contract = (over: object) => ({
   landbrightApp: 'linear',
   inNoticeWindow: true,
   daysToNotice: 16,
-  origin: 'dev-fixture',
+  noticeCalendarDate: '2026-12-02',
+  seatsUsedAsOf: '2026-11-16',
+  covered: false,
+  origin: 'entered',
   requestId: null,
   importedBy: 'Yoav Ben-David',
   importedAt: '2026-11-16T09:00:00.000Z',
@@ -374,12 +464,27 @@ const CONTRACTS = {
       seats: { paid: 30, used: 22, reserved: 0, left: 8 },
       seatPrice: '13.333333',
       renewalDate: '2027-06-01',
-      noticeDate: '2027-04-02',
+      noticeDate: '2027-04-01',
+      noticeCalendarDate: '2027-04-02',
       noticeDays: 60,
+      covered: true,
       inNoticeWindow: false,
       daysToNotice: 137,
       landbrightApp: 'notion',
     }),
+  ],
+  held: [
+    {
+      requestId: 'req_held',
+      number: 'R-31',
+      status: 'pending',
+      vendor: 'Snowflake',
+      product: 'Enterprise',
+      tcv: '60000.000000',
+      previousTcv: null,
+      importedBy: 'Yoav Ben David',
+      at: '2026-11-16T09:00:00.000Z',
+    },
   ],
   totals: { annualValue: '14400.000000', tcv: '14400.000000', seatsPaid: 70, seatsUsed: 56 },
 };
@@ -397,7 +502,19 @@ describe('Contracts (spec 009)', () => {
     expect(linear).toHaveTextContent('Notice in 16 days');
     expect(linear).toHaveTextContent('34 of 40');
     expect(linear).toHaveTextContent('5 left, 1 reserved · $20.00 a seat a month');
-    expect(linear).toHaveTextContent('dev fixture');
+    expect(linear).toHaveTextContent('no approved request: on the exceptions report');
+    expect(linear).toHaveTextContent('used as of');
+    const notion = screen.getByTestId('contract-Notion');
+    expect(notion).toHaveTextContent('the last business day on or before');
+    expect(notion).not.toHaveTextContent('exceptions report');
+    const held = screen.getByTestId('held-imports');
+    expect(within(held).getByRole('link', { name: /R-31 · Snowflake Enterprise/ })).toHaveAttribute(
+      'href',
+      '/approvals/req_held',
+    );
+    expect(held).toHaveTextContent('a new contract');
+    // The development fixture box is for a dev API only.
+    expect(screen.queryByText(/A development/)).toBeNull();
     const rest = screen.getByTestId('contracts-rest');
     expect(within(rest).getByTestId('contract-Notion')).toHaveTextContent('Renews');
     expect(screen.getByLabelText('Contracts CSV')).toBeInTheDocument();
@@ -424,6 +541,10 @@ const ITEMS = [
     detail: 'engineer · from Engineering',
     snapshot: {},
     about: ['usr_tal'],
+    addedAt: null,
+    cfoOnly: false,
+    revocation: null,
+    outstanding: false,
     attestation: null,
   },
   {
@@ -434,6 +555,10 @@ const ITEMS = [
     detail: 'controller · from Finance Controllers',
     snapshot: {},
     about: ['usr_1'],
+    addedAt: null,
+    cfoOnly: false,
+    revocation: null,
+    outstanding: false,
     attestation: null,
   },
   {
@@ -444,12 +569,49 @@ const ITEMS = [
     detail: 'read, requests:write · last used 2026-11-15',
     snapshot: {},
     about: ['usr_dana'],
+    addedAt: null,
+    cfoOnly: false,
+    revocation: { how: 'Key revoked', by: 'Roni Amar', at: '2026-11-16T09:00:00.000Z' },
+    outstanding: false,
     attestation: {
       decision: 'revoke',
       comment: 'Not used by any flow',
       by: 'Roni Amar',
       at: '2026-11-16T09:00:00.000Z',
     },
+  },
+  {
+    id: 'ari_owner',
+    kind: 'owner',
+    subjectId: 'ENG-AGENTS',
+    label: 'ENG-AGENTS',
+    detail: 'owner Shira Navon, deputies Roni Amar: decides its requests',
+    snapshot: {},
+    about: ['usr_shira', 'usr_roni'],
+    addedAt: null,
+    cfoOnly: false,
+    revocation: null,
+    outstanding: true,
+    attestation: {
+      decision: 'revoke',
+      comment: 'Roni no longer deputises',
+      by: 'Dana Shalev',
+      at: '2026-11-16T09:10:00.000Z',
+    },
+  },
+  {
+    id: 'ari_cli',
+    kind: 'key',
+    subjectId: 'key_cli',
+    label: 'cli key',
+    detail: 'read · minted by cli',
+    snapshot: {},
+    about: [],
+    addedAt: '2026-11-17T08:00:00.000Z',
+    cfoOnly: true,
+    revocation: null,
+    outstanding: false,
+    attestation: null,
   },
 ];
 const REVIEW = {
@@ -460,7 +622,7 @@ const REVIEW = {
   openedAt: '2026-11-16T08:00:00.000Z',
   completedAt: null,
   items: ITEMS,
-  counts: { total: 3, attested: 1, revoke: 1 },
+  counts: { total: 5, attested: 2, revoke: 2, outstanding: 1, added: 1 },
 };
 
 describe('Access review (spec 011)', () => {
@@ -486,11 +648,21 @@ describe('Access review (spec 011)', () => {
     });
     renderAt('/access-review');
     const people = await screen.findByTestId('review-person');
-    expect(screen.getByTestId('review-status')).toHaveTextContent('1 of 3 attested');
+    expect(screen.getByTestId('review-status')).toHaveTextContent('2 of 5 attested');
+    expect(screen.getByText(/1 added since it opened/)).toBeInTheDocument();
+    // A revoke Landledger can't do itself is outstanding; one it did says how.
+    expect(screen.getByTestId('attested-ari_owner')).toHaveTextContent('Revoke outstanding');
+    expect(screen.getByTestId('outstanding-ari_owner')).toHaveTextContent('Still there');
+    expect(screen.getByTestId('revocation-ari_key')).toHaveTextContent('Key revoked');
+    // A key no person minted: the CFO attests it, not the controller.
+    const cli = screen.getByTestId('item-ari_cli');
+    expect(cli).toHaveTextContent('CFO attests');
+    expect(cli).toHaveTextContent('added');
+    expect(within(cli).queryByTestId('keep-ari_cli')).toBeNull();
     expect(within(people).getByTestId('keep-ari_tal')).toBeInTheDocument();
     expect(within(people).queryByTestId('keep-ari_me')).toBeNull();
     expect(within(people).getByTestId('yours-ari_me')).toHaveTextContent('About you');
-    expect(screen.getByTestId('attested-ari_key')).toHaveTextContent('Revoke');
+    expect(screen.getByTestId('attested-ari_key')).toHaveTextContent('Revoked');
     expect(screen.getByTestId('item-ari_key')).toHaveTextContent('Roni Amar');
     await userEvent.click(screen.getByTestId('revoke-ari_tal'));
     const why = screen.getByLabelText('Why revoke');
@@ -499,6 +671,37 @@ describe('Access review (spec 011)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Revoke' }));
     const post = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/items/ari_tal/attest'));
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({ decision: 'revoke', comment: 'Left the team' });
+  });
+
+  it('asks the attester to confirm a revoke that takes effect at once (should-fix 9)', async () => {
+    const { counts: _c, items: _i, ...summary } = REVIEW;
+    const key = {
+      ...ITEMS[0]!,
+      id: 'ari_k2',
+      kind: 'key',
+      subjectId: 'key_2',
+      label: 'old key',
+      about: ['usr_dana'],
+    };
+    const fetchMock = mockApi({
+      '/api/auth/me': [200, ME],
+      '/api/requests': [200, { requests: [], counts: { waiting: 0, mine: 0, decided: 0 } }],
+      '/api/access-reviews/arv_1': [200, { ...REVIEW, items: [key] }],
+      '/api/access-reviews': [
+        200,
+        { quarter: '2026-Q4', due: true, reviews: [{ ...summary, counts: REVIEW.counts }], missed: ['2026-Q3'] },
+      ],
+    });
+    renderAt('/access-review');
+    expect(await screen.findByTestId('missed-quarters')).toHaveTextContent('2026-Q3 ended without a completed review');
+    await userEvent.click(await screen.findByTestId('revoke-ari_k2'));
+    await userEvent.type(screen.getByLabelText('Why revoke'), 'Unused');
+    const now = screen.getByRole('button', { name: 'Revoke now' });
+    expect(now).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox', { name: /revokes the key now/ }));
+    await userEvent.click(now);
+    const post = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/items/ari_k2/attest'));
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ decision: 'revoke', comment: 'Unused', confirm: true });
   });
 
   it('shows the review to an auditor without keep or revoke', async () => {

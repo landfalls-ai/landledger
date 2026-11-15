@@ -24,8 +24,8 @@ export function YearAhead({ months = 12 }: { months?: number }) {
       title="The year ahead"
       sub={
         f.status === 'ok'
-          ? `Run rate × days, its P10–P90 band, plus what approved requests reserve and commit`
-          : 'Not enough data yet for a run rate: reservations and commitments only'
+          ? 'Run rate × days, its P10–P90 band, plus what approved requests reserve and commit beyond it, and contracts'
+          : 'Not enough data yet for a run rate: reservations, commitments and contracts only'
       }
       testId="year-ahead"
     >
@@ -50,6 +50,7 @@ export function YearAhead({ months = 12 }: { months?: number }) {
                   : 'No run rate yet'}
                 {m.reserved !== '0.000000' && ` · ${usd(m.reserved, { whole: true })} reserved`}
                 {m.committed !== '0.000000' && ` · ${usd(m.committed, { whole: true })} committed`}
+                {m.contracted !== '0.000000' && ` · ${usd(m.contracted, { whole: true })} contracted`}
               </span>
               <StatePill state={m.state} />
             </div>
@@ -65,7 +66,9 @@ export function YearAhead({ months = 12 }: { months?: number }) {
           <small className="block text-[12px] text-t3">
             {a.runRate &&
               `Today’s run rate × 365, ${usd(a.runRate.p10, { whole: true })}–${usd(a.runRate.p90, { whole: true })} · `}
-            {usd(a.commitments, { whole: true })} a year of approved monthly requests ({f.commitments.length})
+            {usd(a.commitments, { whole: true })} over the next 12 months of approved monthly requests (
+            {f.commitments.length}) · {usd(a.contracted, { whole: true })} under contract
+            {a.total && ` · ${usd(a.total, { whole: true })} in all`}
             {a.budget && ` · ${usd(a.budget, { whole: true })} budgeted in these months`}
           </small>
           {f.commitments.length > 0 && (

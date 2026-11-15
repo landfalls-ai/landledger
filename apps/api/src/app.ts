@@ -14,6 +14,7 @@ import {
   SpendQuery,
   WebhookInput,
   AppliedInput,
+  SeatReleaseInput,
   CancelInput,
   CreateRequestInput,
   DecisionInput,
@@ -479,6 +480,13 @@ export async function buildApp(services: Services, options: AppOptions = {}): Pr
   app.post('/api/requests/:id/applied', async (r) => {
     need(r, 'requests:write');
     return { request: await requests.applied(parse(Id, r.params).id, parse(AppliedInput, r.body ?? {}), r.principal) };
+  });
+  // Spec 010 (review of wave 3): cost approved but access denied, or a grant revoked: the seat goes back.
+  app.post('/api/requests/:id/seats/release', async (r) => {
+    need(r, 'requests:write');
+    return {
+      request: await requests.releaseSeats(parse(Id, r.params).id, parse(SeatReleaseInput, r.body), r.principal),
+    };
   });
 
   app.get(

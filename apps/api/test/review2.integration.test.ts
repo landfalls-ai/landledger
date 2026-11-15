@@ -1075,11 +1075,14 @@ describe.skipIf(!integrationEnabled('db'))('review of wave 2', () => {
 
   // Back-channel logout ----------------------------------------------------------------------------------------------
 
-  it("ends a person's sessions on Landbright's back-channel logout, once per token", async () => {
+  it("ends a person's sessions created before each logout token's iat; a seen jti is a replay (review of wave 3)", async () => {
     const session = await signIn('tal');
     expect(
       (await app.inject({ method: 'GET', url: '/api/auth/me', cookies: { ll_session: session } })).statusCode,
     ).toBe(200);
+    // Tal's session started a minute ago; Landbright's token was issued 30 seconds ago.
+    await owner`UPDATE sessions SET created_at = created_at - interval '1 minute' WHERE user_id = ${userId.tal}`;
+    const iat = Math.floor(Date.now() / 1000) - 30;
     const post = (token: string) =>
       app.inject({
         method: 'POST',
@@ -1090,15 +1093,24 @@ describe.skipIf(!integrationEnabled('db'))('review of wave 2', () => {
     expect((await post(await fake.logoutToken('sub-tal', { nonce: 'n' }))).statusCode).toBe(400);
     expect((await post(await fake.logoutToken('sub-tal', { events: { other: {} } }))).statusCode).toBe(400);
     expect((await post(await fake.logoutToken('sub-tal', { audience: 'someone-else' }))).statusCode).toBe(400);
-    const token = await fake.logoutToken('sub-tal', { jti: 'jti-1' });
+    const token = await fake.logoutToken('sub-tal', { jti: 'jti-1', iat });
+    // Every session of Tal's still live (this one, and the suite's own sign-in), all started before the iat.
+    const [{ live }] = (await sql`
+      SELECT count(*)::int AS live FROM sessions WHERE user_id = ${userId.tal} AND revoked_at IS NULL
+        AND expires_at > now()`) as unknown as [{ live: number }];
+    expect(live).toBeGreaterThanOrEqual(1);
     const res = await post(token);
     expect(res.statusCode, res.body).toBe(200);
     expect(res.headers['cache-control']).toBe('no-store');
     expect(
       (await app.inject({ method: 'GET', url: '/api/auth/me', cookies: { ll_session: session } })).statusCode,
     ).toBe(401);
-    // A retry of the same verified token (Landbright's 200 was lost) answers 200 again and ends nothing new: Tal's
-    // fresh session survives, and the retry is audited as a replay, not a second logout.
+    // The token's hash and iat are kept for the audit, never the token.
+    const [kept] = await sql`SELECT token_sha256, iat FROM logout_tokens WHERE jti = 'jti-1'`;
+    expect(kept!.token_sha256).toBe(createHash('sha256').update(token).digest('hex'));
+    expect(new Date(kept!.iat).getTime()).toBe(iat * 1000);
+    // The same token again answers 200 and ends nothing new: Tal's session signed in after its iat survives, and it is
+    // audited as a replay.
     const again = await signIn('tal');
     const replay = await post(token);
     expect(replay.statusCode, replay.body).toBe(200);
@@ -1111,15 +1123,29 @@ describe.skipIf(!integrationEnabled('db'))('review of wave 2', () => {
     expect((await post(await fake.logoutToken('sub-tal', { jti: 'jti-1', audience: 'someone-else' }))).statusCode).toBe(
       400,
     );
-    // The same jti for another person is refused.
-    expect((await post(await fake.logoutToken('sub-shira', { jti: 'jti-1' }))).statusCode).toBe(400);
+    // A validly signed token always counts, whatever its jti: the same jti for another person ends that person's
+    // sessions created before its iat (answering 200, audited as a replay); a later session survives.
+    const shira = await signIn('shira');
+    const other = await post(await fake.logoutToken('sub-shira', { jti: 'jti-1', iat }));
+    expect(other.statusCode, other.body).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/auth/me', cookies: { ll_session: shira } })).statusCode).toBe(
+      200,
+    );
+    // A row kept with no sub (before the hash was) is an earlier sighting: a retry answers 200, never 400.
+    await owner`INSERT INTO logout_tokens (jti, sub) VALUES ('jti-old', NULL)`;
+    const old = await post(await fake.logoutToken('sub-tal', { jti: 'jti-old', iat }));
+    expect(old.statusCode, old.body).toBe(200);
     const logouts = await sql`SELECT data FROM audit_log WHERE action = 'auth.backchannel_logout'`;
     expect(logouts).toHaveLength(1);
-    expect(logouts[0]!.data).toMatchObject({ sub: 'sub-tal' });
-    const replays = await sql`SELECT data FROM audit_log WHERE action = 'auth.backchannel_logout_replay'`;
-    expect(replays).toHaveLength(1);
-    expect(replays[0]!.data).toMatchObject({ sub: 'sub-tal', jti: 'jti-1' });
+    expect(logouts[0]!.data).toMatchObject({ sub: 'sub-tal', sessions: live });
+    const replays = await sql`SELECT data FROM audit_log WHERE action = 'auth.backchannel_logout_replay' ORDER BY seq`;
+    expect(replays.map((r) => [r.data.sub, r.data.jti, r.data.sessions, r.data.sameToken])).toEqual([
+      ['sub-tal', 'jti-1', 0, true],
+      ['sub-shira', 'jti-1', 0, false],
+      ['sub-tal', 'jti-old', 0, null],
+    ]);
     cookie.tal = await signIn('tal');
-    await owner`UPDATE users SET last_seen_at = ${START} WHERE id = ${userId.tal}`;
+    cookie.shira = await signIn('shira');
+    await owner`UPDATE users SET last_seen_at = ${START} WHERE id IN (${userId.tal}, ${userId.shira})`;
   });
 });

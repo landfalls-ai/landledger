@@ -44,6 +44,7 @@ const ORIGIN_LABEL: Record<RequestOrigin['type'], string> = {
   landbright_request: 'Landbright request',
   console: 'Raised in',
   mcp: 'Raised in',
+  contract_import: 'Held from',
 };
 
 function originText(o: RequestOrigin): ReactNode {
@@ -58,8 +59,14 @@ function originText(o: RequestOrigin): ReactNode {
     }
     case 'pull_request':
       return <Ext href={o.url}>{o.title ?? o.url}</Ext>;
-    case 'landbright_request':
-      return o.url ? <Ext href={o.url}>{o.title ?? o.id}</Ext> : (o.title ?? o.id);
+    case 'landbright_request': {
+      const text = o.url ? <Ext href={o.url}>{o.title ?? o.id}</Ext> : (o.title ?? o.id);
+      return o.breakGlass ? <>{text} (break-glass: granted first, approved after)</> : text;
+    }
+    case 'contract_import':
+      return `A contracts file${o.fileName ? `, ${o.fileName}` : ''}, line ${o.line}: above the $25,000 line, held for a second person${
+        o.previousTcv ? ` (it raises a TCV of $${o.previousTcv})` : ''
+      }`;
   }
 }
 

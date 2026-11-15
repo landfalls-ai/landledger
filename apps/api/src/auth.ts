@@ -219,54 +219,58 @@ export class Sessions {
 
   /**
    * Back-channel logout (OpenID Connect Back-Channel Logout 1.0): Landbright posts a signed logout token when a person
-   * signs out there or is disabled; every session of that person here ends. Each token (`jti`) logs out once: the
-   * token is verified first, so a reused `jti` on a token that fails verification is refused; a verified token whose
-   * `jti` was already processed (Landbright retries when our 200 is lost) answers 200 again, ends nothing and is
-   * audited as `auth.backchannel_logout_replay`, never as a second logout.
+   * signs out there or is disabled. Every validly signed token ends that person's sessions created before its `iat`
+   * (to the second it names, as `iat` has no finer grain: ending one too many is the safe side), which is idempotent: a retry, or a later token for the same sign-out, ends nothing new, and a session signed in
+   * after the token was issued stays. Landbright signs each delivery attempt afresh (a new random `jti` and `iat`), so a
+   * `jti` seen before is not a Landbright retry; it still answers 200, still ends sessions created before its `iat`, and
+   * is audited as `auth.backchannel_logout_replay`. Each token's SHA-256 and `iat` are kept for the audit (never the
+   * token itself).
    */
   async backchannelLogout(token: string): Promise<{ sessions: number; replay: boolean }> {
-    const { sub, jti, sid } = await this.client().verifyLogoutToken(token);
+    const { sub, jti, sid, iat } = await this.client().verifyLogoutToken(token);
+    const tokenSha256 = sha256(token);
     return this.sql.begin(async (tx) => {
-      const fresh =
-        await tx`INSERT INTO logout_tokens (jti, sub) VALUES (${jti}, ${sub}) ON CONFLICT DO NOTHING RETURNING 1`;
-      if (!fresh.length) {
-        const [seen] = await tx<{ sub: string | null; seen_at: Date }[]>`
-          SELECT sub, seen_at FROM logout_tokens WHERE jti = ${jti}`;
-        if (seen?.sub !== sub)
-          throw new ApiError('bad_request', 'This logout token id (jti) was used for another subject');
-        const [u] = await tx<
-          { id: string; email: string | null }[]
-        >`SELECT id, email FROM users WHERE subject = ${sub}`;
-        await this.audit.append(
-          {
-            actor: 'landbright',
-            actorKind: 'system',
-            action: 'auth.backchannel_logout_replay',
-            subjectType: 'user',
-            subjectId: u?.id ?? sub,
-            data: { sub, sid, jti, firstSeenAt: seen.seen_at.toISOString(), person: u?.email ?? null },
-          },
-          tx,
-        );
-        return { sessions: 0, replay: true };
-      }
+      const fresh = await tx`
+        INSERT INTO logout_tokens (jti, sub, token_sha256, iat) VALUES (${jti}, ${sub}, ${tokenSha256}, ${iat})
+        ON CONFLICT DO NOTHING RETURNING 1`;
       const ended = await tx<{ user_id: string }[]>`
         UPDATE sessions SET revoked_at = now()
-        WHERE revoked_at IS NULL AND user_id IN (SELECT id FROM users WHERE subject = ${sub})
+        WHERE revoked_at IS NULL AND created_at < ${new Date(iat.getTime() + 1000)}
+          AND user_id IN (SELECT id FROM users WHERE subject = ${sub})
         RETURNING user_id`;
       const [u] = await tx<{ id: string; email: string | null }[]>`SELECT id, email FROM users WHERE subject = ${sub}`;
+      // A row from before the hash was kept (or with no sub) is just an earlier sighting.
+      const [seen] = fresh.length
+        ? []
+        : await tx<{ sub: string | null; seen_at: Date; token_sha256: string | null }[]>`
+            SELECT sub, seen_at, token_sha256 FROM logout_tokens WHERE jti = ${jti}`;
       await this.audit.append(
         {
           actor: 'landbright',
           actorKind: 'system',
-          action: 'auth.backchannel_logout',
+          action: fresh.length ? 'auth.backchannel_logout' : 'auth.backchannel_logout_replay',
           subjectType: 'user',
           subjectId: u?.id ?? sub,
-          data: { sub, sid, sessions: ended.length, person: u?.email ?? null },
+          data: {
+            sub,
+            sid,
+            jti,
+            iat: iat.toISOString(),
+            tokenSha256,
+            sessions: ended.length,
+            person: u?.email ?? null,
+            ...(seen
+              ? {
+                  firstSeenAt: seen.seen_at.toISOString(),
+                  firstSub: seen.sub,
+                  sameToken: seen.token_sha256 === null ? null : seen.token_sha256 === tokenSha256,
+                }
+              : {}),
+          },
         },
         tx,
       );
-      return { sessions: ended.length, replay: false };
+      return { sessions: ended.length, replay: !fresh.length };
     });
   }
 

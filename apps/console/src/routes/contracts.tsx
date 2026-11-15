@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { Pill, Tag } from '@/components/ui/pill';
 import { ApiError, get, quiet, send } from '@/lib/api';
+import { useMe } from '@/lib/auth';
 import { dayLabel, usd } from '@/lib/format';
 import { useFinanceAdmin } from './reconciliation';
 
@@ -34,6 +35,11 @@ function ContractItem({ c, focus }: { c: ContractView; focus: boolean }) {
             <Link to={`/approvals/${c.requestId}`}>
               <Tag>from a request</Tag>
             </Link>
+          )}
+          {c.origin === 'entered' && !c.covered && (
+            <Tag dashed data-testid={`uncovered-${c.vendor}`}>
+              no approved request: on the exceptions report
+            </Tag>
           )}
           <small className="block text-[12px] text-t3">
             {c.costCenter.name} ({c.costCenter.code}) · v{c.version}
@@ -70,6 +76,7 @@ function ContractItem({ c, focus }: { c: ContractView; focus: boolean }) {
             <div className="text-[11.5px] text-t3">
               {seats.left} left{seats.reserved ? `, ${seats.reserved} reserved` : ''}
               {c.seatPrice ? ` · ${usd(c.seatPrice)} a seat a month` : ''}
+              {c.seatsUsedAsOf ? ` · used as of ${longDay(c.seatsUsedAsOf)}, plus grants since` : ''}
             </div>
           )}
         </div>
@@ -78,6 +85,9 @@ function ContractItem({ c, focus }: { c: ContractView; focus: boolean }) {
           <div className="text-[14px] text-t1">{longDay(c.noticeDate)}</div>
           <div className="text-[11.5px] text-t3">
             {c.noticeDays} days before renewal{c.autoRenew ? ', renews itself' : ''}
+            {c.noticeCalendarDate !== c.noticeDate
+              ? ` (the last business day on or before ${longDay(c.noticeCalendarDate)})`
+              : ''}
           </div>
         </div>
       </div>
@@ -90,6 +100,7 @@ function Import() {
   const [csv, setCsv] = useState('');
   const [fileName, setFileName] = useState<string | undefined>();
   const [fixture, setFixture] = useState(false);
+  const devApi = useMe().data?.authMode === 'dev';
   const run = useMutation({
     mutationFn: () =>
       send<ContractsView>('POST', '/api/contracts/import', {
@@ -107,7 +118,7 @@ function Import() {
   return (
     <Card
       title="Import contracts"
-      sub="A CSV: vendor, product, cost_center, tcv, currency, term_start, term_end, seats_paid, seats_used, renewal_date, notice_days[, auto_renew, landbright_app]"
+      sub="A CSV: vendor, product, cost_center, tcv, currency, term_start, term_end, seats_paid, seats_used, renewal_date, notice_days[, auto_renew, landbright_app, seats_used_as_of]"
     >
       <CardBody className="grid gap-2">
         <input
@@ -129,16 +140,28 @@ function Import() {
           placeholder="…or paste the CSV here"
           aria-label="Contracts CSV"
         />
-        <label className="flex items-center gap-2 text-[13px] text-t2">
-          <input type="checkbox" checked={fixture} onChange={(e) => setFixture(e.target.checked)} /> A development
-          fixture (labelled as such everywhere)
-        </label>
+        {devApi && (
+          <label className="flex items-center gap-2 text-[13px] text-t2">
+            <input type="checkbox" checked={fixture} onChange={(e) => setFixture(e.target.checked)} /> A development
+            fixture (labelled, and counted in no total)
+          </label>
+        )}
+        <p className="text-[12px] text-t3">
+          A new contract, or a TCV raised, by more than $25,000 is held as a contract request for a second person
+          (Finance, then the CFO); a smaller one enters at once and is listed on the exceptions report until an approved
+          contract request covers it.
+        </p>
         <div>
           <Button variant="primary" disabled={!csv.trim() || run.isPending} onClick={() => run.mutate()}>
             Import
           </Button>
         </div>
-        {run.isSuccess && <p className="text-[13px] text-gn">Imported. A contract imported again is a new version.</p>}
+        {run.isSuccess && (
+          <p className="text-[13px] text-gn">
+            Imported. A contract imported again is a new version
+            {run.data.held.length ? `; ${run.data.held.length} held for a second person` : ''}.
+          </p>
+        )}
         {run.isError && (
           <div className="text-[13px] text-rd">
             {run.error.message}
@@ -170,8 +193,9 @@ export function ContractsPage() {
     <div data-testid="contracts" className="grid gap-3.5">
       <Lede>
         Vendor contracts and subscriptions. A contract inside its notice window (from {v.windowDays} days before its
-        notice date to its renewal) comes first, and its owner hears of it once. A new contract is approved as a request
-        for its total value and term; seats are what it holds.
+        notice date to its renewal) comes first; its owner hears of it on entering the window, a week and a day before
+        the notice date (the last business day on or before it), and if it passes with no new contracts file. A new
+        contract is approved as a request for its total value and term; seats are what it holds.
       </Lede>
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
         {[
@@ -186,6 +210,28 @@ export function ContractsPage() {
           </div>
         ))}
       </div>
+      {v.held.length > 0 && (
+        <Card
+          title="Held for a second person"
+          sub="Imports above the $25,000 line, as contract requests"
+          testId="held-imports"
+        >
+          <ul>
+            {v.held.map((h) => (
+              <li key={h.requestId} className="border-t border-hair px-4 py-3 first:border-t-0">
+                <Link to={`/approvals/${h.requestId}`} className="font-medium text-t1 underline decoration-hair">
+                  {h.number} · {h.vendor} {h.product}
+                </Link>
+                <small className="block text-[12px] text-t3">
+                  TCV {usd(h.tcv)}
+                  {h.previousTcv ? `, up from ${usd(h.previousTcv)}` : ', a new contract'} · imported by {h.importedBy}{' '}
+                  · {h.status}
+                </small>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
       {due.length > 0 && (
         <Card title="Renewals to decide" sub="Inside the notice window, by notice date" testId="renewals-due">
           <ul>

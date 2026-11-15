@@ -118,7 +118,7 @@ export async function fakeLandbright(options: { claimsInIdToken?: boolean; audie
   /** A back-channel logout token for a subject, as Landbright would post it (OIDC Back-Channel Logout 1.0). */
   async function logoutToken(
     sub: string,
-    over: { jti?: string; events?: unknown; nonce?: string; audience?: string } = {},
+    over: { jti?: string; events?: unknown; nonce?: string; audience?: string; iat?: number } = {},
   ) {
     return new SignJWT({
       events: over.events ?? { 'http://schemas.openid.net/event/backchannel-logout': {} },
@@ -129,7 +129,7 @@ export async function fakeLandbright(options: { claimsInIdToken?: boolean; audie
       .setAudience(over.audience ?? CLIENT_ID)
       .setSubject(sub)
       .setJti(over.jti ?? randomBytes(8).toString('hex'))
-      .setIssuedAt()
+      .setIssuedAt(over.iat)
       .setExpirationTime('2m')
       .sign(privateKey);
   }

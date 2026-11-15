@@ -101,3 +101,16 @@ export function readHolidays(path: string | null): Set<string> {
   }
   return out;
 }
+
+/** The last business day on or before a local date (`YYYY-MM-DD`): not a weekend day of the calendar, nor a holiday. */
+export function lastBusinessDayOnOrBefore(date: string, calendar: BusinessCalendar): string {
+  if (!calendar.days.length) return date;
+  const holidays = calendar.holidays ?? new Set<string>();
+  let d = date;
+  for (let i = 0; i < 60; i++) {
+    const weekday = new Date(`${d}T12:00:00Z`).getUTCDay();
+    if (calendar.days.includes(weekday) && !holidays.has(d)) return d;
+    d = new Date(Date.parse(`${d}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+  }
+  return date;
+}

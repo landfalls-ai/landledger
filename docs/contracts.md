@@ -13,11 +13,12 @@ whole value and term, and approves a seat on a contract as a request before Land
 | Vendor, product | Together they name the contract: `con_…` is stable across versions |
 | Cost center | Who pays; its owner hears of the renewal |
 | Total contract value (TCV) | USD over the whole term, in micro-units |
-| Term | Start and end (inclusive) and its months (`termMonths`, whole months, at least 1) |
-| Annual value | TCV × 12 ÷ months, half-even |
-| Seats paid, used | As imported; _used_ also counts seats granted through Landledger since (below) |
+| Term | Start and end (inclusive) and its months (`termMonths`, whole months, at least 1, as shown) |
+| Annual value | TCV × 12 ÷ the exact months (whole months plus the days of a part month over its days, so an 11.5-month term is not rounded to 11), half-even |
+| Seats paid, used | As imported, as of `seats_used_as_of` (or the import day); _used_ also counts seats granted through Landledger after that day (below) |
 | Seat price | Annual value ÷ seats paid ÷ 12: what one seat costs a month on this contract |
-| Renewal date, notice days | Notice date = renewal − notice days |
+| Renewal date, notice days | `noticeCalendarDate` = renewal − notice days; `noticeDate`, the one acted on, is the last business day on or before it (`LANDLEDGER_BUSINESS_DAYS`, `LANDLEDGER_HOLIDAYS`) |
+| Covered | An `entered` contract an approved contract request covers (its origin request, or one for the vendor and product with a TCV at least as high); if not, it is on the exceptions report |
 | Auto-renew | Whether it renews itself (default true) |
 | Landbright app | The app in Landbright a seat on this contract grants (optional): how Landflow finds the contract for an access request |
 | Origin | `entered`, `dev-fixture` (labelled _dev fixture_ everywhere) or `request` (made by an approved contract request) |
@@ -32,8 +33,21 @@ audited `contract.imported` or `contract.reimported`.
 imports; 403). The header:
 
 ```
-vendor,product,cost_center,tcv,currency,term_start,term_end,seats_paid,seats_used,renewal_date,notice_days[,auto_renew,landbright_app]
+vendor,product,cost_center,tcv,currency,term_start,term_end,seats_paid,seats_used,renewal_date,notice_days[,auto_renew,landbright_app,seats_used_as_of]
 ```
+
+`seats_used_as_of` (a date, not after today, only with `seats_used`) is the day the seats-used figure was taken: seats
+Landledger saw granted after it are added, and ones granted before it are not counted twice (should-fix 5). Without
+it, the import's own day (in `LANDLEDGER_TZ`) is used. The contract CSV export carries it.
+
+**A second person above $25,000** (Decision 9, should-fix 6). A new contract with a TCV over $25,000, or a version
+raising a contract's TCV by more than that, is not entered: it is held as a pending `contract` request (origin
+`contract_import`, with the file name, the line and the TCV it raises), raised in the importer's name, so the owner,
+Finance and the CFO decide it and the importer can't. Audited `contract.import_held`; `GET /api/contracts` lists them
+under `held`. Approving it records the contract. A smaller import enters at once and stays on the exceptions report
+(`contracts`) until an approved contract request covers it. A caller can't claim the `contract_import` origin.
+`origin: dev-fixture` is for a development API only (`LANDLEDGER_DEV_AUTH=on` on this machine; 403 otherwise), never
+held, and counted in no total.
 
 USD only: another currency is `422` and nothing is imported. Every problem is reported by line (an unknown cost
 center, a bad amount or date, an end or renewal before the start, seats paid without seats used, a notice over 365
@@ -46,9 +60,16 @@ and a file with any problem imports nothing (`400` with `details.problems`). The
 
 A contract is **inside its notice window** from `LANDLEDGER_RENEWAL_WINDOW_DAYS` (30) days before its notice date to
 its renewal date. Inside it, the contract comes first on the Contracts page (by notice date) and in Overview's **Needs
-you** (_Renewal: Linear Business, notice by 2 December_). The hourly `renewals` job sends webhook
-`contract.renewal_due` `{ contract, url }` once per contract and renewal date (`contract_alerts`), audited
-`contract.renewal_due`. A renewed contract (a new version with a later renewal date) is due again at its own window.
+you** (_Renewal: Linear Business, notice by 2 December_). "Today" is the date in `LANDLEDGER_TZ` (should-fix 15). The
+hourly `renewals` job sends, each once per contract and renewal date and audited by its own name:
+
+| Webhook | When |
+|---|---|
+| `contract.renewal_due` `{ contract, url }` | on entering the window (`contract_alerts`) |
+| `contract.notice_reminder` | 7 days and again 1 day before the notice date (`contract_notices`) |
+| `contract.notice_missed` | the day after the notice date when no contracts file has come in since (the renewal will happen) |
+
+A renewed contract (a new version with a later renewal date) is due again at its own window.
 
 ## A contract request
 
@@ -56,6 +77,9 @@ Kind `contract`, with `contract: { vendor, product, tcv, termMonths, start, seat
 landbrightApp?, contractId? }`. Its amount must be the TCV and its recurrence `once` (400 otherwise). The seeded
 `contract` policy (decision 9, a default to confirm): the cost center's owner and Finance always, the CFO above
 $25,000. A contract request is never approved by policy alone: approval records the contract, and that is a person's.
+
+Its terms may also carry `termEnd`, `renewalDate`, `seatsUsed` and `seatsUsedAsOf` (a held import's do); a `termEnd`
+before the start is refused.
 
 On approval the request **reserves no money**: a contract is a commitment over its term, not a month's spend, so its
 TCV is not held against any month's budget. Instead the contract is recorded as a version (`origin: request`, a new
@@ -65,7 +89,9 @@ day after the term ends, the seats paid, none used yet. Audited `contract.from_r
 ## A seat (tool or seat)
 
 Kind `tool_or_seat`, with `seat: { contractId, seats (1–100, default 1), seatPrice }`. The amount must be seats ×
-seat price, monthly (400 otherwise: "seats × seat price a month: 1 × 20 = 20.000000"). The contract must exist.
+seat price, monthly (400 otherwise: "seats × seat price a month: 1 × 20 = 20.000000"). The contract must exist, and
+the seat price can't be below the contract's own (400, should-fix 4). A request that would leave no seat on the
+contract is never approved by policy, whatever its amount: a person decides it.
 
 - **Evidence** (`evidence.seat`): the contract (vendor, product, renewal), seats paid, used and reserved, left now and
   left after this request, the seat price asked and the contract's own, and a note when none is left: _No seat is
@@ -77,9 +103,15 @@ seat price, monthly (400 otherwise: "seats × seat price a month: 1 × 20 = 20.0
 - **On applied** (`POST /api/requests/:id/applied`, after Landbright granted): the reservation is `applied` and counts
   as used.
 - Rejected, cancelled or expired: nothing is reserved.
+- **Released** (should-fix 5): `POST /api/requests/:id/seats/release { reason, note? }`, by the creating key, the
+  requester (or sponsor) or an admin person, when Landbright denied access (`access_denied`), revoked the grant
+  (`grant_revoked`, the only reason for an applied seat) or it isn't needed (`not_needed`). The seat goes back to the
+  contract, the request's reservations are released, audited `seat.released`, webhook `seat.released` `{ requestId,
+  number, contractId, seats, reason, from, url }`. A seat approved and not applied within 30 days is released by the
+  hourly job (`expired`). A second release is a 409.
 
-Seats left = paid − used − reserved, where used = seats used as imported + seats applied since that version was
-imported. Re-importing a contract with a fresh _seats used_ resets that count, since the new figure includes them.
+Seats left = paid − used − reserved, where used = seats used as of its date + seats applied after that day − seats
+released since that had been applied by then.
 
 `GET /api/contracts/seats?landbrightApp=linear` (scope `read`) returns the contract that grants the app, its seat
 price and seats left; `404` when no contract names the app. The steps Landflow and Landbright take are in
@@ -88,4 +120,6 @@ price and seats left; `404` when no contract names the app. The steps Landflow a
 ## Not yet
 
 SaaS invoices against contracts (wave 5); seats used read live from Landbright's grants (Landbright's side, see
-integrations.md); price changes at renewal (a new version with the new TCV is how it is entered today).
+integrations.md); price changes at renewal (a new version with the new TCV is how it is entered today). A seat
+request's monthly amount and the contract's value both sit in the forecast, so a seat bought on a contract already
+counted may be counted twice there (open).

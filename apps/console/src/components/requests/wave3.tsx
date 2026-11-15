@@ -1,7 +1,9 @@
 import type { RequestDetail, RequestLifecycle, RequestView } from '@landledger/contracts';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
-import { get, quiet } from '@/lib/api';
+import { get, quiet, send } from '@/lib/api';
 import { pct, signed, usd } from '@/lib/format';
 import { when } from '@/lib/requests';
 
@@ -45,7 +47,13 @@ export function Lifecycle({ r }: { r: RequestView }) {
 
 export type Evidence = RequestDetail['evidence'];
 
-const SUGGESTION_WORD = { scale: 'Scale', keep: 'Keep', review: 'Review', retire: 'Retire' } as const;
+const SUGGESTION_WORD = {
+  scale: 'Scale',
+  keep: 'Keep',
+  review: 'Review',
+  retire: 'Retire',
+  not_measured: 'Outcomes not measured',
+} as const;
 
 /** An AI budget request's agent (spec 008): its month's cost per outcome, and what the raise buys at that rate. */
 export function AgentEconomicsCard({ d }: { d: RequestDetail }) {
@@ -57,7 +65,7 @@ export function AgentEconomicsCard({ d }: { d: RequestDetail }) {
         <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[14px] sm:grid-cols-4">
           {[
             ['Cost this month', usd(e.cost)],
-            ['Outcomes', e.outcomes === null ? '—' : String(e.outcomes)],
+            ['Outcomes (self-reported)', e.outcomes === null ? 'not measured' : String(e.outcomes)],
             ['Cost per outcome', e.costPerOutcome ? usd(e.costPerOutcome) : '—'],
             ['Value per outcome', e.valuePerOutcome ? usd(e.valuePerOutcome) : '—'],
           ].map(([label, value]) => (
@@ -123,7 +131,56 @@ export function ContractOrSeatCard({ d }: { d: RequestDetail }) {
           {s!.renewalDate}.
         </p>
         {s!.note && <p className="mt-1.5 text-[13px] text-warn">{s!.note}.</p>}
+        <ReleaseSeat r={d.request} />
       </CardBody>
     </Card>
+  );
+}
+
+const RELEASE_REASON = {
+  access_denied: 'Access was denied in Landbright',
+  grant_revoked: 'The grant was revoked',
+  not_needed: 'Not needed after all',
+} as const;
+
+/**
+ * Gives a reserved (or granted, then revoked) seat back to its contract: the requester, the creating key or an admin
+ * (POST /api/requests/:id/seats/release). Unapplied seats go back by themselves 30 days after approval.
+ */
+function ReleaseSeat({ r }: { r: RequestView }) {
+  const qc = useQueryClient();
+  const [reason, setReason] = useState<keyof typeof RELEASE_REASON | null>(null);
+  const status = r.seat?.status;
+  const release = useMutation({
+    mutationFn: () => send('POST', `/api/requests/${encodeURIComponent(r.id)}/seats/release`, { reason }),
+    onSuccess: () => {
+      setReason(null);
+      void qc.invalidateQueries({ queryKey: ['request', r.id] });
+      void qc.invalidateQueries({ queryKey: ['requests'] });
+    },
+  });
+  if (status === 'released') return <p className="mt-2 text-[12.5px] text-t3">The seat went back to the contract.</p>;
+  if (status !== 'reserved' && status !== 'applied') return null;
+  const reasons = (Object.keys(RELEASE_REASON) as (keyof typeof RELEASE_REASON)[]).filter((k) =>
+    status === 'applied' ? k === 'grant_revoked' : k !== 'grant_revoked',
+  );
+  return (
+    <div className="mt-2.5 grid gap-1.5" data-testid="release-seat">
+      <div className="flex flex-wrap gap-2">
+        {reasons.map((k) => (
+          <Button key={k} size="sm" variant={reason === k ? 'primary' : undefined} onClick={() => setReason(k)}>
+            {RELEASE_REASON[k]}
+          </Button>
+        ))}
+      </div>
+      {reason && (
+        <div>
+          <Button size="sm" variant="primary" disabled={release.isPending} onClick={() => release.mutate()}>
+            Release the seat
+          </Button>
+        </div>
+      )}
+      {release.isError && <p className="text-[12px] text-rd">{release.error.message}</p>}
+    </div>
   );
 }

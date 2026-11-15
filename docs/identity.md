@@ -39,14 +39,22 @@ Scopes per role: CFO and controller `read`, `requests:write`, `admin`; FP&A, bud
 `POST /api/auth/backchannel-logout` (OpenID Connect Back-Channel Logout 1.0; public, form-encoded `logout_token`).
 Landbright posts a logout token signed with its JWKS for client `landledger-local` when a person signs out there or is
 disabled; Landledger checks the issuer, audience, `iat` (at most 10 minutes old), the back-channel logout event, a `sub`
-(it keeps no `sid`), no `nonce`, and takes each `jti` once (`logout_tokens`), then ends **every session of that person**
-and audits `auth.backchannel_logout`. It answers `200`, or `400 { error: "invalid_request" }`, with
-`Cache-Control: no-store`.
+(it keeps no `sid`) and no `nonce`, then ends **every session of that person created before the token's `iat`** (to the
+second `iat` names: it has no finer grain, and ending one session too many is the safe side) and audits
+`auth.backchannel_logout`. It answers `200`, or `400 { error: "invalid_request" }`, with `Cache-Control: no-store`.
 
-**Retries.** If Landledger's `200` is lost, Landbright posts the same token again (up to 10 times). The token is
-verified first; a verified token whose `jti` was already processed answers `200` again, ends nothing (a session the
-person opened since stays) and is audited as `auth.backchannel_logout_replay`, never as a second logout. A reused `jti`
-on a token that fails verification, or on a token for another subject, is still `400`.
+**What Landbright sends.** Landbright signs every delivery attempt afresh: each carries a new random `jti` (a UUID) and a
+new `iat` (`logoutClaims` in Landbright's `apps/control/src/logout/logout-sender.ts`). It retries with backoff (5
+seconds, doubling, at most an hour apart) until Landledger answers `200`, up to 10 attempts. So Landledger never sees a
+repeated `jti` from Landbright: a retry is a new token, and it is just another logout.
+
+**One rule, idempotent.** Every validly signed token ends the person's sessions created before its `iat`; a second token
+for the same sign-out finds nothing more to end, and a session the person signed in after the token was issued stays. A
+`jti` already processed (`logout_tokens`) still answers `200`, still applies that rule, and is audited as
+`auth.backchannel_logout_replay` instead (with whether it was the same token, by hash, and the first sighting). Each
+token's SHA-256 and `iat` are kept in `logout_tokens` for the audit, never the token. A row kept before the hash was (or
+with no `sub`) is just an earlier sighting: its retry answers `200`, never `400` (review of wave 3, should-fix 12). A
+token that fails verification is `400`, whatever its `jti`.
 
 Register with Landbright as the client's `backchannel_logout_uri`: `http://localhost:4811/api/auth/backchannel-logout`
 (through the console's proxy, as the redirect URI is), or `http://127.0.0.1:4810/api/auth/backchannel-logout` straight
