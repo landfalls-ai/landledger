@@ -400,9 +400,7 @@ export class Close {
   }
 
   /** The gates for the accrual (spec 013): steps 1–6 each done or explained. */
-  async gates(
-    month: string,
-  ): Promise<{
+  async gates(month: string): Promise<{
     ok: boolean;
     problems: string[];
     gates: Array<{ key: CloseStepKey; state: CloseStepView['state']; summary: string }>;

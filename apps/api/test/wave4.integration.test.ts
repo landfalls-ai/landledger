@@ -265,7 +265,10 @@ describe.skipIf(!integrationEnabled('db'))('wave 4: month-end', () => {
     // The journal entry: balanced, debit expense by P&L class and cost center, credit accrued liabilities.
     const j = await as('tal', 'GET', `/api/accruals/journal.csv?month=${OCT}`);
     expect(j.headers['content-type']).toMatch(/text\/csv/);
-    const rows = j.body.replace(/^\uFEFF/, '').trim().split(/\r?\n/);
+    const rows = j.body
+      .replace(/^\uFEFF/, '')
+      .trim()
+      .split(/\r?\n/);
     expect(rows[0]).toBe(
       'journal_date,entry,line,account,account_name,debit,credit,currency,cost_center,pl_class,memo',
     );

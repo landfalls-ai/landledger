@@ -376,9 +376,7 @@ export class Datarails {
   // Actuals out ----------------------------------------------------------------------------------------------------------
 
   /** The files step 9 uploads: actuals by cost center from the snapshot, the accepted notes, the snapshot itself. */
-  async files(
-    month: string,
-  ): Promise<{
+  async files(month: string): Promise<{
     snapshotId: string;
     snapshotSha256: string;
     files: Array<{ name: string; body: string; rows: number }>;
