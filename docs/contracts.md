@@ -20,6 +20,7 @@ whole value and term, and approves a seat on a contract as a request before Land
 | Renewal date, notice days | `noticeCalendarDate` = renewal − notice days; `noticeDate`, the one acted on, is the last business day on or before it (`LANDLEDGER_BUSINESS_DAYS`, `LANDLEDGER_HOLIDAYS`) |
 | Covered | An `entered` contract an approved contract request covers (its origin request, or one for the vendor and product with a TCV at least as high); if not, it is on the exceptions report |
 | Auto-renew | Whether it renews itself (default true) |
+| Billing | `monthly_in_arrears` (default), `monthly_in_advance` or `prepaid_annual`: how the vendor bills, which decides what the month-end accrual does with it ([below](#billing-terms)) |
 | Landbright app | The app in Landbright a seat on this contract grants (optional): how Landflow finds the contract for an access request |
 | Origin | `entered`, `dev-fixture` (labelled _dev fixture_ everywhere) or `request` (made by an approved contract request) |
 
@@ -33,8 +34,11 @@ audited `contract.imported` or `contract.reimported`.
 imports; 403). The header:
 
 ```
-vendor,product,cost_center,tcv,currency,term_start,term_end,seats_paid,seats_used,renewal_date,notice_days[,auto_renew,landbright_app,seats_used_as_of]
+vendor,product,cost_center,tcv,currency,term_start,term_end,seats_paid,seats_used,renewal_date,notice_days[,auto_renew,landbright_app,seats_used_as_of,billing]
 ```
+
+`billing` is optional; an empty cell, or a file without the column, is `monthly_in_arrears`. A new version without it
+keeps the contract's terms.
 
 `seats_used_as_of` (a date, not after today, only with `seats_used`) is the day the seats-used figure was taken: seats
 Landledger saw granted after it are added, and ones granted before it are not counted twice (should-fix 5). Without
@@ -86,6 +90,19 @@ TCV is not held against any month's budget. Instead the contract is recorded as 
 contract or, with `contractId`, a new version of the one it renews): term from `start` for `termMonths`, renewal the
 day after the term ends, the seats paid, none used yet. Audited `contract.from_request`.
 
+## Billing terms
+
+Review of wave 4, should-fix 12; [plan.md](plan.md), Decision 11, a default to confirm with Finance per vendor. The
+month-end accrual ([accruals.md](accruals.md#the-proposal)) reads them:
+
+| Billing | The month-end accrual |
+|---|---|
+| `monthly_in_arrears` | Accrues the month's value as a liability until the vendor's invoice for the month posts; net of the vendor's own AI usage lines when it is also an AI provider |
+| `prepaid_annual` | Amortises the month's value as a prepaid expense line, reported apart from the liability |
+| `monthly_in_advance` | Nothing: the month was invoiced before it began |
+
+`GET /api/contracts` carries each contract's terms (`ContractView.billing`).
+
 ## A seat (tool or seat)
 
 Kind `tool_or_seat`, with `seat: { contractId, seats (1–100, default 1), seatPrice }`. The amount must be seats ×
@@ -97,11 +114,14 @@ contract is never approved by policy, whatever its amount: a person decides it.
   left after this request, the seat price asked and the contract's own, and a note when none is left: _No seat is
   left on Linear Business: approving buys a seat beyond the contract (40 paid)_. The approver decides with that in
   front of them.
-- **On approval:** the seats are reserved on the contract (`seat_reservations`, `reserved`) and **no money** (wave 4,
-  [spec 020](../specs/020-seat-within-contract/spec.md)): the contract's value is already in the forecast as
-  _contracted_, so the seat price would count twice. Until Landbright prices seats, the request's amount shows as
-  _within contract_ (`RequestSummary.withinContract`): it adds nothing to the evidence, budgets, commitments or the
-  year ahead, and `POST /api/reservations` for it is a 409. `request.decided` carries `request.seat` (`{ contractId, vendor, product, seats,
+- **On approval:** the seats are reserved on the contract (`seat_reservations`, `reserved`). Seats the contract still
+  has paid and free reserve **no money** (wave 4, [spec 020](../specs/020-seat-within-contract/spec.md)): the
+  contract's value is already in the forecast as _contracted_, so the seat price would count twice. Such a request
+  shows as _within contract_ (`RequestSummary.withinContract`): it adds nothing to the evidence, budgets, commitments
+  or the year ahead, and `POST /api/reservations` for it is a 409.
+- **Seats beyond the contract** (review of wave 4, should-fix 14) reserve money: the seats no paid seat covers
+  (`seat.beyond`, counted when the request is made and again as each approval lands) × the seat price a month, in
+  budgets, commitments and the year ahead. Such a request is not _within contract_. `request.decided` carries `request.seat` (`{ contractId, vendor, product, seats,
   seatPrice, status }`) so Landflow can answer Landbright without another call.
 - **On applied** (`POST /api/requests/:id/applied`, after Landbright granted): the reservation is `applied` and counts
   as used.

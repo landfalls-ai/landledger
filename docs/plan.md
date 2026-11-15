@@ -152,14 +152,23 @@ Each wave ends with something finance can use, checked live, with screenshots at
     - **November, dry run.** Steps 1 (the month hasn't ended) and 5 (6 anomalies still open) are red.
     - **Budget pull.** _Budget FY27_ was pulled from fake-datarails (28 rows, December 2026 to March 2027,
       $1,741.50) and left pending.
+  - **Review of wave 4 (15 Nov 2026).** A Fable review found four blockers and 18 should-fixes. Fixed: B1–B4,
+    should-fix 1–14 and the nits; should-fix 15–18 are Landflow's flows, left to Landflow. What it added:
+    - a journal frozen at acceptance, with entry ids, a chart-of-accounts mapping changed only by request, and an
+      accrual roll-forward with aging ([accruals.md](accruals.md#the-journal));
+    - signatures bound to the snapshot each signer was shown, a package stored and hashed per lock round, and a
+      segregation-of-duties rule ([close.md](close.md#the-four-eyes-lock));
+    - contract billing terms (Decision 11) and a reopen that waits for the CFO.
+    October 2026 was reopened and re-closed by named people (round 1; [history.md](history.md)).
   - **Not yet:** Landlens's cost per workload (still open; Explore's `GET /api/spend` already groups by namespace and
-    workload), Landflow's notes and incident-cost flows (Landflow's to build, integrations.md), a real Datarails
-    tenant (wave 5).
+    workload), Landflow's notes and incident-cost flows (Landflow's to build, integrations.md), who approved each
+    explanation, a cutoff statement, and our own FP&A product (wave 5).
 
-### Wave 5 · Real systems (your decision, one at a time)
+### Wave 5 · Our own FP&A, and real systems (your decision, one at a time)
 
-A real Datarails tenant; SaaS invoices from an inbox; cloud bills as FOCUS exports if the company runs in a cloud.
-Each sends data outside this machine.
+Our own FP&A product (to be proposed), fed by Landledger: budgets, forecasts, variance and board reporting of the kind
+Datarails gives, built here instead of bought (Decision 4). Then SaaS invoices from an inbox, and cloud bills as FOCUS
+exports if the company runs in a cloud. Each real system sends data outside this machine.
 
 ## Changes in the siblings
 
@@ -197,8 +206,10 @@ The user said "start everything, don't wait for me", so the proposed defaults st
 3. **Rate card v1:** a blended internal rate, owned by finance and editable through a request: USD 0.034 per
    vCPU-hour, 0.0045 per GiB-hour of memory, 0.10 per GB-month of storage, 0.02 per GB of network egress. AI tokens are
    priced from the providers' list prices, as Landflow's price table carries them.
-4. **Datarails:** no tenant yet. Budgets are kept in Landledger (CSV import). The Datarails connector is built
-   against `fake-datarails` in wave 4.
+4. **Datarails (rewritten 15 Nov 2026):** we build our own FP&A product, fed by Landledger, rather than connect to a
+   Datarails tenant. Why: the user has no Datarails account and wants to copy its capabilities rather than buy them.
+   Budgets stay in Landledger (CSV import). The connector built in wave 4 and `fake-datarails` stay working, as the
+   contract any FP&A system (ours or Datarails) would take: actuals, notes and the snapshot out, budgets in.
 5. **Repository:** public in landfalls-ai, like the other land projects, scanned for secrets before every push.
 6. **Currency:** one reporting currency, USD.
 7. **Business days (15 Nov 2026, a default to confirm):** approval deadlines count Sunday to Thursday in
@@ -211,3 +222,15 @@ The user said "start everything, don't wait for me", so the proposed defaults st
 9. **Contract policy (15 Nov 2026, a default to confirm):** a `contract` request is approved for its total contract
    value and term, never automatically: the budget owner and Finance always, the CFO above USD 25,000 of TCV (policy
    `pol_contract_1`). Seats are its reservation unit.
+10. **Segregation of duties at the close (15 Nov 2026):** besides the CFO, at least two different people take part in
+    a round: among whoever started the close, accepted the accrual and signs as controller, there are at least two.
+    FP&A may start a close (or a reopened round), so a controller who accepts the accrual and signs needs FP&A, or a
+    second controller, to start it. Accounts that look like services (Administrator, bots) start, accept and sign
+    nothing ([close.md](close.md#segregation-of-duties)).
+11. **Contract accrual policy (15 Nov 2026, a default to confirm):** a contract carries its billing terms, one of
+    `monthly_in_arrears` (the default), `monthly_in_advance` or `prepaid_annual`. Only an in-arrears contract accrues
+    its month's value, as a liability, until its vendor's invoice for the month posts. A prepaid contract amortises its
+    month's value as a `prepaid` line, reported apart from the accrued liability (debit expense, credit prepaid
+    expenses). An in-advance contract was invoiced before the month and accrues nothing. When the vendor is also an AI
+    provider, the contract accrues net of that provider's usage lines, never below zero, so the same spend is never
+    accrued twice. Finance to confirm the terms per vendor ([contracts.md](contracts.md#billing-terms)).

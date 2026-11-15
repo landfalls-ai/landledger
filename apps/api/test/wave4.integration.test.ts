@@ -158,6 +158,12 @@ describe.skipIf(!integrationEnabled('db'))('wave 4: month-end', () => {
     });
   const closeOf = async (month = OCT) => (await as('yoav', 'GET', `/api/close?month=${month}`)).json() as CloseView;
   const step = (c: CloseView, key: string) => c.steps.find((s) => s.key === key)!;
+  // Review of wave 4 (should-fix 1): a signer opens the close (which records that they were shown the snapshot) and
+  // signs the snapshot it shows.
+  const sign = async (who: Who, body: Record<string, unknown> = {}) => {
+    const c = (await as(who, 'GET', `/api/close?month=${OCT}`)).json() as CloseView;
+    return as(who, 'POST', `/api/close/${OCT}/lock`, { snapshotSha256: c.snapshot?.sha256 ?? null, ...body });
+  };
 
   it('shows an open month as a dry run, and a person starts its close once it ended (spec 012)', async () => {
     const dry = await closeOf();
@@ -177,10 +183,15 @@ describe.skipIf(!integrationEnabled('db'))('wave 4: month-end', () => {
         .statusCode,
     ).toBe(409);
     expect((await as('tal', 'POST', `/api/close/${OCT}/start`, {})).statusCode).toBe(403);
-    expect((await as('michal', 'POST', `/api/close/${OCT}/start`, {})).statusCode).toBe(403);
-    const started = await as('yoav', 'POST', `/api/close/${OCT}/start`, { note: 'October close' });
+    // Review of wave 4: FP&A starts the close (no money moves); the duties rule counts the starter.
+    const started = await as('michal', 'POST', `/api/close/${OCT}/start`, { note: 'October close' });
     expect(started.statusCode).toBe(200);
-    expect(started.json()).toMatchObject({ status: 'closing', dryRun: false });
+    expect(started.json()).toMatchObject({
+      status: 'closing',
+      dryRun: false,
+      duties: { startedBy: people.michal.email },
+    });
+    expect((await as('yoav', 'POST', `/api/close/${OCT}/start`, {})).statusCode).toBe(409);
   });
 
   it('computes the gates and takes explanations, never for step 4 or 10 (spec 012)', async () => {
@@ -270,12 +281,17 @@ describe.skipIf(!integrationEnabled('db'))('wave 4: month-end', () => {
       .trim()
       .split(/\r?\n/);
     expect(rows[0]).toBe(
-      'journal_date,entry,line,account,account_name,debit,credit,currency,cost_center,pl_class,memo',
+      'entry_id,line,journal_date,kind,gl_account,gl_name,account,account_name,debit,credit,currency,cost_center,pl_class,memo,frozen,coa_version',
     );
     const sum = (col: number) =>
       rows.slice(1).reduce((t, r) => t.plus(Money.parse(r.split(',')[col] || '0', 'USD')), Money.zero('USD'));
-    expect(sum(5).equals(sum(6))).toBe(true);
-    expect(rows.some((r) => r.includes('LIAB-ACCRUED'))).toBe(true);
+    expect(sum(8).equals(sum(9))).toBe(true);
+    // Frozen at acceptance (review of wave 4): entry ids, the GL account by the default mapping, the accepted total.
+    expect(rows.some((r) => r.startsWith(`JE-${OCT}-0001,`) && r.includes('2150,') && r.includes('LIAB-ACCRUED'))).toBe(
+      true,
+    );
+    expect(rows.every((r, i) => i === 0 || r.endsWith(',true,1'))).toBe(true);
+    expect(sum(8).equals(Money.parse(p.total, 'USD').posted())).toBe(true);
     // Step 7 is done; a second proposal is refused while the snapshot holds.
     expect(step(await closeOf(), 'accrual_accepted').state).toBe('done');
     expect((await as('michal', 'POST', `/api/accruals/${OCT}/propose`, {})).statusCode).toBe(409);
@@ -428,13 +444,13 @@ describe.skipIf(!integrationEnabled('db'))('wave 4: month-end', () => {
     const before = await closeOf();
     expect(before.next).toBe('locked');
     expect(step(before, 'locked').state).toBe('red');
-    expect((await as('michal', 'POST', `/api/close/${OCT}/lock`, {})).statusCode).toBe(403);
-    const first = await as('yoav', 'POST', `/api/close/${OCT}/lock`, { note: 'checked' });
-    expect(first.statusCode).toBe(200);
+    expect((await sign('michal')).statusCode).toBe(403);
+    const first = await sign('yoav', { note: 'checked' });
+    expect(first.statusCode, first.body).toBe(200);
     expect(first.json()).toMatchObject({ locked: false, waitingFor: ['cfo'], anchor: null });
-    expect((await as('yoav', 'POST', `/api/close/${OCT}/lock`, {})).statusCode).toBe(409); // same person
-    expect((await as('roni', 'POST', `/api/close/${OCT}/lock`, {})).statusCode).toBe(409); // two controllers
-    const second = await as('dana', 'POST', `/api/close/${OCT}/lock`, {});
+    expect((await sign('yoav')).statusCode).toBe(409); // same person
+    expect((await sign('roni')).statusCode).toBe(409); // two controllers
+    const second = await sign('dana');
     expect(second.statusCode).toBe(200);
     const r = second.json();
     expect(r.locked).toBe(true);
@@ -443,11 +459,19 @@ describe.skipIf(!integrationEnabled('db'))('wave 4: month-end', () => {
     expect(r.anchor.seq).toBeGreaterThanOrEqual(r.close.locks[0].auditSeq);
     lockAnchor = r.anchor;
     const [entry] = await sql`SELECT data FROM audit_log WHERE action = 'period.locked'`;
-    expect(entry!.data).toMatchObject({ round: 0, checks: 'four-eyes', snapshotSha256: snapshotSha });
+    expect(entry!.data).toMatchObject({
+      round: 0,
+      checks: 'four-eyes',
+      snapshotSha256: snapshotSha,
+      packageSha256: r.close.locks[0].packageSha256,
+    });
+    expect(r.close.locks[0].signoffs.every((s: { snapshotSha256: string }) => s.snapshotSha256 === snapshotSha)).toBe(
+      true,
+    );
     const verify = (await as('tal', 'GET', '/api/audit/verify')).json();
     expect(verify).toMatchObject({ ok: true, truncated: false });
     // Locked: the checklist is as recorded; nothing more is explained, drafted or signed.
-    expect((await as('yoav', 'POST', `/api/close/${OCT}/lock`, {})).statusCode).toBe(409);
+    expect((await sign('yoav')).statusCode).toBe(409);
     expect(
       (await as('michal', 'POST', `/api/close/${OCT}/explain`, { step: 'unallocated', note: 'late' })).statusCode,
     ).toBe(409);
@@ -462,6 +486,8 @@ describe.skipIf(!integrationEnabled('db'))('wave 4: month-end', () => {
   it('builds the month-end package: JSON, a printable page and a zip with a manifest (spec 018)', async () => {
     const pkg = (await as('tal', 'GET', `/api/close/${OCT}/package`)).json();
     expect(pkg).toMatchObject({ month: OCT, status: 'locked', snapshot: { sha256: snapshotSha } });
+    // Served as stored at the lock (review of wave 4, should-fix 5): its manifest's hash is the lock's.
+    expect(pkg.stored).toMatchObject({ round: 0, sha256: pkg.close.locks[0].packageSha256 });
     expect(pkg.chain).toMatchObject({ ok: true, anchor: { seq: lockAnchor!.seq } });
     expect(pkg.notes.every((n: { status: string }) => n.status === 'accepted')).toBe(true);
     expect(pkg.uploads).toHaveLength(1);
@@ -521,7 +547,32 @@ describe.skipIf(!integrationEnabled('db'))('wave 4: month-end', () => {
       expect(d.statusCode, d.body).toBe(201);
       expect(d.json().request.status, d.body).toBe('applied');
       let c = await closeOf();
-      expect(c).toMatchObject({ status: 'locked', reopened: true });
+      expect(c).toMatchObject({ status: 'locked', reopened: true, roundStarted: false });
+      // The round is started again: FP&A starts it, so the controller may accept and sign (the duties rule).
+      expect((await as('michal', 'POST', `/api/close/${OCT}/start`, {})).statusCode).toBe(200);
+      c = await closeOf();
+      // Steps 2 and 5 run again in the round (should-fix 4): what they show now is explained again in this round.
+      for (const row of step(c, 'reconciled').rows ?? [])
+        if (!row.ok && !row.explained)
+          expect(
+            (
+              await as('michal', 'POST', `/api/close/${OCT}/explain`, {
+                step: 'reconciled',
+                rowKey: row.key,
+                note: 'Reconciled again in the reopened round',
+              })
+            ).statusCode,
+          ).toBe(200);
+      if (step(await closeOf(), 'no_open_anomalies').state === 'red')
+        expect(
+          (
+            await as('michal', 'POST', `/api/close/${OCT}/explain`, {
+              step: 'no_open_anomalies',
+              note: 'Late calls, reviewed in the reopened round',
+            })
+          ).statusCode,
+        ).toBe(200);
+      c = await closeOf();
       if (step(c, 'accrual_accepted').state !== 'done') {
         // The reconciliation moved (an invoice came): the accrual is accepted again, the notes and the upload redone.
         const p = (await as('michal', 'POST', `/api/accruals/${OCT}/propose`, {})).json();
@@ -535,8 +586,8 @@ describe.skipIf(!integrationEnabled('db'))('wave 4: month-end', () => {
         c = await closeOf();
       }
       expect(c.steps.slice(0, 9).every((s) => s.state === 'done' || s.state === 'explained')).toBe(true);
-      expect((await as('yoav', 'POST', `/api/close/${OCT}/lock`, {})).json().locked).toBe(false);
-      const l = await as('dana', 'POST', `/api/close/${OCT}/lock`, {});
+      expect((await sign('yoav')).json().locked).toBe(false);
+      const l = await sign('dana');
       expect(l.json()).toMatchObject({ locked: true, close: { round: c.round, reopened: false } });
     };
     type Op = { t: 'late' } | { t: 'import' } | { t: 'void' } | { t: 'relock' };

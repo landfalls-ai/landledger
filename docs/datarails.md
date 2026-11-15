@@ -6,8 +6,10 @@ directions:
 - **Budgets in.** Budgets are read over MCP and become a pending change that a person accepts.
 - **Actuals and notes out.** These are sent through the FileBox upload API.
 
-Wave 4 builds the connector only against `fake-datarails`, which runs on this machine. A real tenant is wave 5 and
-your decision.
+Wave 4 builds the connector only against `fake-datarails`, which runs on this machine. There is no Datarails tenant:
+the user has no account and wave 5 builds our own FP&A product, fed by Landledger, instead ([plan.md](plan.md),
+Decision 4). The connector and the fake stay working, as the contract an FP&A system takes: actuals, notes and the
+snapshot out, budgets in.
 
 | What | Where |
 |---|---|
@@ -17,8 +19,13 @@ your decision.
 
 ## A real tenant stays off
 
-The connector refuses any host that isn't loopback (127.0.0.1, ::1, localhost). The refusal is a 503 that names wave
-5. It is lifted only by setting `LANDLEDGER_DATARAILS_REAL=true`.
+The connector refuses any host that isn't loopback: only `127.0.0.1` and `::1`, exactly (review of wave 4,
+should-fix 9). `localhost` is refused too, since what it resolves to depends on the machine's resolver; IPv6-mapped
+addresses, userinfo and look-alike names never matched. The refusal is a 503. It is lifted only by setting
+`LANDLEDGER_DATARAILS_REAL=true`.
+
+**No call follows a redirect** (`redirect: 'error'`): a loopback listener answering 307 can't send the snapshot and
+notes elsewhere. The MCP calls and the upload both fail instead.
 
 The development credentials are the default only when both URLs are loopback. A remote URL needs its own
 `LANDLEDGER_DATARAILS_*` settings ([reference/env.md](reference/env.md)).
@@ -66,7 +73,8 @@ The pull is stored as **pending**, with:
 - its total;
 - a preview against the budget in effect now.
 
-Rows that repeat a cost center and month are refused with 422 and _name a scenario_.
+Rows that repeat a cost center and month are refused with 422 and _name a scenario_. A pull reads at most 5,000 rows;
+one that reaches the limit, or whose answer says it holds more rows than it sent, is refused rather than kept cut short.
 
 A pending pull changes nothing until a controller or the CFO decides on it.
 
@@ -81,7 +89,7 @@ A pending pull changes nothing until a controller or the CFO decides on it.
 
 | File | Holds |
 |---|---|
-| `landledger-actuals-<month>.csv` | Per cost center: `estimated`, `invoiced`, `notional` (cluster cost from Clickland, never actuals), `total`, the accepted `accrual`, `budget`, `currency`, and the snapshot's sha256 on every row |
+| `landledger-actuals-<month>.csv` | Per cost center: `cost_center`, `cost_center_name`, `period`, `invoiced`, `estimated`, **`total_excl_notional`** (invoiced plus estimated: the one figure to book), then memos a mapping never adds: `memo_notional_not_booked` (cluster cost from Clickland, never actuals), `memo_accrual_in_total` (the accepted accrual, already inside `estimated`) and `memo_prepaid_amortised`; then `budget`, `currency` and the snapshot's sha256 on every row (review of wave 4, should-fix 13) |
 | `landledger-notes-<month>.csv` | The accepted variance notes: cost center, version, who accepted it and when, the snapshot's sha256, the text |
 | `landledger-snapshot-<month>.json` | The snapshot's canonical JSON |
 

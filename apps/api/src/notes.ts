@@ -19,7 +19,7 @@ import type { AuditLog } from './audit.js';
 import { day as dayOf, type Sql, type Tx } from './db.js';
 import { ApiError, notFound } from './errors.js';
 import { newId } from './ids.js';
-import { actorOf, type Principal } from './principal.js';
+import { actorOf, type Principal, refuseServiceLike } from './principal.js';
 import type { Snapshots } from './snapshot.js';
 import type { Webhooks } from './webhooks.js';
 
@@ -57,6 +57,8 @@ export function citedValue(f: NoteFigures, c: Pick<NoteCite, 'figure' | 'key'>):
   switch (c.figure) {
     case 'actual':
       return f.actual;
+    case 'notional':
+      return f.notional;
     case 'budget':
       return f.budget;
     case 'forecast_day10':
@@ -85,12 +87,45 @@ export function checkCites(f: NoteFigures, cites: readonly NoteCite[]): string[]
   return out;
 }
 
+/**
+ * The amounts a note's text states (`$1,234.56`, `−$12.00`, `+$3`, `USD 40.00`, `40.00 USD`), as decimal strings
+ * without their sign. Percentages and counts are not amounts.
+ */
+export function amountsIn(text: string): string[] {
+  const out: string[] = [];
+  const num = '(\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.(\\d{1,6}))?';
+  const patterns = [
+    new RegExp(`\\$\\s?${num}`, 'g'),
+    new RegExp(`\\bUSD\\s?${num}`, 'g'),
+    new RegExp(`(?<![$\\d.,])${num}\\s?(?:USD|dollars?)\\b`, 'gi'),
+  ];
+  for (const re of patterns)
+    for (const m of text.matchAll(re)) out.push(`${m[1]!.replace(/,/g, '')}${m[2] ? `.${m[2]}` : ''}`);
+  return out;
+}
+
+/**
+ * Should-fix 8 (review of wave 4): every amount the text states must be one the note cites, to the cent (sign aside,
+ * since text says "−$12.00" or "down $12.00"). Returns the amounts that aren't, in words.
+ */
+export function uncitedAmounts(text: string, cites: readonly NoteCite[]): string[] {
+  const cited = cites.map((c) => Money.parse(c.amount, USD).posted().abs());
+  return amountsIn(text)
+    .filter((a) => !cited.some((c) => c.equals(Money.parse(a, USD).posted().abs())))
+    .map((a) => `$${a} is stated in the text but no cite carries it`);
+}
+
 /** The deterministic draft for a note: the same figures, in the same words, every time. */
 export function templateNote(f: NoteFigures, month: string): { text: string; cites: NoteCite[] } {
   const cites: NoteCite[] = [{ figure: 'actual', amount: f.actual }];
   const parts: string[] = [];
   const who = f.costCenter === 'TOTAL' ? `Technology and AI spend` : `${f.name} (${f.costCenter})`;
   let s = `${who} came to ${usd(f.actual)} in ${monthLabel(month)}`;
+  // Should-fix 13: the notional cluster cost inside the figure is named, since it is never booked.
+  if (f.notional !== undefined && !Money.parse(f.notional, USD).posted().isZero()) {
+    cites.push({ figure: 'notional', amount: f.notional });
+    s += ` (of which ${usd(f.notional)} is notional cluster cost, never booked)`;
+  }
   if (f.budget !== null && f.varianceBudget !== null) {
     cites.push({ figure: 'budget', amount: f.budget }, { figure: 'variance_budget', amount: f.varianceBudget });
     s += `, against a budget of ${usd(f.budget)} (${signedUsd(f.varianceBudget)}${f.varianceBudgetPct ? `, ${f.varianceBudgetPct}%` : ''})`;
@@ -102,9 +137,9 @@ export function templateNote(f: NoteFigures, month: string): { text: string; cit
       { figure: 'variance_forecast', amount: f.varianceForecast },
     );
     parts.push(
-      `The forecast on day 10 was ${usd(f.forecastDay10)}; the month ended ${signedUsd(f.varianceForecast)} from it.`,
+      `The last forecast stored by day 10 was ${usd(f.forecastDay10)}; the month ended ${signedUsd(f.varianceForecast)} from it.`,
     );
-  } else parts.push('No forecast was stored on day 10 of the month.');
+  } else parts.push('No forecast was stored by day 10 of the month.');
   if (f.drivers.length) {
     const ds = f.drivers.slice(0, 4).map((d) => {
       cites.push({ figure: `driver_${d.dimension}` as NoteCite['figure'], key: d.key, amount: d.change });
@@ -129,6 +164,7 @@ type VersionRow = {
   written_by_name: string;
   agent: { id: string; name: string; system: string } | null;
   sponsor_id: string | null;
+  minter_id: string | null;
   sponsor_name: string | null;
   sponsor_email: string | null;
   created_at: Date;
@@ -205,14 +241,33 @@ export class Notes {
       );
     const f = s.figures.notes.find((n) => n.costCenter === input.costCenter);
     if (!f) throw new ApiError('bad_request', `${month} needs no note for ${input.costCenter}`);
-    const mismatches = checkCites(f, input.cites);
+    const mismatches = [
+      ...(input.cites.length ? [] : ['a draft cites at least one figure of the snapshot']),
+      ...checkCites(f, input.cites),
+      ...uncitedAmounts(input.text, input.cites),
+    ];
     if (mismatches.length)
       throw new ApiError(
         'unprocessable',
         `The draft cites ${mismatches.length} figure(s) the snapshot doesn't hold: ${mismatches.join('; ')}`,
         { mismatches },
       );
-    let sponsorId: string | null = null;
+    // Review of wave 4, B3: the person who minted the key is always barred from deciding its drafts; a sponsor the
+    // draft declares is barred as well, never instead. A key whose minter isn't a person here drafts nothing.
+    let minterId: string | null = null;
+    if (by.kind === 'key') {
+      const [u] = await this.sql<{ id: string }[]>`
+        SELECT u.id FROM api_keys k
+        JOIN users u ON u.kind = 'person' AND (u.id = k.created_by_user OR (k.created_by_user IS NULL AND lower(u.email) = lower(k.created_by)))
+        WHERE k.id = ${by.id} LIMIT 1`;
+      if (!u)
+        throw new ApiError(
+          'forbidden',
+          "This key's minter is not a person in Landledger: nobody could be barred from deciding its drafts",
+        );
+      minterId = u.id;
+    }
+    let sponsorId: string | null = minterId;
     if (input.sponsor?.email || input.sponsor?.sub) {
       const [u] = await this.sql<{ id: string }[]>`
         SELECT id FROM users WHERE kind = 'person' AND active AND deleted_at IS NULL
@@ -220,21 +275,28 @@ export class Notes {
           AND (${input.sponsor.sub ?? null}::text IS NULL OR subject = ${input.sponsor.sub ?? ''})`;
       if (!u) throw new ApiError('bad_request', 'The sponsor is not an active person in Landledger');
       sponsorId = u.id;
-    } else if (by.kind === 'key') {
-      const [u] = await this.sql<{ id: string }[]>`
-        SELECT u.id FROM api_keys k JOIN users u ON lower(u.email) = lower(k.created_by) AND u.kind = 'person'
-        WHERE k.id = ${by.id}`;
-      sponsorId = u?.id ?? null;
     }
     const id = await this.sql.begin(async (tx) => {
       const noteId = await this.noteFor(tx, month, input.costCenter);
       const version = await this.nextVersion(tx, noteId);
+      // Should-fix 7: a note accepted on the current snapshot is final for that snapshot; a new draft can't un-accept
+      // it (a key is bound to no month). A new snapshot (a new accrual) asks for drafts again.
+      const [last] = await tx<{ outcome: string | null; snapshot_id: string }[]>`
+        SELECT v.snapshot_id, d.outcome FROM variance_note_versions v
+        LEFT JOIN variance_note_decisions d ON d.note_id = v.note_id AND d.version = v.version
+        WHERE v.note_id = ${noteId} ORDER BY v.version DESC LIMIT 1`;
+      if (last?.outcome === 'accepted' && last.snapshot_id === s.id)
+        throw new ApiError(
+          'conflict',
+          `The ${input.costCenter} note is accepted on ${month}'s current snapshot: it takes no new draft`,
+        );
       await tx`
         INSERT INTO variance_note_versions (note_id, version, snapshot_id, kind, body, cites, written_by,
-                                            written_by_kind, written_by_name, agent, sponsor_id, run_id)
+                                            written_by_kind, written_by_name, agent, sponsor_id, run_id, minter_id)
         VALUES (${noteId}, ${version}, ${s.id}, 'draft', ${input.text}, ${tx.json(input.cites as never)}, ${by.id},
                 ${by.kind === 'person' ? 'person' : 'key'}, ${by.email ?? by.name},
-                ${input.agent ? tx.json(input.agent as never) : null}, ${sponsorId}, ${input.runId ?? null})`;
+                ${input.agent ? tx.json(input.agent as never) : null}, ${sponsorId}, ${input.runId ?? null},
+                ${minterId})`;
       await this.audit.append(
         {
           ...actorOf(by),
@@ -303,6 +365,7 @@ export class Notes {
     if (by.kind !== 'person') throw new ApiError('forbidden', `A person ${verb} a note; an agent's key never does`);
     if (!by.roles.some((r) => r === 'fpa' || r === 'controller'))
       throw new ApiError('forbidden', `An analyst (FP&A or a controller) ${verb} a note`);
+    refuseServiceLike(by, `${verb} a note`);
     const [n] = await this.sql<NoteRow[]>`SELECT * FROM variance_notes WHERE id = ${id}`;
     if (!n) throw notFound('Note');
     const month = dayOf(n.month).slice(0, 7);
@@ -317,6 +380,8 @@ export class Notes {
       throw new ApiError('conflict', "This draft cites a snapshot that isn't the month's current one: draft it again");
     if (latest.sponsor_id === by.id)
       throw new ApiError('forbidden', 'You sponsor the agent that drafted this note: another analyst decides it');
+    if (latest.minter_id === by.id)
+      throw new ApiError('forbidden', 'You minted the key that drafted this note: another analyst decides it');
     if (latest.written_by_kind === 'person' && latest.written_by === by.id)
       throw new ApiError('forbidden', 'You wrote this version: another analyst decides it');
     return { n, month, latest, s };
@@ -328,16 +393,25 @@ export class Notes {
     by: Principal,
   ): Promise<NoteView> {
     const { n, month, latest, s } = await this.decideCheck(id, input.version, by, 'accepts');
+    // Should-fix 8: edited text keeps the version's cites, so every amount it states must still be one of them.
+    const text = input.text && input.text.trim() !== latest.body.trim() ? input.text : latest.body;
+    const uncited = uncitedAmounts(text, latest.cites);
+    if (uncited.length)
+      throw new ApiError(
+        'unprocessable',
+        `The text states ${uncited.length} amount(s) no cite of this note carries: ${uncited.join('; ')}`,
+        { mismatches: uncited },
+      );
     await this.sql.begin(async (tx) => {
       let version = latest.version;
       if (input.text && input.text.trim() !== latest.body.trim()) {
         version = await this.nextVersion(tx, id);
         await tx`
           INSERT INTO variance_note_versions (note_id, version, snapshot_id, kind, body, cites, written_by,
-                                              written_by_kind, written_by_name, agent, sponsor_id)
+                                              written_by_kind, written_by_name, agent, sponsor_id, minter_id)
           VALUES (${id}, ${version}, ${s.id}, 'edit', ${input.text}, ${tx.json(latest.cites as never)}, ${by.id},
                   'person', ${by.email ?? by.name}, ${latest.agent ? tx.json(latest.agent as never) : null},
-                  ${latest.sponsor_id})`;
+                  ${latest.sponsor_id}, ${latest.minter_id})`;
       }
       await tx`
         INSERT INTO variance_note_decisions (note_id, version, outcome, decided_by, comment)
@@ -458,7 +532,8 @@ export class Notes {
     month: string,
   ): Promise<{ needed: number; accepted: string[]; missing: string[]; at: string | null; by: string | null }> {
     const s = await this.snapshots.latest(month);
-    if (!s) return { needed: 0, accepted: [], missing: [], at: null, by: null };
+    // A snapshot the lock froze (steps 7–9 explained) asked for no notes: step 8 reads as before it (review of wave 4).
+    if (!s || s.reason === 'lock') return { needed: 0, accepted: [], missing: [], at: null, by: null };
     const v = await this.list(month);
     const accepted: string[] = [];
     const missing: string[] = [];

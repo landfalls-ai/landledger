@@ -13,6 +13,7 @@ import type { Sql } from './db.js';
 import { ApiError } from './errors.js';
 import { sha256 } from './ids.js';
 import { rolesFromGroups } from './oidc.js';
+import { isServiceLike } from './owners.js';
 
 /** Who is calling: a person (a console session), an API key, the bootstrap key, or the local developer. */
 export interface Principal {
@@ -176,4 +177,16 @@ export function meOf(p: Principal, config: Config): Me {
     scopes: p.scopes,
     authMode: config.devAuth ? 'dev' : 'oidc',
   };
+}
+
+/**
+ * Review of wave 4, should-fix 6: an account that looks like a service (admin@, Administrator, a bot) never signs a
+ * lock, starts a close, or accepts an accrual or a note, as it never approves a request. A named person does.
+ */
+export function refuseServiceLike(by: Principal, what: string): void {
+  if (isServiceLike(by))
+    throw new ApiError(
+      'forbidden',
+      `${by.name} looks like a service account, not a named person: a named person ${what}`,
+    );
 }

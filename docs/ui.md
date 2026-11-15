@@ -109,22 +109,25 @@ Built in wave 4 as `/close` with tabs, the month in `?month=` (the last month th
   - the ten steps, each _Done_, _Explained_, _Red_ or _Waiting_, with its problems;
   - step 2 per provider and model, each row explained on its own;
   - _Explain…_ for a red step, which is never offered on steps 4 or 10;
-  - _Start the close_;
+  - _Start the close_ (a controller, the CFO or FP&A), and _Start round N_ on a reopened month;
   - the lock card, which shows:
-    - this round's signatures, and _Sign the lock as a controller / the CFO_;
-    - each lock with its audit entry and anchor hash;
+    - this round's signatures, each with the snapshot it signed and when its signer saw it, and _Sign the lock as a
+      controller / the CFO_ (which sends the snapshot's sha256 as shown);
+    - the duties line: who started the round, accepted the accrual and signed as controller;
+    - each lock with its audit entry, anchor hash and package sha256;
     - reopens, and a controller's _Ask to reopen_.
   - A month still open is a dry run with nothing to act on.
-- **Accruals** (`/close/accruals`): propose, accept as shown, each line with its basis and reversal, the journal-entry
-  CSV.
+- **Accruals** (`/close/accruals`): propose, accept as shown, each line with its basis and reversal (prepaid lines
+  apart from the liability); the frozen journal by entry with its GL accounts and the CSV; the roll-forward with
+  aging; the chart-of-accounts mapping, which a controller edits and proposes as a request.
 - **Variance notes** (`/close/notes`):
   - every version, with its agent, sponsor and cited figures;
   - _Accept_, _Edit…_ or _Reject_ for an analyst who isn't the sponsor;
   - _Draft from the template_ when no agent answered.
 - **Datarails** (`/close/datarails`): the connection, the month's uploads with each file's sha256, budget pulls pending
   a controller or the CFO.
-- **Package** (`/close/package`): the printable page, the zip, the snapshot, the chain proof, the decisions and the
-  files.
+- **Package** (`/close/package`): the printable page, the zip, the stored package (round, sha256, when and by whom),
+  the snapshot, the chain proof, the decisions and the files.
 
 ## Rates and rules (`#rules`)
 

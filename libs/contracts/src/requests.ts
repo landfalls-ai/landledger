@@ -42,6 +42,8 @@ export const RequestKind = z.enum([
   'contract',
   /** Wave 4 (spec 012): reopen a locked month; the CFO decides, Landledger applies it. */
   'period_reopen',
+  /** Review of wave 4: a chart-of-accounts mapping version; a controller or the CFO who didn't propose it decides. */
+  'coa_mapping_change',
 ]);
 export type RequestKind = z.infer<typeof RequestKind>;
 
@@ -55,6 +57,7 @@ export const REQUEST_KIND_LABEL: Readonly<Record<RequestKind, string>> = {
   other: 'Other',
   contract: 'Contract',
   period_reopen: 'Reopen a month',
+  coa_mapping_change: 'Chart-of-accounts mapping',
 };
 
 /** Kinds whose change Landledger applies itself when the last step approves (the others are applied by Landflow). */
@@ -63,6 +66,7 @@ export const SELF_APPLIED_KINDS: readonly RequestKind[] = [
   'rule_set_change',
   'policy_change',
   'period_reopen',
+  'coa_mapping_change',
 ];
 
 /**
@@ -188,6 +192,8 @@ export const RequestChange = z.discriminatedUnion('type', [
   z.object({ type: z.literal('policy'), policyId: z.string() }),
   /** Wave 4 (spec 012): reopen a locked month (`YYYY-MM`). */
   z.object({ type: z.literal('period_reopen'), month: z.string() }),
+  /** Review of wave 4: a chart-of-accounts mapping version (`coa_…`). */
+  z.object({ type: z.literal('coa_mapping'), versionId: z.string() }),
 ]);
 export type RequestChange = z.infer<typeof RequestChange>;
 
@@ -199,7 +205,13 @@ export type RequestChange = z.infer<typeof RequestChange>;
  */
 export const CreateRequestInput = z
   .object({
-    kind: RequestKind.exclude(['rate_card_change', 'rule_set_change', 'policy_change', 'period_reopen']),
+    kind: RequestKind.exclude([
+      'rate_card_change',
+      'rule_set_change',
+      'policy_change',
+      'period_reopen',
+      'coa_mapping_change',
+    ]),
     title: z.string().trim().min(3).max(200),
     /** The requester's why, in their words. */
     note: z.string().trim().max(4000).default(''),

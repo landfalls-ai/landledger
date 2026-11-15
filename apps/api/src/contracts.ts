@@ -51,7 +51,10 @@ const REQUIRED = [
   'renewal_date',
   'notice_days',
 ] as const;
-const OPTIONAL = ['auto_renew', 'landbright_app', 'seats_used_as_of'] as const;
+const OPTIONAL = ['auto_renew', 'landbright_app', 'seats_used_as_of', 'billing'] as const;
+/** How a contract bills (review of wave 4, should-fix 12, a default to confirm): monthly in arrears unless named. */
+export const BILLINGS = ['prepaid_annual', 'monthly_in_arrears', 'monthly_in_advance'] as const;
+export type Billing = (typeof BILLINGS)[number];
 /** A new contract, or a TCV raised by more than this, needs a second person (Decision 9's CFO line). */
 export const SECOND_PERSON_TCV = '25000';
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -125,6 +128,7 @@ export interface ParsedContract {
   noticeDays: number;
   autoRenew: boolean;
   landbrightApp: string | null;
+  billing: Billing;
 }
 
 /** Reads a contracts CSV: every problem by line (a bad file imports nothing); non-USD lines apart (422). */
@@ -178,6 +182,8 @@ export function parseContractCsv(
     if (asOf && !isDay(asOf)) p(`seats_used_as_of ${asOf} is not a date (YYYY-MM-DD)`);
     if (asOf && !usedText) p('seats_used_as_of goes with seats_used');
     if (asOf && today && isDay(asOf) && asOf > today) p(`seats_used_as_of ${asOf} is after today`);
+    const billing = (r.get('billing') || 'monthly_in_arrears').toLowerCase();
+    if (!(BILLINGS as readonly string[]).includes(billing)) p(`billing ${billing} is one of ${BILLINGS.join(', ')}`);
     if (problems.length) continue;
     const months = termMonths(termStart, termEnd);
     if (months > 120) {
@@ -200,6 +206,7 @@ export function parseContractCsv(
       noticeDays: notice!,
       autoRenew: auto !== 'false',
       landbrightApp: r.get('landbright_app') || null,
+      billing: billing as Billing,
     });
   }
   return { contracts: out, problems, currency };
@@ -222,6 +229,7 @@ interface VersionRow {
   notice_days: number;
   auto_renew: boolean;
   landbright_app: string | null;
+  billing: Billing;
   origin: 'entered' | 'dev-fixture' | 'request';
   request_id: string | null;
   imported_by_name: string;
@@ -356,6 +364,7 @@ export class Contracts {
       noticeCalendarDate: calendarNotice,
       autoRenew: r.auto_renew,
       landbrightApp: r.landbright_app,
+      billing: r.billing ?? 'monthly_in_arrears',
       seatsUsedAsOf:
         r.seats_used === null
           ? null
@@ -612,6 +621,7 @@ export class Contracts {
             renewalDate: c.renewalDate,
             ...(c.seatsUsed !== null ? { seatsUsed: c.seatsUsed } : {}),
             ...(c.seatsUsedAsOf ? { seatsUsedAsOf: c.seatsUsedAsOf } : {}),
+            billing: c.billing,
           },
         },
         by,
@@ -663,11 +673,12 @@ export class Contracts {
     await tx`
       INSERT INTO contract_versions (id, version, vendor, product, cost_center, tcv_micros, currency, term_start, term_end,
                                      term_months, seats_paid, seats_used, seats_used_as_of, renewal_date, notice_days,
-                                     auto_renew, landbright_app, origin, request_id, note, imported_by, imported_at)
+                                     auto_renew, landbright_app, billing, origin, request_id, note, imported_by,
+                                     imported_at)
       VALUES (${id}, ${version}, ${c.vendor}, ${c.product}, ${c.costCenter}, ${c.tcv.micros.toString()}, 'USD',
               ${c.termStart}, ${c.termEnd}, ${c.termMonths}, ${c.seatsPaid}, ${c.seatsUsed}, ${c.seatsUsedAsOf},
-              ${c.renewalDate}, ${c.noticeDays}, ${c.autoRenew}, ${c.landbrightApp}, ${c.origin}, ${c.requestId},
-              ${c.note}, ${c.by}, ${this.now()})`;
+              ${c.renewalDate}, ${c.noticeDays}, ${c.autoRenew}, ${c.landbrightApp}, ${c.billing}, ${c.origin},
+              ${c.requestId}, ${c.note}, ${c.by}, ${this.now()})`;
     return { id, version };
   }
 
@@ -814,6 +825,7 @@ export class Contracts {
         noticeDays: t.noticeDays,
         autoRenew: t.autoRenew,
         landbrightApp: t.landbrightApp ?? prev?.landbright_app ?? null,
+        billing: t.billing ?? prev?.billing ?? 'monthly_in_arrears',
         origin: 'request',
         requestId: r.id,
         note: `Approved request ${r.id}`,

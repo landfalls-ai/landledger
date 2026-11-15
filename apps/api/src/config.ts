@@ -102,7 +102,8 @@ export interface DatarailsConfig {
 export function isLoopbackUrl(url: string): boolean {
   try {
     const h = new URL(url).hostname.replace(/^\[|\]$/g, '');
-    return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+    // Review of wave 4 (should-fix 9): only the loopback addresses; `localhost` depends on the resolver.
+    return h === '127.0.0.1' || h === '::1';
   } catch {
     return false;
   }

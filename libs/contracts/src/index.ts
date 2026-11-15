@@ -396,6 +396,11 @@ export const WebhookEvent = z.enum([
   'period.reopened',
   /** Wave 4 (spec 017): the month's snapshot and notes were uploaded to Datarails (the fake on this machine). */
   'datarails.uploaded',
+  /**
+   * Review of wave 4 (B4): a CFO-only request (`period_reopen`) has nobody who may decide it; it waits for the CFO and
+   * never escalates to another group. Sent when the step starts and again at each deadline it passes.
+   */
+  'request.no_approver',
 ]);
 export type WebhookEvent = z.infer<typeof WebhookEvent>;
 

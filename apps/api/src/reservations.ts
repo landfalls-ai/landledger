@@ -58,21 +58,35 @@ export interface Reservable {
   seat?: unknown;
 }
 
+/** The seats of a seat request beyond what its contract had left (review of wave 4, should-fix 14). */
+export const seatsBeyond = (r: { seat?: unknown }): number => {
+  const s = r.seat as { beyond?: number } | null | undefined;
+  return s ? (s.beyond ?? 0) : 0;
+};
+
 /**
  * Wave 4 (the wave 3 leftover): a `tool_or_seat` request on a contract reserves seats only, not money, until
  * Landbright prices seats; the contract's own value is already in the forecast as contracted. Its amount shows as
- * "within contract".
+ * "within contract". Review of wave 4 (should-fix 14): only while every seat is one the contract has left; seats
+ * beyond it reserve money at the seat price.
  */
 export const withinContract = (r: { kind?: string; seat?: unknown }): boolean =>
-  r.kind === 'tool_or_seat' && r.seat !== null && r.seat !== undefined;
+  r.kind === 'tool_or_seat' && r.seat !== null && r.seat !== undefined && seatsBeyond(r) === 0;
 
 /**
  * What a request adds in a month: a one-off amount in its start month; a monthly amount for every month of its window,
  * pro rata in the first and last (by days, from the start day and to the end day).
  */
 export function addsInMonth(r: Reservable, month: string): Money {
-  const total = Money.ofMicros(r.amount_micros, r.currency.trim());
-  if (withinContract(r)) return Money.zero(total.currency);
+  const whole = Money.ofMicros(r.amount_micros, r.currency.trim());
+  if (withinContract(r)) return Money.zero(whole.currency);
+  // A seat request with seats beyond the contract adds those seats at the seat price (the rest are within it).
+  const beyond = r.kind === 'tool_or_seat' ? seatsBeyond(r) : 0;
+  const price = (r.seat as { seatPrice?: string } | null | undefined)?.seatPrice;
+  const total =
+    beyond > 0 && price
+      ? Money.fromDecimal(Money.parse(price, whole.currency).toDecimal().times(String(beyond)), whole.currency)
+      : whole;
   const start = day(r.start_day);
   const end = r.end_day ? day(r.end_day) : null;
   const zero = Money.zero(total.currency);

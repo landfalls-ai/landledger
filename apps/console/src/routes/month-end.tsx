@@ -1,10 +1,13 @@
 import type {
+  AccrualRollForward,
   AccrualsView,
   AccrualView,
   CloseStepView,
+  CoaMappingsView,
   CloseView,
   DatarailsPullView,
   DatarailsStatus,
+  JournalView,
   LockResult,
   MonthEndPackage,
   NotesView,
@@ -261,7 +264,9 @@ function LockCard({ month, c }: { month: string; c: CloseView }) {
   const r = useRoles();
   const [reason, setReason] = useState('');
   const sign = useMutation({
-    mutationFn: () => send<LockResult>('POST', `/api/close/${month}/lock`, {}),
+    // Review of wave 4 (should-fix 1): the signature names the snapshot this page shows.
+    mutationFn: () =>
+      send<LockResult>('POST', `/api/close/${month}/lock`, { snapshotSha256: c.snapshot?.sha256 ?? null }),
     onSuccess: (v) => qc.setQueryData(['close', month], v.close),
   });
   const reopen = useMutation({
@@ -270,7 +275,8 @@ function LockCard({ month, c }: { month: string; c: CloseView }) {
   });
   const lockStep = c.steps.find((s) => s.key === 'locked');
   const signed = c.signoffs.some((s) => s.person.id === r.id);
-  const lockable = !c.dryRun && (c.status === 'closing' || c.reopened) && lockStep?.state === 'red';
+  const lockable =
+    !c.dryRun && (c.status === 'closing' || c.reopened) && c.roundStarted !== false && lockStep?.state === 'red';
   return (
     <Card title="The lock" sub="Two people sign: a controller and the CFO" testId="lock-card">
       <CardBody className="grid gap-2 text-[13px]">
@@ -280,15 +286,33 @@ function LockCard({ month, c }: { month: string; c: CloseView }) {
               <li key={s.person.id}>
                 <b>{s.person.name}</b> <span className="text-t3">({s.role === 'cfo' ? 'CFO' : 'controller'})</span>,{' '}
                 {when(s.at)}
+                {s.snapshotSha256 && (
+                  <span className="block text-[12px] text-t3">
+                    on snapshot <code>{short(s.snapshotSha256)}</code>
+                    {s.seenAt ? `, shown to them ${when(s.seenAt)}` : ''}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
+        )}
+        {c.duties && (c.status !== 'locked' || c.reopened) && (
+          <p className="text-[12.5px] text-t2" data-testid="duties">
+            Duties: started by {c.duties.startedBy ?? '—'} · accrual accepted by {c.duties.accrualAcceptedBy ?? '—'} ·
+            controller’s signature {c.duties.controllerSignedBy ?? '—'}.{' '}
+            <span className="text-t3">At least two different people do these three, besides the CFO.</span>
+          </p>
         )}
         {lockable && r.signer && !signed && (
           <div>
             <Button variant="primary" disabled={sign.isPending} onClick={() => sign.mutate()} data-testid="sign-lock">
               Sign the lock as {r.cfo && !c.signoffs.some((s) => s.role === 'cfo') ? 'the CFO' : 'a controller'}
             </Button>
+            <p className="mt-1 text-[12px] text-t3">
+              {c.snapshot
+                ? `You sign snapshot ${short(c.snapshot.sha256)}, as this page shows it.`
+                : 'No snapshot yet: your signature freezes one.'}
+            </p>
             <Err m={sign} />
           </div>
         )}
@@ -305,6 +329,15 @@ function LockCard({ month, c }: { month: string; c: CloseView }) {
             </p>
             <p className="break-all text-[12px] text-t3">
               Audit entry {l.auditSeq} <code>{l.auditHash}</code>
+            </p>
+            <p className="break-all text-[12px] text-t3" data-testid={`lock-${l.round}-package`}>
+              {l.packageSha256 ? (
+                <>
+                  Package stored, manifest <code>{l.packageSha256}</code>
+                </>
+              ) : (
+                'No stored package (locked before the review of wave 4)'
+              )}
             </p>
             <p className="break-all text-[12px] text-t3">
               {l.anchor ? (
@@ -388,7 +421,7 @@ export function ClosePage() {
             </Stat>
             <Stat label="Unallocated limit" value={`${c.unallocatedLimitPct}%`} small />
           </div>
-          {c.status === 'open' && c.ended && r.signer && (
+          {((c.status === 'open' && c.ended) || (c.reopened && c.roundStarted === false)) && (r.signer || r.fpa) && (
             <div>
               <Button
                 variant="primary"
@@ -396,7 +429,7 @@ export function ClosePage() {
                 onClick={() => start.mutate()}
                 data-testid="start-close"
               >
-                Start {monthLabel(month)}’s close
+                {c.reopened ? `Start round ${c.round} of the close` : `Start ${monthLabel(month)}’s close`}
               </Button>
               <Err m={start} />
             </div>
@@ -408,7 +441,11 @@ export function ClosePage() {
                   key={s.key}
                   month={month}
                   s={s}
-                  canAct={!c.dryRun && (c.status === 'closing' || (c.reopened && s.number > 6))}
+                  canAct={
+                    !c.dryRun &&
+                    (c.status === 'closing' ||
+                      (c.reopened && c.roundStarted !== false && (s.number > 6 || s.number === 2 || s.number === 5)))
+                  }
                   canExplain={r.signer || r.fpa}
                 />
               ))}
@@ -431,6 +468,8 @@ function AccrualCard({ a, month }: { a: AccrualView; month: string }) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['accruals', month] });
       void qc.invalidateQueries({ queryKey: ['close', month] });
+      void qc.invalidateQueries({ queryKey: ['journal', month] });
+      void qc.invalidateQueries({ queryKey: ['roll-forward', month] });
     },
   });
   return (
@@ -452,8 +491,14 @@ function AccrualCard({ a, month }: { a: AccrualView; month: string }) {
           <span className="figure text-[24px] font-semibold text-t1" data-testid="accrual-total">
             {usd(a.total)}
           </span>
-          <Tag dashed>estimated, not yet invoiced</Tag>
+          <Tag dashed>accrued liability: not yet invoiced</Tag>
         </div>
+        {a.prepaidTotal && Number(a.prepaidTotal) !== 0 && (
+          <p className="text-t2" data-testid="accrual-prepaid">
+            Prepaid amortised in the month: <b className="figure">{usd(a.prepaidTotal)}</b>{' '}
+            <span className="text-t3">(a prepaid expense, not in the liability)</span>
+          </p>
+        )}
         {a.acceptedBy && (
           <p className="text-t2">
             Accepted by {a.acceptedBy}, {when(a.acceptedAt)}. Snapshot <code>{short(a.snapshotSha256)}</code>
@@ -470,7 +515,8 @@ function AccrualCard({ a, month }: { a: AccrualView; month: string }) {
               </div>
               <p className="text-[12px] text-t3">
                 {l.costCenterName} ({l.costCenter}) · P&amp;L {l.plClass} ·{' '}
-                {l.kind === 'usage' ? `${l.estimates} estimate(s)` : 'contract'} · {l.basis}
+                {l.kind === 'usage' ? `${l.estimates} estimate(s)` : l.kind === 'prepaid' ? 'prepaid' : 'contract'} ·{' '}
+                {l.basis}
               </p>
               {l.reversal && (
                 <p className="text-[12px] text-gn">
@@ -479,7 +525,12 @@ function AccrualCard({ a, month }: { a: AccrualView; month: string }) {
               )}
             </li>
           ))}
-          {!a.lines.length && <li className="text-t3">Nothing to accrue: every estimate is invoiced.</li>}
+          {!a.lines.length && (
+            <li className="text-t3">
+              Nothing to accrue: no estimate left uninvoiced, and no contract value waiting for its invoice, comes to a
+              cent.
+            </li>
+          )}
         </ul>
         <p className="break-all text-[12px] text-t3">
           sha256 <code>{a.sha256}</code>
@@ -524,8 +575,9 @@ export function AccrualsPage() {
       <MonthBar month={month} setMonth={setMonth} />
       <Lede>
         What is known but not yet invoiced at month-end: AI usage estimates per provider, model and cost center, and
-        each contract’s value for the month when its vendor hasn’t invoiced it. A controller accepts it; it reverses in
-        the month its invoice posts. Landledger never posts to a GL: the journal entry is a CSV to book.
+        each contract billed monthly in arrears when its vendor hasn’t invoiced it; prepaid contracts amortise apart. A
+        controller accepts it, which freezes the month’s journal; it reverses in the month its invoice posts. Landledger
+        never posts to a GL: the journal is for the controller to book.
       </Lede>
       {!v ? (
         q.isError ? (
@@ -573,20 +625,231 @@ export function AccrualsPage() {
               </ul>
             </Card>
           )}
-          {v.history.length > 0 && (
+          <JournalCard month={month} />
+          <RollForwardCard month={month} />
+          <CoaCard />
+          {v.history.filter((h) => h.id !== v.current?.id).length > 0 && (
             <Card title="Earlier versions">
               <ul>
-                {v.history.map((h) => (
-                  <li key={h.id} className="border-t border-hair px-4 py-2 text-[13px] first:border-t-0">
-                    v{h.version} · {h.status} · {usd(h.total)} · {h.proposedBy}
-                  </li>
-                ))}
+                {v.history
+                  .filter((h) => h.id !== v.current?.id)
+                  .map((h) => (
+                    <li key={h.id} className="border-t border-hair px-4 py-2 text-[13px] first:border-t-0">
+                      v{h.version} · {h.status} · {usd(h.total)} · {h.proposedBy}
+                    </li>
+                  ))}
               </ul>
             </Card>
           )}
         </div>
       )}
     </div>
+  );
+}
+
+/** The month's journal (review of wave 4): entry ids, the GL account by the mapping, frozen at acceptance. */
+function JournalCard({ month }: { month: string }) {
+  const q = useQuery({
+    queryKey: ['journal', month],
+    queryFn: () => get<JournalView>(`/api/accruals/journal?month=${month}`),
+    retry: quiet,
+  });
+  const j = q.data;
+  const entries = new Map<string, JournalView['lines']>();
+  for (const l of j?.lines ?? []) entries.set(l.entryId, [...(entries.get(l.entryId) ?? []), l]);
+  return (
+    <Card
+      title="Journal"
+      sub={
+        j
+          ? j.frozen
+            ? `Frozen ${when(j.frozenAt)} by ${j.frozenBy} · mapping v${j.coaVersion}`
+            : `Not frozen: what accepting would freeze now · mapping v${j.coaVersion}`
+          : 'Loading…'
+      }
+      action={
+        <a className="text-[13px] underline" href={`/api/accruals/journal.csv?month=${month}`}>
+          CSV
+        </a>
+      }
+      testId="journal"
+    >
+      <CardBody className="grid gap-2 text-[13px]">
+        {j && (
+          <p className="text-t2" data-testid="journal-totals">
+            Debits <b className="figure">{usd(j.debits)}</b> · credits <b className="figure">{usd(j.credits)}</b> ·{' '}
+            {entries.size} entr{entries.size === 1 ? 'y' : 'ies'}
+          </p>
+        )}
+        {[...entries.entries()].map(([id, lines]) => (
+          <div key={id} className="rounded-[9px] border border-hair px-2.5 py-2" data-testid="journal-entry">
+            <p className="flex flex-wrap items-center justify-between gap-2">
+              <code className="text-[12.5px] text-t1">{id}</code>
+              <span className="text-[12px] text-t3">
+                {lines[0]!.kind} · {lines[0]!.journalDate}
+              </span>
+            </p>
+            <p className="text-[12px] text-t3">{lines[0]!.memo}</p>
+            <ul className="mt-1 grid gap-0.5">
+              {lines.map((l) => (
+                <li key={l.line} className="flex justify-between gap-2 text-[12.5px]">
+                  <span>
+                    {Number(l.debit) ? 'Dr' : 'Cr'} {l.glAccount} {l.glName}{' '}
+                    <span className="text-t3">
+                      ({l.account}, {l.costCenter})
+                    </span>
+                  </span>
+                  <span className="figure">{usd(Number(l.debit) ? l.debit : l.credit)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        {j && !j.lines.length && <p className="text-t3">No entry for the month.</p>}
+        {q.isError && <ErrorNote error={q.error} />}
+      </CardBody>
+    </Card>
+  );
+}
+
+/** The accrued liability's roll-forward (review of wave 4): opening, additions, reversals, closing, with aging. */
+function RollForwardCard({ month }: { month: string }) {
+  const q = useQuery({
+    queryKey: ['roll-forward', month],
+    queryFn: () => get<AccrualRollForward>(`/api/accruals/roll-forward?month=${month}`),
+    retry: quiet,
+  });
+  const f = q.data;
+  const row = (label: string, value: string | undefined, bold = false) => (
+    <p className={cn('flex justify-between gap-2', bold && 'font-semibold text-t1')}>
+      <span>{label}</span>
+      <span className="figure">{usd(value)}</span>
+    </p>
+  );
+  return (
+    <Card
+      title="Accrued liability: roll-forward"
+      sub={f ? (f.frozen ? 'From the frozen journal' : 'This month as accepting would freeze it') : 'Loading…'}
+      testId="roll-forward"
+    >
+      <CardBody className="grid gap-1 text-[13px]">
+        {f && (
+          <>
+            {row('Opening', f.opening)}
+            {row('Additions (accrued this month)', f.additions)}
+            {row('Superseded versions reversed', f.superseded === '0.000000' ? f.superseded : `-${f.superseded}`)}
+            {row('Reversed by invoices', f.reversals === '0.000000' ? f.reversals : `-${f.reversals}`)}
+            {row('Closing', f.closing, true)}
+            <p className="mt-2 text-[12px] font-medium text-t2">Closing balance by age</p>
+            {f.aging.map((a) => (
+              <p key={a.bucket} className="flex justify-between gap-2 text-[12.5px]">
+                <span>
+                  {a.label} <span className="text-t3">({a.lines} line(s))</span>
+                </span>
+                <span className="figure">{usd(a.amount)}</span>
+              </p>
+            ))}
+            {Number(f.prepaidAmortised) !== 0 && (
+              <p className="mt-1 text-[12px] text-t3">
+                Prepaid amortised in the month (apart): {usd(f.prepaidAmortised)}
+              </p>
+            )}
+          </>
+        )}
+        {q.isError && <ErrorNote error={q.error} />}
+      </CardBody>
+    </Card>
+  );
+}
+
+/** The chart-of-accounts mapping: read here; a controller proposes a new version, decided as a request. */
+function CoaCard() {
+  const qc = useQueryClient();
+  const r = useRoles();
+  const q = useQuery({ queryKey: ['coa'], queryFn: () => get<CoaMappingsView>('/api/coa'), retry: quiet });
+  const [edit, setEdit] = useState<Record<string, { gl: string; name: string }> | null>(null);
+  const [note, setNote] = useState('');
+  const propose = useMutation({
+    mutationFn: () => send('POST', '/api/coa/proposals', { mapping: edit, note }),
+    onSuccess: () => {
+      setEdit(null);
+      void qc.invalidateQueries({ queryKey: ['coa'] });
+    },
+  });
+  const m = q.data;
+  const pending = m?.versions.find((v) => v.status === 'proposed');
+  return (
+    <Card
+      title="Chart-of-accounts mapping"
+      sub={m ? `v${m.current.version}, approved${m.current.decidedBy ? ` by ${m.current.decidedBy}` : ''}` : 'Loading…'}
+      testId="coa"
+    >
+      <CardBody className="grid gap-1 text-[12.5px]">
+        {m &&
+          !edit &&
+          m.accounts.map((a) => (
+            <p key={a} className="flex justify-between gap-2">
+              <span className="text-t3">{a}</span>
+              <span>
+                {m.current.mapping[a]?.gl} {m.current.mapping[a]?.name}
+              </span>
+            </p>
+          ))}
+        {edit &&
+          m!.accounts.map((a) => (
+            <div key={a} className="flex flex-wrap items-center gap-2">
+              <span className="w-[150px] text-t3">{a}</span>
+              <input
+                className={cn(input, 'max-w-[90px]')}
+                value={edit[a]?.gl ?? ''}
+                onChange={(e) => setEdit({ ...edit, [a]: { gl: e.target.value, name: edit[a]?.name ?? '' } })}
+                aria-label={`${a} GL account`}
+              />
+              <input
+                className={input}
+                value={edit[a]?.name ?? ''}
+                onChange={(e) => setEdit({ ...edit, [a]: { gl: edit[a]?.gl ?? '', name: e.target.value } })}
+                aria-label={`${a} GL name`}
+              />
+            </div>
+          ))}
+        {pending && (
+          <p className="text-warn">
+            v{pending.version} is waiting for a decision{' '}
+            {pending.requestId && (
+              <Link className="underline" to={`/requests/${pending.requestId}`}>
+                (the request)
+              </Link>
+            )}
+          </p>
+        )}
+        {m && r.controller && !pending && !edit && (
+          <div>
+            <Button size="sm" onClick={() => setEdit({ ...m.current.mapping })}>
+              Propose a new mapping
+            </Button>
+          </div>
+        )}
+        {edit && (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              className={input}
+              placeholder="Why (a controller or the CFO who isn't you decides)"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              aria-label="Why the mapping changes"
+            />
+            <Button size="sm" disabled={note.trim().length < 3 || propose.isPending} onClick={() => propose.mutate()}>
+              Propose
+            </Button>
+            <Button size="sm" onClick={() => setEdit(null)}>
+              Cancel
+            </Button>
+            <Err m={propose} />
+          </div>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 
@@ -777,8 +1040,9 @@ export function NotesPage() {
             <ul>
               {v.needed.map((f) => (
                 <li key={f.costCenter} className="border-t border-hair px-4 py-2 text-[12.5px] first:border-t-0">
-                  <b className="text-t1">{f.name}</b>: actual {usd(f.actual)} · budget {usd(f.budget)} · day-10 forecast{' '}
-                  {usd(f.forecastDay10)}
+                  <b className="text-t1">{f.name}</b>: actual {usd(f.actual)}
+                  {f.notional && Number(f.notional) !== 0 ? ` (notional ${usd(f.notional)}, never booked)` : ''} ·
+                  budget {usd(f.budget)} · last forecast stored by day 10 {usd(f.forecastDay10)}
                   {f.drivers.length
                     ? ` · drivers ${f.drivers.map((d) => `${d.label} ${usd(d.change)}`).join(', ')}`
                     : ''}
@@ -1071,6 +1335,29 @@ export function PackagePage() {
                   <span className="figure">{usd(c.total)}</span>
                 </p>
               ))}
+            </CardBody>
+          </Card>
+          <Card title="Stored package" testId="stored-package">
+            <CardBody className="grid gap-1 break-all text-[12.5px] text-t2">
+              {p.stored ? (
+                <>
+                  <span>
+                    Stored when round {p.stored.round} locked, {when(p.stored.builtAt)} ({p.stored.builtBy})
+                  </span>
+                  <span>
+                    Manifest sha256 <code data-testid="package-sha">{p.stored.sha256}</code>
+                  </span>
+                  <span className="text-t3">
+                    The lock’s audit entry records this hash; the files below are served as stored.
+                  </span>
+                </>
+              ) : (
+                <span className="text-t3">
+                  Built now: the month isn’t locked
+                  {p.close.locks.length ? ' (or was locked before the review of wave 4)' : ''}, so nothing is stored
+                  yet.
+                </span>
+              )}
             </CardBody>
           </Card>
           <Card title="Chain proof" testId="chain">

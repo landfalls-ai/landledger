@@ -21,7 +21,9 @@ The snapshot frozen at step 7 names the notes a month needs:
 
 For each note, the snapshot also lists the figures it may cite:
 
-- `actual`;
+- `actual`, which includes notional cluster cost;
+- `notional`, the notional cluster cost inside `actual`, never booked as an actual (a template note states it when it
+  isn't zero; review of wave 4, should-fix 13);
 - `budget`;
 - `forecast_day10`;
 - `variance_budget` and `variance_forecast`;
@@ -47,7 +49,17 @@ Landflow's flow then drafts each note with a key that has the `notes:draft` scop
 Landledger checks every cite against the snapshot to the cent. Any difference refuses the draft with 422, and
 `details.mismatches` names each one. A draft against a snapshot that is no longer current gets 409.
 
-The sponsor is the person who answers for the agent. It defaults to the person who minted the key.
+The text is checked too (review of wave 4, should-fix 8). A draft cites at least one figure, and **every amount the
+text states** (`$1,234.56`, `USD 40`, `7.50 USD`, `2 dollars`) must be one of its cites to the cent, or the draft gets
+422 naming each amount no cite carries. Counts and percentages aren't amounts. Accepting an edited text checks the new
+text against the version's cites the same way.
+
+A note **accepted on the current snapshot takes no new draft** (409; should-fix 7), so a `notes:draft` key can't
+un-accept it between the two signatures. A new snapshot asks for notes again.
+
+The sponsor is the person who answers for the agent. It defaults to the person who minted the key. **The key's
+minter is always barred** from deciding its drafts (review of wave 4, B3): a sponsor the draft declares is barred as
+well, never instead. A key whose minter isn't a person here drafts nothing.
 
 No role grants `notes:draft`. Only an admin mints it, on an agent's key. On this machine that key is
 `landflow notes`, kept in `~/.config/land-family/landledger-landflow.env` as `LANDLEDGER_NOTES_KEY`.
@@ -60,8 +72,10 @@ cite only figures the snapshot holds, so they always pass the check.
 
 ## Accepting, editing, rejecting
 
-An analyst decides on the newest version of a note. An analyst is FP&A or a controller, and is never:
+An analyst decides on the newest version of a note. An analyst is FP&A or a controller, never an account that looks
+like a service, and is never:
 
+- the person who minted the drafting key;
 - the agent's sponsor;
 - the person who wrote that version.
 
@@ -92,7 +106,8 @@ one row per cost center and one for `TOTAL`, each with P10, P50 and P90:
   rate.
 - **A cost center** takes the total band in proportion to its projected remainder.
 
-The forecast on calendar day 10 is kept as it stood. Notes cite that forecast, so every note uses the same one.
+The forecast on calendar day 10 is kept as it stood: the last forecast stored on or before day 10, and the notes and
+the console say so. Notes cite that forecast, so every note uses the same one.
 
 At close, `GET /api/forecast/history?month=&costCenter=` measures the day-10 forecast against the snapshot's actual
 and reports whether it was within ±10%.

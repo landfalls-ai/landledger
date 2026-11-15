@@ -6,7 +6,11 @@ Postgres in `deploy/compose.infra.yml`. Wave 1 "See the spend" is built: ingest 
 Landflow and Clickland (`apps/api/src/ingest/`, `libs/pricing`), rate card approval, allocation (`libs/allocation`),
 budgets, Overview, Explore and Budgets, exports, MCP and cost metrics to Clickland. Wave 2 "Control the spend" is
 built and reviewed: requests, policies, decisions by people (console, or a Slack relay Landledger verifies),
-reservations, SCIM, the exceptions report (`docs/approvals.md`, `docs/identity.md`). Wave 3 is next.
+reservations, SCIM, the exceptions report (`docs/approvals.md`, `docs/identity.md`). Wave 3 (invoices, forecasts,
+contracts, seats, anomalies, the access review) and wave 4 "Month-end" (the close, accruals with a frozen journal and
+roll-forward, variance notes, the snapshot, the stored package, the Datarails connector against `fake-datarails`) are
+built and reviewed (`docs/close.md`, `docs/accruals.md`). Wave 5 is our own FP&A product, fed by Landledger (to be
+proposed; `docs/plan.md`, Decision 4).
 
 ## Read first
 

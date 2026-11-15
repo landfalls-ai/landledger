@@ -12,10 +12,13 @@ export interface Sheet {
   rows: Cell[][];
 }
 
-/** A text cell that a spreadsheet would read as a formula gets a leading apostrophe (CSV injection). */
-const csvCell = (c: Cell) => {
+/**
+ * A text cell that a spreadsheet would read as a formula gets a leading apostrophe (CSV injection). A text cell that
+ * starts with `-` is left alone only when it is a plain number (review of wave 4, nit: `-2+3` is a formula).
+ */
+export const csvCell = (c: Cell) => {
   if (typeof c !== 'string') return c.number;
-  const s = /^[=+@\t\r]/.test(c) || /^-[^\d]/.test(c) ? `'${c}` : c;
+  const s = /^[=+@\t\r]/.test(c) || (c.startsWith('-') && !/^-\d+(\.\d+)?$/.test(c)) ? `'${c}` : c;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 

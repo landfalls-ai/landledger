@@ -4,8 +4,13 @@
  * checklist, reconciliation, the accrual and its journal entry, the accepted notes, the exceptions, the anomalies
  * closed, the decisions made in the month, the Datarails upload and the chain proof (the lock's audit entry, its
  * anchor, and the chain checked to the head). Every file in the zip is listed with its sha256 in `manifest.csv`.
+ *
+ * Review of wave 4 (should-fix 5): the second signature builds the round's package and stores it (every file's body
+ * and sha256, and the manifest); the manifest's sha256 is in `close_locks` and the `period.locked` audit entry. A locked
+ * month serves its stored package as stored; only the chain proof is read at download, since the lock entry that
+ * proves the package cannot be inside it. A month not locked (or reopened) is built live.
  */
-import type { MonthEndPackage } from '@landledger/contracts';
+import type { LockSignoff, MonthEndPackage } from '@landledger/contracts';
 import { Money, REPORTING_CURRENCY } from '@landledger/money';
 import type { Accruals } from './accruals.js';
 import { nextMonth } from './accruals.js';
@@ -19,11 +24,14 @@ import type { Exceptions } from './exceptions.js';
 import { type Cell, type Sheet, toCsv, zip } from './export.js';
 import { sha256 } from './ids.js';
 import type { Invoices } from './invoices.js';
+import type { Journal } from './journal.js';
 import { monthLabel, type Notes } from './notes.js';
 import type { Snapshots } from './snapshot.js';
 
 const USD = REPORTING_CURRENCY;
 const n = (a: string | null | undefined): Cell => (a == null ? '' : { number: Money.parse(a, USD).toCsv() });
+
+type StoredFile = { name: string; sha256: string; rows: number; body: string };
 
 export class MonthEndPackages {
   constructor(
@@ -32,6 +40,7 @@ export class MonthEndPackages {
     private readonly close: Close,
     private readonly snapshots: Snapshots,
     private readonly accruals: Accruals,
+    private readonly journal: Journal,
     private readonly notes: Notes,
     private readonly invoices: Invoices,
     private readonly exceptions: Exceptions,
@@ -45,7 +54,8 @@ export class MonthEndPackages {
     const f = p.snapshot?.figures;
     const rec = f ? null : await this.invoices.reconciliation(month);
     const recRows = f?.reconciliation.rows ?? rec!.rows.filter((r) => !r.devFixture);
-    const journal = p.accrual?.status === 'accepted' ? await this.accruals.journal(month) : null;
+    const journal = p.accrual ? await this.journal.csv(month, p.accrual) : null;
+    const rf = await this.journal.rollForward(month, p.accrual);
     return [
       {
         name: 'checklist',
@@ -126,6 +136,44 @@ export class MonthEndPackages {
             } as Sheet & { raw: string },
           ]
         : []),
+      {
+        name: 'accrual-roll-forward',
+        header: [
+          'month',
+          'opening',
+          'additions',
+          'superseded',
+          'reversals',
+          'closing',
+          'prepaid_amortised',
+          'currency',
+        ],
+        rows: [
+          [
+            rf.month,
+            n(rf.opening),
+            n(rf.additions),
+            n(rf.superseded),
+            n(rf.reversals),
+            n(rf.closing),
+            n(rf.prepaidAmortised),
+            USD,
+          ],
+          ...rf.aging.map((a) => [`age ${a.bucket}`, '', '', '', '', n(a.amount), '', USD]),
+        ],
+      },
+      {
+        name: 'lock-signatures',
+        header: ['role', 'person', 'email', 'signed_at', 'snapshot_sha256', 'snapshot_seen_at'],
+        rows: p.close.signoffs.map((x) => [
+          x.role,
+          x.person.name,
+          x.person.email ?? '',
+          x.at,
+          x.snapshotSha256 ?? '',
+          x.seenAt ?? '',
+        ]),
+      },
       {
         name: 'variance-notes',
         header: [
@@ -220,14 +268,16 @@ export class MonthEndPackages {
     ];
   }
 
-  private async build(month: string) {
-    const close = await this.close.view(month);
+  /** `signing`: the signatures of a lock being made now (the stored package names them; the lock isn't written yet). */
+  private async build(month: string, signing: LockSignoff[] | null = null) {
+    const viewed = await this.close.view(month);
+    const close = signing ? { ...viewed, status: 'locked' as const, reopened: false, signoffs: signing } : viewed;
     const snap = await this.snapshots.latest(month);
     const snapshot = snap ? this.snapshots.viewOf(snap, close.snapshot?.current ?? false) : null;
     const accrual = (await this.accruals.list(month)).current;
     const notes = (await this.notes.list(month)).notes;
     const ex = await this.exceptions.report({ month });
-    const anomalies = (await this.anomalies.list({ status: 'all', limit: 500 })).filter(
+    const anomalies = (await this.anomalies.list({ status: 'all', limit: 1_000_000, month })).filter(
       (a) => a.windowStart.slice(0, 7) === month && a.status === 'closed',
     );
     const decisions = await this.sql<
@@ -308,10 +358,79 @@ export class MonthEndPackages {
     return files;
   }
 
+  private static manifestOf(files: readonly StoredFile[]) {
+    return toCsv({
+      name: 'manifest',
+      header: ['file', 'sha256', 'rows'],
+      rows: files.map((f) => [f.name, f.sha256, String(f.rows)]),
+    });
+  }
+
+  /**
+   * The package a lock stores (should-fix 5), built inside the lock's transaction with the signatures being made:
+   * every file but the chain proof (the lock entry that proves it comes after), the package itself as JSON, and the
+   * manifest whose sha256 the lock records.
+   */
+  async forLock(
+    month: string,
+    round: number,
+    signing: LockSignoff[],
+  ): Promise<{ files: StoredFile[]; manifest: string; sha256: string }> {
+    const pkg = await this.build(month, signing);
+    const files: StoredFile[] = (await this.filesOf(month, pkg))
+      .filter((f) => !f.name.endsWith('/chain-proof.csv'))
+      .map((f) => ({ ...f, sha256: sha256(f.body) }));
+    const { chain: _chain, ...rest } = pkg;
+    const body = canonicalJson({ ...rest, round });
+    files.push({ name: `${month}/package.json`, sha256: sha256(body), rows: 1, body });
+    const manifest = MonthEndPackages.manifestOf(files);
+    return { files, manifest, sha256: sha256(manifest) };
+  }
+
+  /** The stored package of the month's newest lock, when the month is locked (not reopened). */
+  private async stored(month: string) {
+    const p = await this.close.period(month);
+    if (p.status !== 'locked' || p.reopened) return null;
+    const [r] = await this.sql<
+      { round: number; files: StoredFile[]; manifest: string; sha256: string; built_at: Date; email: string | null }[]
+    >`
+      SELECT c.round, c.files, c.manifest, c.sha256, c.built_at, u.email FROM close_packages c
+      LEFT JOIN users u ON u.id = c.built_by
+      WHERE c.month = ${`${month}-01`} ORDER BY c.round DESC LIMIT 1`;
+    if (!r || r.round !== p.round) return null;
+    const json = r.files.find((f) => f.name === `${month}/package.json`)!;
+    const stored = JSON.parse(json.body) as Omit<MonthEndPackage, 'files' | 'chain'>;
+    // The chain proof is read now: the lock's entry (which records this package's sha256), its anchor, the head.
+    const live = await this.close.view(month);
+    const lock = live.locks.at(-1) ?? null;
+    const verify = await this.audit.verify();
+    const pkg: MonthEndPackage = {
+      ...stored,
+      close: { ...stored.close, locks: live.locks },
+      chain: {
+        ok: verify.ok,
+        checked: verify.checked,
+        head: verify.head,
+        lock: lock ? { seq: lock.auditSeq, hash: lock.auditHash } : null,
+        anchor: lock?.anchor ?? null,
+        truncated: verify.truncated,
+      },
+      files: r.files.map((f) => ({ name: f.name, sha256: f.sha256, rows: f.rows })),
+      stored: { round: r.round, sha256: r.sha256, builtAt: r.built_at.toISOString(), builtBy: r.email ?? '' },
+    };
+    return { pkg, files: r.files, manifest: r.manifest };
+  }
+
   async json(month: string): Promise<MonthEndPackage> {
+    const s = await this.stored(month);
+    if (s) return s.pkg;
     const pkg = await this.build(month);
     const files = await this.filesOf(month, pkg);
-    return { ...pkg, files: files.map((f) => ({ name: f.name, sha256: sha256(f.body), rows: f.rows })) };
+    return {
+      ...pkg,
+      files: files.map((f) => ({ name: f.name, sha256: sha256(f.body), rows: f.rows })),
+      stored: null,
+    };
   }
 
   async html(month: string): Promise<string> {
@@ -319,24 +438,34 @@ export class MonthEndPackages {
   }
 
   async zip(month: string): Promise<{ name: string; data: Buffer }> {
+    const s = await this.stored(month);
+    if (s) {
+      const chain = (await this.sheets(month, s.pkg)).find((x) => x.name === 'chain-proof')!;
+      return {
+        name: `landledger-month-end-${month}.zip`,
+        data: zip([
+          ...s.files.map((f) => ({ name: f.name, data: Buffer.from(f.body, 'utf8') })),
+          { name: `${month}/manifest.csv`, data: Buffer.from(s.manifest, 'utf8') },
+          // Outside the manifest: the chain proof read at download, and the page.
+          { name: `${month}/chain-proof.csv`, data: Buffer.from(toCsv(chain), 'utf8') },
+          { name: `${month}/package.html`, data: Buffer.from(packageHtml(s.pkg), 'utf8') },
+        ]),
+      };
+    }
     const pkg = await this.build(month);
     const files = await this.filesOf(month, pkg);
     const withSha = files.map((f) => ({ ...f, sha256: sha256(f.body) }));
     const full: MonthEndPackage = {
       ...pkg,
       files: withSha.map((f) => ({ name: f.name, sha256: f.sha256, rows: f.rows })),
+      stored: null,
     };
-    const manifest = toCsv({
-      name: 'manifest',
-      header: ['file', 'sha256', 'rows'],
-      rows: withSha.map((f) => [f.name, f.sha256, String(f.rows)]),
-    });
     return {
       name: `landledger-month-end-${month}.zip`,
       data: zip([
         ...withSha.map((f) => ({ name: f.name, data: Buffer.from(f.body, 'utf8') })),
         { name: `${month}/package.html`, data: Buffer.from(packageHtml(full), 'utf8') },
-        { name: `${month}/manifest.csv`, data: Buffer.from(manifest, 'utf8') },
+        { name: `${month}/manifest.csv`, data: Buffer.from(MonthEndPackages.manifestOf(withSha), 'utf8') },
       ]),
     };
   }
@@ -371,6 +500,11 @@ ul{padding-left:18px}li{margin:4px 0}.card{border:1px solid #e3e3e3;border-radiu
 </style></head><body>
 <h1>${esc(monthLabel(p.month))}: month-end package</h1>
 <p class="muted">Generated ${esc(p.generatedAt)} · status <b>${esc(p.status)}</b>${p.close.round ? ` · round ${p.close.round}` : ''} · USD</p>
+${
+  p.stored
+    ? `<p>Stored when round ${p.stored.round} locked (${esc(p.stored.builtAt)}, ${esc(p.stored.builtBy)}). Manifest sha256 <code>${esc(p.stored.sha256)}</code>, recorded in the lock's audit entry.</p>`
+    : '<p class="muted">Built now: the month is not locked, so nothing is stored yet.</p>'
+}
 <h2>Snapshot</h2>
 ${
   p.snapshot
@@ -410,10 +544,19 @@ ${
         [
           'Signed',
           lock.signoffs
-            .map((s) => `${esc(s.person.name)} (${s.role === 'cfo' ? 'CFO' : 'controller'}, ${esc(s.at)})`)
+            .map(
+              (s) =>
+                `${esc(s.person.name)} (${s.role === 'cfo' ? 'CFO' : 'controller'}, ${esc(s.at)})${s.snapshotSha256 ? `<br><span class="muted">on snapshot <code>${esc(s.snapshotSha256.slice(0, 16))}…</code>${s.seenAt ? `, shown ${esc(s.seenAt)}` : ''}</span>` : ''}`,
+            )
             .join('<br>'),
         ],
         ['Audit entry', `${lock.auditSeq} <code>${esc(lock.auditHash)}</code>`],
+        [
+          'Package',
+          lock.packageSha256
+            ? `<code>${esc(lock.packageSha256)}</code>`
+            : 'not stored (locked before the review of wave 4)',
+        ],
         [
           'Anchor',
           lock.anchor

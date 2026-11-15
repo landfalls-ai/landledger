@@ -107,6 +107,12 @@ export interface LockSignoff {
   /** The role the person signed as. */
   role: 'controller' | 'cfo';
   at: string;
+  /**
+   * Review of wave 4 (should-fix 1): the snapshot the signature is on, and when that snapshot was last served to the
+   * signer before signing (the evidence they saw it). Null on signatures from before the review.
+   */
+  snapshotSha256?: string | null;
+  seenAt?: string | null;
 }
 
 /** `GET /api/close?month=`: the month's close, computed now (a dry run for a month still open). */
@@ -139,7 +145,16 @@ export interface CloseView {
     auditHash: string;
     anchor: { seq: number; hash: string; at: string } | null;
     snapshotSha256: string | null;
+    /** Review of wave 4 (should-fix 5): the sha256 of the round's stored package manifest; null before the review. */
+    packageSha256?: string | null;
   }>;
+  /** Review of wave 4: false while a reopened round waits to be started (a controller, the CFO or FP&A starts it). */
+  roundStarted?: boolean;
+  /**
+   * Review of wave 4, segregation of duties: who started the close (or asked to reopen it, in a later round), who
+   * accepted the accrual and who signed as controller. At least two different people do those three, besides the CFO.
+   */
+  duties?: { startedBy: string | null; accrualAcceptedBy: string | null; controllerSignedBy: string | null };
   reopens: Array<{
     round: number;
     requestId: string;
@@ -178,6 +193,11 @@ export const LockSignInput = z.object({
   /** The role to sign as, when the person holds both. */
   as: z.enum(['controller', 'cfo']).optional(),
   note: z.string().trim().max(1000).default(''),
+  /**
+   * Review of wave 4 (should-fix 1): the snapshot's sha256 as shown to the signer. Required once the month has a
+   * snapshot; a different one is 409. Null when the month has none yet (the first signature then freezes one).
+   */
+  snapshotSha256: Sha256.nullable().optional(),
 });
 export type LockSignInput = z.input<typeof LockSignInput>;
 
@@ -202,7 +222,8 @@ export type ReopenInput = z.input<typeof ReopenInput>;
 
 // 013 Accruals ------------------------------------------------------------------------------------------------------
 
-export const AccrualLineKind = z.enum(['usage', 'contract']);
+/** `prepaid`: a prepaid contract's amortisation for the month (review of wave 4), not an accrued liability. */
+export const AccrualLineKind = z.enum(['usage', 'contract', 'prepaid']);
 export type AccrualLineKind = z.infer<typeof AccrualLineKind>;
 
 export interface AccrualLineView {
@@ -221,7 +242,8 @@ export interface AccrualLineView {
   contractId: string | null;
   basis: string;
   /** Reversed when the invoice for it posted: the invoice and the month the reversal is booked in. */
-  reversal: { invoice: string; month: string; at: string } | null;
+  /** `month` and `day` in LANDLEDGER_TZ (review of wave 4, nit): the journal books the reversal on `day`. */
+  reversal: { invoice: string; month: string; at: string; day?: string } | null;
 }
 
 export interface AccrualView {
@@ -234,7 +256,10 @@ export interface AccrualView {
   acceptedBy: string | null;
   acceptedAt: string | null;
   note: string;
+  /** The accrued liability: usage and contract lines (not the prepaid amortisation). */
   total: Amount;
+  /** Review of wave 4 (should-fix 12): prepaid contracts' amortisation for the month, reported apart. */
+  prepaidTotal?: Amount;
   lines: AccrualLineView[];
   /** The snapshot accepting it froze (spec 016). */
   snapshotSha256: string | null;
@@ -250,6 +275,105 @@ export interface AccrualsView {
   /** Earlier months' accrual lines reversed in this month (their invoices posted in it). */
   reversalsIn: Array<{ accrualId: string; month: string; line: number; amount: Amount; invoice: string }>;
 }
+
+/**
+ * `GET /api/accruals/roll-forward?month=` (review of wave 4): the accrued liability for technology through the month,
+ * from the journal (frozen where it is, else as it would be frozen now): opening, additions, reversals, closing, and
+ * the closing balance by the age of the month each line was accrued in.
+ */
+export interface AccrualRollForward {
+  month: string;
+  currency: 'USD';
+  opening: Amount;
+  additions: Amount;
+  /** Accepted versions of the month replaced by a later one, reversed by their own entry. */
+  superseded: Amount;
+  reversals: Amount;
+  closing: Amount;
+  /** The closing balance by age: accrued this month, 1, 2, or 3 or more months before. */
+  aging: Array<{ bucket: '0' | '1' | '2' | '3+'; label: string; amount: Amount; lines: number }>;
+  /** Each line still open at the month's end. */
+  open: Array<{
+    accrualMonth: string;
+    accrualId: string;
+    line: number;
+    provider: string;
+    item: string;
+    costCenter: string;
+    amount: Amount;
+    ageMonths: number;
+  }>;
+  /** Prepaid amortisation in the month (apart: not an accrued liability). */
+  prepaidAmortised: Amount;
+  /** True when every month's journal through this one is frozen; otherwise later ones are as they would be frozen now. */
+  frozen: boolean;
+}
+
+/** One line of the journal: an entry id, the placeholder account and the general ledger's, at the minor unit. */
+export interface JournalLineView {
+  entryId: string;
+  line: number;
+  journalDate: string;
+  kind: 'accrual' | 'reversal' | 'supersede' | 'prepaid';
+  account: string;
+  accountName: string;
+  glAccount: string;
+  glName: string;
+  debit: Amount;
+  credit: Amount;
+  currency: 'USD';
+  costCenter: string;
+  plClass: string;
+  memo: string;
+  accrualId: string | null;
+  accrualLine: number | null;
+}
+
+/** `GET /api/accruals/journal?month=` (review of wave 4): the month's journal, frozen when its accrual was accepted. */
+export interface JournalView {
+  month: string;
+  /** False: nothing is frozen yet; the lines are what accepting the accrual would freeze now. */
+  frozen: boolean;
+  frozenAt: string | null;
+  frozenBy: string | null;
+  coaVersion: number;
+  lines: JournalLineView[];
+  debits: Amount;
+  credits: Amount;
+}
+
+/** The chart-of-accounts mapping: Landledger's placeholder accounts to the general ledger's. */
+export interface CoaMappingView {
+  id: string;
+  version: number;
+  status: 'approved' | 'proposed' | 'rejected';
+  mapping: Record<string, { gl: string; name: string }>;
+  sha256: string;
+  note: string;
+  proposedBy: string;
+  proposedAt: string;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  requestId: string | null;
+}
+
+/** `GET /api/coa`: the mapping in force, and every version. */
+export interface CoaMappingsView {
+  current: CoaMappingView;
+  versions: CoaMappingView[];
+  /** Every placeholder account the journal uses. */
+  accounts: string[];
+}
+
+/** `POST /api/coa/proposals` (a controller, signed in): a new mapping, decided as a `coa_mapping_change` request. */
+export const CoaMappingProposeInput = z.object({
+  mapping: z.record(
+    z.string().regex(/^[A-Z][A-Z0-9-]{1,40}$/),
+    z.object({ gl: z.string().trim().min(1).max(40), name: z.string().trim().min(1).max(200) }),
+  ),
+  note: z.string().trim().min(3).max(1000),
+});
+export type CoaMappingProposeInput = z.input<typeof CoaMappingProposeInput>;
 
 /** `POST /api/accruals/:month/propose` (a controller, the CFO or FP&A, signed in). */
 export const AccrualProposeInput = z.object({ note: z.string().trim().max(1000).default('') });
@@ -288,6 +412,8 @@ export interface ForecastHistoryView {
 /** A figure a note may cite; each is checked against the frozen snapshot. */
 export const NoteFigure = z.enum([
   'actual',
+  /** Review of wave 4 (should-fix 13): the notional cluster cost inside `actual`, which never goes to the books. */
+  'notional',
   'budget',
   'forecast_day10',
   'variance_budget',
@@ -311,7 +437,10 @@ export type NoteCite = z.infer<typeof NoteCite>;
 export interface NoteFigures {
   costCenter: string;
   name: string;
+  /** The month's management total: invoiced, estimated and notional cluster cost (see `notional`). */
   actual: Amount;
+  /** The notional cluster cost inside `actual` (never booked); absent on snapshots from before the review of wave 4. */
+  notional?: Amount;
   budget: Amount | null;
   forecastDay10: Amount | null;
   varianceBudget: Amount | null;
@@ -569,6 +698,12 @@ export interface MonthEndPackage {
   };
   /** Each file of the zip and its sha256. */
   files: Array<{ name: string; sha256: string; rows: number }>;
+  /**
+   * Review of wave 4 (should-fix 5): the package stored when this round locked, served as stored. `sha256` is the
+   * manifest's, recorded in `close_locks` and the `period.locked` audit entry. Null for a month not locked (the
+   * package is then built live) or locked before the review.
+   */
+  stored?: { round: number; sha256: string; builtAt: string; builtBy: string } | null;
 }
 
 // 019 Incident cost -----------------------------------------------------------------------------------------------------

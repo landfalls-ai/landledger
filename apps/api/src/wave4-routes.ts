@@ -9,6 +9,7 @@ import {
   type ApiScope,
   CloseExplainInput,
   CloseStartInput,
+  CoaMappingProposeInput,
   CostWindowQuery,
   DatarailsPullDecideInput,
   DatarailsPullInput,
@@ -24,6 +25,7 @@ import {
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { parse } from './app.js';
+import { localParts } from './business-hours.js';
 import { costWindow } from './cost-window.js';
 import { ApiError, notFound } from './errors.js';
 import { TOTAL } from './forecast-history.js';
@@ -37,11 +39,10 @@ const Id = z.object({ id: z.string().min(1).max(100) });
 const PackageQuery = z.object({ format: z.enum(['json', 'html']).default('json') });
 const HistoryQuery = z.object({ month: Month.optional(), costCenter: z.string().trim().min(1).max(50).default(TOTAL) });
 
-/** The month a page means when it names none: the last month that ended. */
-export const lastEnded = (now: Date) => {
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth(); // 0-based: the previous month's number, 1-based
-  return m === 0 ? `${y - 1}-12` : `${y}-${String(m).padStart(2, '0')}`;
+/** The month a page means when it names none: the last month that ended, in LANDLEDGER_TZ (review of wave 4, nit). */
+export const lastEnded = (now: Date, timeZone = 'UTC') => {
+  const [y, m] = localParts(now.getTime(), timeZone).date.split('-').map(Number) as [number, number];
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
 };
 
 export function registerWave4(
@@ -50,13 +51,21 @@ export function registerWave4(
   need: (r: FastifyRequest, scope: ApiScope) => void,
 ) {
   const { now } = services;
-  const { close, accruals, notes, snapshots, datarails, packages, forecastHistory, requests } = services;
-  const monthOf = (r: FastifyRequest) => parse(MonthQuery, r.query).month ?? lastEnded(now());
+  const { close, accruals, journal, notes, snapshots, datarails, packages, forecastHistory, requests } = services;
+  const monthOf = (r: FastifyRequest) => parse(MonthQuery, r.query).month ?? lastEnded(now(), services.config.timeZone);
 
   // 012 The close ------------------------------------------------------------------------------------------------------
-  app.get('/api/close', async (r) => (need(r, 'read'), close.view(monthOf(r))));
+  // Review of wave 4 (should-fix 1): each time a person is served the month's snapshot (the close page, the snapshot,
+  // the package) is recorded: a signature needs its signer to have been shown what they sign.
+  app.get('/api/close', async (r) => {
+    need(r, 'read');
+    const month = monthOf(r);
+    await close.served(month, r.principal);
+    return close.view(month);
+  });
   app.post('/api/close/:month/start', async (r) => {
-    need(r, 'admin');
+    // A controller, the CFO or FP&A (the service checks the role; review of wave 4: FP&A starts the close).
+    need(r, 'requests:write');
     return close.start(parse(MonthParam, r.params).month, parse(CloseStartInput, r.body).note, r.principal);
   });
   app.post('/api/close/:month/explain', async (r) => {
@@ -83,20 +92,40 @@ export function registerWave4(
     const month = parse(MonthParam, r.params).month;
     const s = await snapshots.latest(month);
     if (!s) throw notFound(`${month}'s snapshot`);
+    await close.served(month, r.principal);
     const p = await close.period(month);
     return snapshots.viewOf(s, p.status === 'locked' && !p.reopened ? true : await snapshots.isCurrent(s));
   });
 
   // 013 Accruals -------------------------------------------------------------------------------------------------------
   app.get('/api/accruals', async (r) => (need(r, 'read'), accruals.list(monthOf(r))));
+  // Review of wave 4: the journal (frozen when the accrual is accepted), as JSON and as the CSV to book.
+  const preview = async (month: string) => (await accruals.list(month)).current;
+  app.get('/api/accruals/journal', async (r) => {
+    need(r, 'read');
+    const month = monthOf(r);
+    return journal.view(month, await preview(month));
+  });
   app.get('/api/accruals/journal.csv', async (r, reply) => {
     need(r, 'read');
     const month = monthOf(r);
-    const j = await accruals.journal(month);
+    const j = await journal.csv(month, await preview(month));
     return reply
       .header('content-type', 'text/csv; charset=utf-8')
       .header('content-disposition', `attachment; filename="landledger-accrual-journal-${month}.csv"`)
       .send(j.csv);
+  });
+  app.get('/api/accruals/roll-forward', async (r) => {
+    need(r, 'read');
+    const month = monthOf(r);
+    return journal.rollForward(month, await preview(month));
+  });
+  // The chart-of-accounts mapping: read by anyone, a new version proposed by a controller and decided as a request.
+  app.get('/api/coa', async (r) => (need(r, 'read'), journal.coa()));
+  app.post('/api/coa/proposals', async (r, reply) => {
+    need(r, 'admin');
+    const out = await journal.propose(parse(CoaMappingProposeInput, r.body), r.principal);
+    return reply.status(201).send({ version: out.version, request: await requests.view(out.requestId, r.principal) });
   });
   app.post('/api/accruals/:month/propose', async (r, reply) => {
     need(r, 'requests:write');
@@ -116,7 +145,7 @@ export function registerWave4(
   app.get('/api/forecast/history', async (r) => {
     need(r, 'read');
     const q = parse(HistoryQuery, r.query);
-    const month = q.month ?? now().toISOString().slice(0, 7);
+    const month = q.month ?? localParts(now().getTime(), services.config.timeZone).date.slice(0, 7);
     const s = await snapshots.latest(month);
     const actual =
       s === null
@@ -181,6 +210,7 @@ export function registerWave4(
   app.get('/api/close/:month/package', async (r, reply) => {
     need(r, 'read');
     const month = parse(MonthParam, r.params).month;
+    await close.served(month, r.principal);
     if (parse(PackageQuery, r.query).format === 'html')
       return reply.header('content-type', 'text/html; charset=utf-8').send(await packages.html(month));
     return packages.json(month);

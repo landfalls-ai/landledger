@@ -156,11 +156,23 @@ key is named `landflow notes` and is kept as `LANDLEDGER_NOTES_KEY` in `~/.confi
 Each draft names:
 
 - its agent;
-- its sponsor, the person who answers for the agent and who never accepts the note;
+- its sponsor, the person who answers for the agent and who never accepts the note (the key's minter never accepts
+  it either, whatever sponsor the draft names);
 - the Landflow run.
 
-Each cited figure must match the snapshot to the cent, or the draft is refused with 422. Landflow can read the
-figures first from `GET /api/notes/:month/figures`.
+Each cited figure must match the snapshot to the cent, and every amount the text states must be one it cites, or the
+draft is refused with 422. A note already accepted on the current snapshot takes no new draft (409). Landflow can
+read the figures first from `GET /api/notes/:month/figures`.
+
+**Rounding.** Landledger posts an amount half away from zero at the cent from its six-decimal string
+([money.md](money.md)). A flow that formats a figure with `Number(v).toFixed(2)` can differ by a cent at a half cent
+(binary floating point), and a stated amount that differs from its cite is refused. Landflow's flows should state
+the posted figure Landledger gives, or round the string itself (review of wave 4, nit; Landflow's to change).
+
+**Left to Landflow** (review of wave 4, should-fix 15–18): the tool-or-seat flow's 409 after a crash between
+_Create_ and _Remember the seat request_ (look the request up and write the row; an hourly reconcile), a rejected
+break-glass seat that stays granted and an extension approved after its grant ended, and the incident-cost flow's
+labels and its windows over 31 days.
 
 If no agent answers, a person drafts from the template ([variance-notes.md](variance-notes.md)). Building Landflow's
 flow is Landflow's work.
@@ -174,7 +186,8 @@ Landfall itself knows nothing of Landledger.
 ### Datarails
 
 The connector talks to `fake-datarails` on this machine ([datarails.md](datarails.md)). It reads budgets over MCP
-and sends actuals and notes through the FileBox upload. A real tenant is wave 5.
+and sends actuals and notes through the FileBox upload. There is no tenant: wave 5 builds our own FP&A product, fed
+by Landledger ([plan.md](plan.md), Decision 4), and the connector stays as the contract it takes.
 
 ### Landlens
 

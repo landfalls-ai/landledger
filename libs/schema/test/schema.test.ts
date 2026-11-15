@@ -42,7 +42,9 @@ describe('the shipped migrations', () => {
     const sql = migrations
       .map((m) => m.sql)
       .join('\n')
-      .replace(/--.*$/gm, '');
+      .replace(/--.*$/gm, '')
+      // A type is never in a string literal: a seeded note may say "the real chart" (0015).
+      .replace(/'(?:[^']|'')*'/g, "''");
     expect(sql).not.toMatch(/\b(real|double precision|float\d?|money)\b/i);
     expect(sql).not.toMatch(/_minor\b/);
     const amounts = sql.match(/^ +\w+_micros +\w+/gm) ?? [];

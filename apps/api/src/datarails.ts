@@ -103,6 +103,9 @@ type UploadRow = {
   uploaded_at: Date;
 };
 
+/** The most rows one budget pull reads; a model with more is refused (narrow it by scenario). */
+export const PULL_LIMIT = 5000;
+
 export class Datarails {
   constructor(
     private readonly sql: Sql,
@@ -158,6 +161,8 @@ export class Datarails {
           ...(session ? { 'mcp-session-id': session } : {}),
         },
         body: JSON.stringify({ jsonrpc: '2.0', id: ++this.rpcId, method, params }),
+        // Review of wave 4 (should-fix 9): a redirect is refused, never followed off the machine.
+        redirect: 'error',
         signal: AbortSignal.timeout(15_000),
       });
     } catch (e) {
@@ -208,11 +213,22 @@ export class Datarails {
       { data_model_id: model.id },
       session,
     );
-    const q = await this.tool<{ rows: Array<Record<string, unknown>> }>(
+    const q = await this.tool<{ rows: Array<Record<string, unknown>>; total?: number }>(
       'query_data_model',
-      { data_model_id: model.id, ...(input.scenario ? { filters: { scenario: input.scenario } } : {}), limit: 5000 },
+      {
+        data_model_id: model.id,
+        ...(input.scenario ? { filters: { scenario: input.scenario } } : {}),
+        limit: PULL_LIMIT,
+      },
       session,
     );
+    // Review of wave 4, nit: a pull that hit the limit is refused, never kept cut short.
+    if ((typeof q.total === 'number' && q.total > q.rows.length) || q.rows.length >= PULL_LIMIT)
+      throw new ApiError(
+        'unprocessable',
+        `${model.name} returned ${q.rows.length} of ${q.total ?? 'more'} rows: name a scenario to narrow it; nothing was kept`,
+        { returned: q.rows.length, total: q.total ?? null },
+      );
     const { rows, problems } = rowsByAlias(q.rows, fields);
     if (problems.length)
       throw new ApiError('unprocessable', `Datarails' rows have ${problems.length} problem(s); nothing was kept`, {
@@ -385,25 +401,32 @@ export class Datarails {
     if (!s) throw new ApiError('conflict', `${month} has no snapshot: the accrual (step 7) freezes it`);
     const f = s.figures;
     const accrualBy = new Map<string, Money>();
+    const prepaidBy = new Map<string, Money>();
     if (f.accrual) {
-      const lines = await this.sql<{ cost_center: string; amount_micros: string }[]>`
-        SELECT cost_center, amount_micros FROM accrual_lines WHERE accrual_id = ${f.accrual.id}`;
-      for (const l of lines)
-        accrualBy.set(
+      const lines = await this.sql<{ cost_center: string; amount_micros: string; kind: string }[]>`
+        SELECT cost_center, amount_micros, kind FROM accrual_lines WHERE accrual_id = ${f.accrual.id}`;
+      for (const l of lines) {
+        const into = l.kind === 'prepaid' ? prepaidBy : accrualBy;
+        into.set(
           l.cost_center,
-          (accrualBy.get(l.cost_center) ?? Money.zero(USD)).plus(Money.ofMicros(l.amount_micros, USD)),
+          (into.get(l.cost_center) ?? Money.zero(USD)).plus(Money.ofMicros(l.amount_micros, USD)),
         );
+      }
     }
+    // Review of wave 4 (should-fix 13): one figure to book per cost center, `total_excl_notional` (invoiced and
+    // estimated). The rest are memos a mapping must never add: the notional cluster cost is never booked, the accrual is
+    // the estimated part again (as the journal books it) and the prepaid amortisation is an asset's expense.
     const actuals = [
       [
         'cost_center',
         'cost_center_name',
         'period',
-        'estimated',
         'invoiced',
-        'notional',
-        'total',
-        'accrual',
+        'estimated',
+        'total_excl_notional',
+        'memo_notional_not_booked',
+        'memo_accrual_in_total',
+        'memo_prepaid_amortised',
         'budget',
         'currency',
         'snapshot_sha256',
@@ -412,11 +435,12 @@ export class Datarails {
         c.code,
         c.name,
         month,
-        Money.parse(c.estimated, USD).toCsv(),
         Money.parse(c.invoiced, USD).toCsv(),
+        Money.parse(c.estimated, USD).toCsv(),
+        Money.parse(c.estimated, USD).plus(Money.parse(c.invoiced, USD)).toCsv(),
         Money.parse(c.notional, USD).toCsv(),
-        Money.parse(c.total, USD).toCsv(),
         (accrualBy.get(c.code) ?? Money.zero(USD)).toCsv(),
+        (prepaidBy.get(c.code) ?? Money.zero(USD)).toCsv(),
         c.budget === null ? '' : Money.parse(c.budget, USD).toCsv(),
         USD,
         s.sha256,
@@ -488,6 +512,7 @@ export class Datarails {
           authorization: `Basic ${Buffer.from(`${this.config.user}:${this.config.password}`).toString('base64')}`,
         },
         body: form,
+        redirect: 'error',
         signal: AbortSignal.timeout(30_000),
       });
       status = res.status;

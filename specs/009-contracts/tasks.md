@@ -15,3 +15,7 @@
   reminders 7 and 1 days before; `contract.notice_missed`.
 - [x] R003 Nits: annual value over the exact term; the dev principal imports contracts; `termEnd` checked.
 - [x] R004 Console: held imports, covered, as-of, business-day notice; the dev fixture box only on a dev API.
+
+## Review of wave 4
+
+- [x] R001 Should-fix 12: `billing` on each contract version (`monthly_in_arrears` by default).

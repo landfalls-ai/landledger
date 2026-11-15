@@ -58,6 +58,8 @@ type SnapRow = {
   frozen_by: string;
   frozen_at: Date;
   frozen_email?: string | null;
+  /** Review of wave 4: `lock` when the first signature froze it (steps 7–9 explained), else `accrual`. */
+  reason?: 'accrual' | 'lock';
 };
 
 /** The drivers of a note: the services, agents and models whose cost changed most against the month before. */
@@ -199,6 +201,7 @@ export class Snapshots {
       code: string,
       name: string,
       actualS: string,
+      notionalS: string,
       budgetS: string | null,
       mine: Line[],
       prior: Line[],
@@ -212,6 +215,8 @@ export class Snapshots {
         costCenter: code,
         name,
         actual: amount(actual),
+        // Review of wave 4 (should-fix 13): the notional cluster cost inside `actual`, which is never booked.
+        notional: amount(Money.parse(notionalS, USD)),
         budget: budget ? amount(budget) : null,
         forecastDay10: forecast ? amount(forecast) : null,
         varianceBudget: vb ? amount(vb) : null,
@@ -231,14 +236,16 @@ export class Snapshots {
           ),
         )
       : null;
-    out.push(await build(TOTAL, `The month (${month})`, ledger.total.total, totalBudget, lines, before));
+    out.push(
+      await build(TOTAL, `The month (${month})`, ledger.total.total, ledger.total.notional, totalBudget, lines, before),
+    );
     for (const c of ledger.byCostCenter) {
       if (c.code === CORRECTIONS) continue;
       const hasActual = !Money.parse(c.total, USD).posted().isZero();
       if (!hasActual && c.budget === null) continue;
       const mine = lines.filter((l) => !l.correction && l.costCenter === c.code);
       const prior = before.filter((l) => !l.correction && l.costCenter === c.code);
-      out.push(await build(c.code, c.name, c.total, c.budget, mine, prior));
+      out.push(await build(c.code, c.name, c.total, c.notional, c.budget, mine, prior));
     }
     return out;
   }
@@ -273,7 +280,9 @@ export class Snapshots {
       accrual: CloseSnapshotFigures['accrual'];
       gates: CloseSnapshotFigures['gates'];
       by: { id: string; actor: string };
-      accrualId: string;
+      accrualId: string | null;
+      /** Review of wave 4 (should-fix 2): `lock` when the first signature freezes it (no accrual froze one). */
+      reason?: 'accrual' | 'lock';
     },
   ): Promise<{ id: string; sha256: string; version: number }> {
     const lines = await this.monthLines(month);
@@ -292,9 +301,9 @@ export class Snapshots {
     ];
     const id = newId('snap');
     await tx`
-      INSERT INTO close_snapshots (id, month, version, figures, sha256, ledger_sha256, accrual_id, frozen_by)
+      INSERT INTO close_snapshots (id, month, version, figures, sha256, ledger_sha256, accrual_id, frozen_by, reason)
       VALUES (${id}, ${`${month}-01`}, ${next}, ${tx.json(figures as never)}, ${hash}, ${Snapshots.ledgerSha(ledger)},
-              ${input.accrualId}, ${input.by.id})`;
+              ${input.accrualId}, ${input.by.id}, ${input.reason ?? 'accrual'})`;
     await this.audit.append(
       {
         actor: input.by.actor,
@@ -302,7 +311,13 @@ export class Snapshots {
         action: 'close.snapshot_frozen',
         subjectType: 'period',
         subjectId: month,
-        data: { snapshotId: id, version: Number(next), sha256: hash, ledgerSha256: Snapshots.ledgerSha(ledger) },
+        data: {
+          snapshotId: id,
+          version: Number(next),
+          sha256: hash,
+          ledgerSha256: Snapshots.ledgerSha(ledger),
+          reason: input.reason ?? 'accrual',
+        },
       },
       tx,
     );

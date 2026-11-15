@@ -6,6 +6,12 @@
  * The lock takes two people, a controller and the CFO: the second signature locks the month, writes the lock's audit
  * entry and anchors it outside the database at once. A locked month reopens only by a `period_reopen` request the CFO
  * approves; its ledger stays closed to inserts (corrections post to the open month) and two people lock it again.
+ *
+ * Review of wave 4: each signature is on one snapshot (its sha256), by a signer who was served it; only signatures on
+ * the current snapshot count, and the first signature freezes one when no accrual did. An explanation holds only while
+ * the problems it explained stand. A reopened round is started again and re-runs steps 2 and 5. The lock stores the
+ * round's package and its sha256. Segregation of duties: the close's start, the accrual's acceptance and the
+ * controller's signature take at least two different people, besides the CFO.
  */
 import { UNALLOCATED } from '@landledger/allocation';
 import {
@@ -22,16 +28,18 @@ import type { AccessReviews } from './access-review.js';
 import { nextMonth } from './accruals.js';
 import type { Accruals } from './accruals.js';
 import { anchorAudit } from './anchors.js';
+import { localParts } from './business-hours.js';
 import type { Anomalies } from './anomalies.js';
 import type { AuditLog } from './audit.js';
+import { canonicalJson } from './canonical.js';
 import { day as dayOf, type Sql, type Tx } from './db.js';
 import { ApiError } from './errors.js';
-import { newId } from './ids.js';
+import { newId, sha256 } from './ids.js';
 import type { IngestLog } from './ingest/runner.js';
 import type { Invoices } from './invoices.js';
 import type { Periods } from './ledger.js';
 import { monthLabel, type Notes } from './notes.js';
-import { actorOf, type Principal } from './principal.js';
+import { actorOf, type Principal, refuseServiceLike } from './principal.js';
 import type { Requests } from './requests.js';
 import { DEV_FIXTURE } from './read-rule.js';
 import type { Snapshots } from './snapshot.js';
@@ -53,6 +61,25 @@ export const STEP_TITLES: Record<CloseStepKey, string> = {
 };
 export const STEP_ORDER = Object.keys(STEP_TITLES) as CloseStepKey[];
 
+/** The sha256 of the problems an explanation explained (review of wave 4, should-fix 3): order does not matter. */
+export const problemsSha = (problems: readonly string[]) => sha256(canonicalJson([...problems].sort()));
+
+/** A reconciliation row's problem, as step 2 states it and as its explanation stores it. */
+export const rowProblem = (x: {
+  provider: string;
+  model: string;
+  status: string;
+  estimated: string;
+  invoiced: string;
+}) =>
+  `${x.provider} ${x.model}: ${x.status.replace('_', ' ')} (estimated ${Money.parse(x.estimated, USD).posted().toCsv()}, invoiced ${Money.parse(x.invoiced, USD).posted().toCsv()})`;
+
+/** How long ago a signer must have been served the snapshot they sign (should-fix 1): within the last 24 hours. */
+export const SEEN_WITHIN_MS = 24 * 3_600_000;
+
+/** Steps a reopened round runs again live (should-fix 4): reconciliation and anomalies; 1, 3, 4 and 6 stand. */
+const RERUN_ON_REOPEN: readonly number[] = [1, 4];
+
 /** A reconciliation row needs nothing: matched, or nothing on one side to compare. */
 export function rowOk(r: { status: string; estimated: string; invoiced: string; lateEstimates?: number }): boolean {
   if (r.lateEstimates) return false;
@@ -72,6 +99,7 @@ type ExplRow = {
   step: CloseStepKey;
   row_key: string | null;
   note: string;
+  problems_sha256: string | null;
   email: string | null;
   name: string;
   explained_at: Date;
@@ -86,9 +114,19 @@ type LockRow = {
   audit_seq: string;
   audit_hash: string;
   snapshot_sha: string | null;
+  package_sha256: string | null;
 };
 
+/** What the lock stores of the round's package (built by MonthEndPackages, bound late). */
+export type Packager = (
+  month: string,
+  round: number,
+  signoffs: LockSignoff[],
+) => Promise<{ files: unknown; manifest: string; sha256: string }>;
+
 export class Close {
+  packager: Packager | null = null;
+
   constructor(
     private readonly sql: Sql,
     private readonly audit: AuditLog,
@@ -101,13 +139,18 @@ export class Close {
     private readonly accruals: Accruals,
     private readonly notes: Notes,
     private readonly requests: Requests,
-    private readonly config: { consoleUrl: string; unallocatedPct: string },
+    private readonly config: { consoleUrl: string; unallocatedPct: string; timeZone?: string },
     private readonly log: IngestLog,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
+  /** LANDLEDGER_TZ's today: a month ends in local time, as invoices read it (review of wave 4, nit). */
+  private today() {
+    return localParts(this.now().getTime(), this.config.timeZone ?? 'UTC').date;
+  }
+
   private ended(month: string) {
-    return this.now().getTime() >= Date.parse(`${nextMonth(month)}-01T00:00:00Z`);
+    return this.today().slice(0, 7) > month;
   }
 
   // The period's state ------------------------------------------------------------------------------------------------
@@ -116,16 +159,23 @@ export class Close {
   async period(
     month: string,
     tx: Tx = this.sql,
-  ): Promise<{ status: 'open' | 'closing' | 'locked'; round: number; reopened: boolean }> {
+  ): Promise<{ status: 'open' | 'closing' | 'locked'; round: number; reopened: boolean; started: boolean }> {
     const first = `${month}-01`;
     const [r] = (await tx`
       SELECT (SELECT status FROM periods WHERE month = ${first}) AS status,
              (SELECT count(*)::int FROM period_reopens WHERE month = ${first}) AS reopens,
-             (SELECT count(*)::int FROM close_locks WHERE month = ${first}) AS locks`) as unknown as [
-      { status: string | null; reopens: number; locks: number },
+             (SELECT count(*)::int FROM close_locks l WHERE l.month = ${first} AND l.round = (
+                SELECT count(*)::int FROM period_reopens WHERE month = ${first})) AS relocked,
+             (SELECT count(*)::int FROM close_round_starts WHERE month = ${first}) AS starts`) as unknown as [
+      { status: string | null; reopens: number; relocked: number; starts: number },
     ];
     const status = (r.status ?? 'open') as 'open' | 'closing' | 'locked';
-    return { status, round: r.reopens, reopened: status === 'locked' && r.reopens > 0 && r.locks <= r.reopens };
+    // Reopened: the newest round has no lock yet (a month locked before wave 4 has no close_locks row for round 0, so
+    // the rounds are read by number, never by counting locks: review of wave 4, nit).
+    const reopened = status === 'locked' && r.reopens > 0 && r.relocked === 0;
+    // A reopened round is started again (by a controller, the CFO or FP&A) before its steps 7–10 can be done.
+    const started = status === 'open' ? false : reopened ? r.starts >= r.reopens : true;
+    return { status, round: r.reopens, reopened, started };
   }
 
   // Gates 1–6 -------------------------------------------------------------------------------------------------------
@@ -141,7 +191,8 @@ export class Close {
     };
   }
 
-  private async gate2(month: string, explained: Set<string>): Promise<Gate> {
+  /** `explained`: per row key, the problem sha256 of each of its explanations (null: from before the review). */
+  private async gate2(month: string, explained: Map<string, (string | null)[]>): Promise<Gate> {
     const r = await this.invoices.reconciliation(month);
     const rows = r.rows
       .filter((x) => !x.devFixture)
@@ -156,7 +207,8 @@ export class Close {
           invoiced: x.invoiced,
           variancePct: x.variancePct,
           ok: rowOk(x),
-          explained: explained.has(key),
+          // Should-fix 3: an explanation holds while the row's problem is the one it explained.
+          explained: (explained.get(key) ?? []).some((sha) => sha === null || sha === problemsSha([rowProblem(x)])),
         };
       });
     const bad = rows.filter((x) => !x.ok && !x.explained);
@@ -165,10 +217,7 @@ export class Close {
       summary: rows.length
         ? `${rows.filter((x) => x.ok).length} of ${rows.length} provider × model row(s) need nothing; tolerance ±${r.tolerancePct}%`
         : 'Nothing to reconcile in the month',
-      problems: bad.map(
-        (x) =>
-          `${x.provider} ${x.model}: ${x.status.replace('_', ' ')} (estimated ${Money.parse(x.estimated, USD).posted().toCsv()}, invoiced ${Money.parse(x.invoiced, USD).posted().toCsv()})`,
-      ),
+      problems: bad.map((x) => rowProblem(x)),
       rows,
     };
   }
@@ -213,7 +262,8 @@ export class Close {
   }
 
   private async gate5(month: string): Promise<Gate> {
-    const all = await this.anomalies.list({ status: 'all', limit: 500 });
+    // Every anomaly of the month (review of wave 4, nit: not the newest 500 of all months).
+    const all = await this.anomalies.list({ status: 'all', limit: 1_000_000, month });
     const open = all.filter((a) => a.windowStart.slice(0, 7) === month && a.status !== 'closed');
     const of = all.filter((a) => a.windowStart.slice(0, 7) === month).length;
     return {
@@ -282,7 +332,9 @@ export class Close {
 
   private async gate9(month: string, notesAt: string | null): Promise<Gate> {
     const s = await this.snapshots.latest(month);
-    if (!s) return { ok: false, summary: 'No snapshot yet', problems: ['Nothing to upload before the snapshot'] };
+    // A snapshot the lock froze (should-fix 2) is no upload's: step 9 reads as before it, so its explanation holds.
+    if (!s || s.reason === 'lock')
+      return { ok: false, summary: 'No snapshot yet', problems: ['Nothing to upload before the snapshot'] };
     const [u] = await this.sql<{ uploaded_at: Date; email: string | null; status: number }[]>`
       SELECT d.uploaded_at, u.email, d.status FROM datarails_uploads d LEFT JOIN users u ON u.id = d.uploaded_by
       WHERE d.snapshot_id = ${s.id} AND d.ok
@@ -309,7 +361,7 @@ export class Close {
 
   private async explanations(month: string, round: number): Promise<ExplRow[]> {
     return this.sql<ExplRow[]>`
-      SELECT e.id, e.step, e.row_key, e.note, u.email, u.name, e.explained_at
+      SELECT e.id, e.step, e.row_key, e.note, e.problems_sha256, u.email, u.name, e.explained_at
       FROM close_explanations e JOIN users u ON u.id = e.explained_by
       WHERE e.month = ${`${month}-01`} AND e.round = ${round} ORDER BY e.explained_at`;
   }
@@ -320,23 +372,85 @@ export class Close {
       WHERE l.month = ${`${month}-01`} ORDER BY l.round`;
   }
 
-  private async signoffs(month: string, round: number, tx: Tx = this.sql): Promise<LockSignoff[]> {
+  /**
+   * The round's signatures that count: those on `snapshotSha` (should-fix 1). `undefined` reads every signature of the
+   * round (a signature from before the review has no snapshot).
+   */
+  private async signoffs(
+    month: string,
+    round: number,
+    snapshotSha: string | null | undefined,
+    tx: Tx = this.sql,
+  ): Promise<LockSignoff[]> {
     const rows = await tx<
-      { person_id: string; name: string; email: string | null; role: 'controller' | 'cfo'; signed_at: Date }[]
+      {
+        person_id: string;
+        name: string;
+        email: string | null;
+        role: 'controller' | 'cfo';
+        signed_at: Date;
+        snapshot_sha256: string | null;
+        seen_at: Date | null;
+      }[]
     >`
-      SELECT s.person_id, u.name, u.email, s.role, s.signed_at FROM close_signoffs s JOIN users u ON u.id = s.person_id
-      WHERE s.month = ${`${month}-01`} AND s.round = ${round} ORDER BY s.signed_at`;
+      SELECT s.person_id, u.name, u.email, s.role, s.signed_at, s.snapshot_sha256, s.seen_at
+      FROM close_signoffs s JOIN users u ON u.id = s.person_id
+      WHERE s.month = ${`${month}-01`} AND s.round = ${round}
+        AND (${snapshotSha === undefined} OR s.snapshot_sha256 IS NOT DISTINCT FROM ${snapshotSha ?? null})
+      ORDER BY s.signed_at`;
     return rows.map((r) => ({
       person: { id: r.person_id, name: r.name, email: r.email },
       role: r.role,
       at: r.signed_at.toISOString(),
+      snapshotSha256: r.snapshot_sha256,
+      seenAt: r.seen_at?.toISOString() ?? null,
     }));
+  }
+
+  /**
+   * Segregation of duties (review of wave 4): who started the round (the close's start, or a reopened round's start),
+   * who accepted the accrual the newest snapshot froze, and who signed as controller on it.
+   */
+  async duties(
+    month: string,
+    round: number,
+    tx: Tx = this.sql,
+  ): Promise<{
+    started: { id: string; label: string } | null;
+    accrual: { id: string; label: string } | null;
+    controller: { id: string; label: string } | null;
+  }> {
+    const first = `${month}-01`;
+    const label = (r: { id: string | null; email: string | null; name: string | null } | undefined) =>
+      r?.id ? { id: r.id, label: r.email ?? r.name ?? r.id } : null;
+    const [st] =
+      round === 0
+        ? await tx<{ id: string | null; email: string | null; name: string | null }[]>`
+            SELECT p.closing_by AS id, u.email, u.name FROM periods p LEFT JOIN users u ON u.id = p.closing_by
+            WHERE p.month = ${first}`
+        : await tx<{ id: string | null; email: string | null; name: string | null }[]>`
+            SELECT s.started_by AS id, u.email, u.name FROM close_round_starts s LEFT JOIN users u ON u.id = s.started_by
+            WHERE s.month = ${first} AND s.round = ${round}`;
+    const snap = await this.snapshots.latest(month, tx);
+    const [ac] = snap?.accrual_id
+      ? await tx<{ id: string | null; email: string | null; name: string | null }[]>`
+          SELECT d.decided_by AS id, u.email, u.name FROM accrual_decisions d LEFT JOIN users u ON u.id = d.decided_by
+          WHERE d.accrual_id = ${snap.accrual_id} AND d.outcome = 'accepted'`
+      : [];
+    const ctl = (await this.signoffs(month, round, snap?.sha256 ?? null, tx)).find((x) => x.role === 'controller');
+    return {
+      started: label(st),
+      accrual: label(ac),
+      controller: ctl ? { id: ctl.person.id, label: ctl.person.email ?? ctl.person.name } : null,
+    };
   }
 
   /** Steps 1–6 as they stand now, with this round's explanations: what the accrual's acceptance needs. */
   private async liveSteps(month: string, round: number, upTo: number): Promise<CloseStepView[]> {
     const expl = await this.explanations(month, round);
-    const rowExpl = new Set(expl.filter((e) => e.step === 'reconciled' && e.row_key).map((e) => e.row_key!));
+    const rowExpl = new Map<string, (string | null)[]>();
+    for (const e of expl.filter((x) => x.step === 'reconciled' && x.row_key))
+      rowExpl.set(e.row_key!, [...(rowExpl.get(e.row_key!) ?? []), e.problems_sha256]);
     const at = this.now().toISOString();
     const gates: Partial<Record<CloseStepKey, Gate>> = {};
     [
@@ -370,7 +484,10 @@ export class Close {
         explainable &&
         (key === 'reconciled'
           ? g.rows!.every((r) => r.ok || r.explained) && g.rows!.some((r) => !r.ok)
-          : mine.some((e) => !e.row_key));
+          : // Should-fix 3: an explanation holds while the step's problems are the ones it explained.
+            mine.some(
+              (e) => !e.row_key && (e.problems_sha256 === null || e.problems_sha256 === problemsSha(g.problems)),
+            ));
       let state: CloseStepView['state'] = g.ok ? 'done' : explained ? 'explained' : 'red';
       if (i >= 6 && blocked && state === 'red') state = 'waiting';
       if (state === 'red' || state === 'waiting') blocked = true;
@@ -399,6 +516,21 @@ export class Close {
     return steps;
   }
 
+  /**
+   * Steps 1–`upTo` of a reopened round (should-fix 4): 1, 3, 4 and 6 stand as the last lock had them (the ledger is
+   * closed to inserts); 2 and 5 run again live, as do 7–9. A month locked before wave 4 has no lock row: all run live.
+   */
+  private async reopenedSteps(month: string, round: number, upTo: number): Promise<CloseStepView[]> {
+    const was = (await this.locks(month)).at(-1);
+    const live = await this.liveSteps(month, round, upTo);
+    if (!was) return live;
+    return live.map((s, i) =>
+      i < 6 && !RERUN_ON_REOPEN.includes(i) && was.gates[i]
+        ? { ...was.gates[i]!, summary: `${was.gates[i]!.summary} (as locked in round ${was.round})` }
+        : s,
+    );
+  }
+
   /** The gates for the accrual (spec 013): steps 1–6 each done or explained. */
   async gates(month: string): Promise<{
     ok: boolean;
@@ -406,9 +538,7 @@ export class Close {
     gates: Array<{ key: CloseStepKey; state: CloseStepView['state']; summary: string }>;
   }> {
     const p = await this.period(month);
-    const steps = p.reopened
-      ? (await this.locks(month)).at(-1)!.gates.slice(0, 6)
-      : await this.liveSteps(month, p.round, 6);
+    const steps = p.reopened ? await this.reopenedSteps(month, p.round, 6) : await this.liveSteps(month, p.round, 6);
     const red = steps.filter((s) => s.state !== 'done' && s.state !== 'explained');
     return {
       ok: !red.length,
@@ -420,23 +550,21 @@ export class Close {
   async view(month: string): Promise<CloseView> {
     const p = await this.period(month);
     const locks = await this.locks(month);
-    const signoffs = await this.signoffs(month, p.round);
+    const snap = await this.snapshots.latest(month);
+    const signoffs = await this.signoffs(month, p.round, snap?.sha256 ?? null);
     let steps: CloseStepView[];
     if (p.status === 'locked' && !p.reopened) steps = locks.at(-1)?.gates ?? [];
     else if (p.reopened) {
-      // The ledger is closed to inserts: steps 1–6 stand as they were locked; 7–9 can be done again.
-      const was = locks.at(-1)!;
-      const live = (await this.liveSteps(month, p.round, 9)).slice(6);
+      // The ledger is closed to inserts: steps 1, 3, 4 and 6 stand as they were locked; 2, 5 and 7–9 run again.
+      const live = await this.reopenedSteps(month, p.round, 9);
       steps = [
-        ...was.gates.slice(0, 6).map((s) => ({ ...s, summary: `${s.summary} (as locked in round ${was.round})` })),
         ...live,
-      ];
-      steps.push(
         this.lockStep(
           signoffs,
-          live.some((s) => s.state === 'red' || s.state === 'waiting'),
+          !p.started || live.some((s) => s.state === 'red' || s.state === 'waiting'),
+          p.started ? null : `Round ${p.round} isn't started yet: a controller, the CFO or FP&A starts it`,
         ),
-      );
+      ];
     } else {
       const live = await this.liveSteps(month, p.round, 9);
       steps = [
@@ -464,7 +592,7 @@ export class Close {
       );
     }
     const done = steps.filter((s) => s.state === 'done' || s.state === 'explained').length;
-    const snap = await this.snapshots.latest(month);
+    const duties = await this.duties(month, p.round);
     const anchors = await Promise.all(locks.map((l) => this.anchorOf(Number(l.audit_seq))));
     const reopens = await this.sql<
       {
@@ -491,6 +619,7 @@ export class Close {
       round: p.round,
       ended: this.ended(month),
       dryRun: p.status === 'open',
+      roundStarted: p.started,
       steps,
       done,
       next: steps.find((s) => s.state !== 'done' && s.state !== 'explained')?.key ?? null,
@@ -512,7 +641,13 @@ export class Close {
         auditHash: l.audit_hash,
         anchor: anchors[i]!,
         snapshotSha256: l.snapshot_sha,
+        packageSha256: l.package_sha256,
       })),
+      duties: {
+        startedBy: duties.started?.label ?? null,
+        accrualAcceptedBy: duties.accrual?.label ?? null,
+        controllerSignedBy: duties.controller?.label ?? null,
+      },
       reopens: reopens.map((r) => ({
         round: r.round,
         requestId: r.request_id,
@@ -529,7 +664,7 @@ export class Close {
     };
   }
 
-  private lockStep(signoffs: LockSignoff[], blocked: boolean): CloseStepView {
+  private lockStep(signoffs: LockSignoff[], blocked: boolean, why: string | null = null): CloseStepView {
     const roles = new Set(signoffs.map((s) => s.role));
     const missing = (['controller', 'cfo'] as const).filter((r) => !roles.has(r));
     return {
@@ -537,9 +672,11 @@ export class Close {
       key: 'locked',
       title: STEP_TITLES.locked,
       state: blocked ? 'waiting' : 'red',
-      summary: signoffs.length
-        ? `Signed by ${signoffs.map((s) => `${s.person.name} (${s.role === 'cfo' ? 'CFO' : 'controller'})`).join(', ')}; waiting for the ${missing.map((r) => (r === 'cfo' ? 'CFO' : 'controller')).join(' and ')}`
-        : 'Two people sign: a controller and the CFO',
+      summary: why
+        ? why
+        : signoffs.length
+          ? `Signed by ${signoffs.map((s) => `${s.person.name} (${s.role === 'cfo' ? 'CFO' : 'controller'})`).join(', ')}; waiting for the ${missing.map((r) => (r === 'cfo' ? 'CFO' : 'controller')).join(' and ')}`
+          : 'Two people sign: a controller and the CFO',
       problems: missing.map((r) => `The ${r === 'cfo' ? 'CFO' : 'controller'}'s signature`),
       by: null,
       at: null,
@@ -566,13 +703,38 @@ export class Close {
       );
   }
 
-  /** open → closing: a controller or the CFO starts the close once the month has ended. */
+  /**
+   * open → closing: a controller, the CFO or FP&A starts the close once the month has ended (no money moves; the
+   * duties rule counts the starter). On a reopened month, the same call starts the new round.
+   */
   async start(month: string, note: string, by: Principal): Promise<CloseView> {
-    this.person(by, ['controller', 'cfo'], 'starts a close');
-    if (month > this.now().toISOString().slice(0, 7)) throw new ApiError('bad_request', `${month} hasn't started yet`);
+    this.person(by, ['controller', 'cfo', 'fpa'], 'starts a close');
+    refuseServiceLike(by, 'starts a close');
+    if (month > this.today().slice(0, 7)) throw new ApiError('bad_request', `${month} hasn't started yet`);
     if (!this.ended(month))
       throw new ApiError('conflict', `${month} hasn't ended yet: its close starts on ${nextMonth(month)}-01`);
-    await this.periods.advance(month, 'closing', by);
+    const p = await this.period(month);
+    if (p.reopened) {
+      if (p.started) throw new ApiError('conflict', `Round ${p.round} of ${month}'s close is started already`);
+      await this.sql.begin(async (tx) => {
+        await tx`SELECT pg_advisory_xact_lock(hashtext(${`period:${month}`}))`;
+        await tx`
+          INSERT INTO close_round_starts (month, round, started_by, note)
+          VALUES (${`${month}-01`}, ${p.round}, ${by.id}, ${note}) ON CONFLICT DO NOTHING`;
+        await this.audit.append(
+          {
+            ...actorOf(by),
+            action: 'close.round_started',
+            subjectType: 'period',
+            subjectId: month,
+            data: { round: p.round, note },
+          },
+          tx,
+        );
+      });
+      return this.view(month);
+    }
+    await this.periods.advance(month, 'closing', by, undefined, { fpaStarts: true });
     if (note)
       await this.audit.append({
         ...actorOf(by),
@@ -582,6 +744,19 @@ export class Close {
         data: { note },
       });
     return this.view(month);
+  }
+
+  /**
+   * Records that a person was served the month's newest snapshot (the close page, the snapshot or the package): the
+   * evidence a signature needs that its signer saw what they signed (review of wave 4, should-fix 1).
+   */
+  async served(month: string, by: Principal): Promise<void> {
+    if (by.kind !== 'person') return;
+    const snap = await this.snapshots.latest(month);
+    if (!snap) return;
+    await this.sql`
+      INSERT INTO close_snapshot_views (id, month, snapshot_id, person_id, served_at)
+      VALUES (${newId('csv')}, ${`${month}-01`}, ${snap.id}, ${by.id}, ${this.now()})`;
   }
 
   /** A red step explained with a note (audited). Never step 4 or 10; step 2 one row at a time. */
@@ -599,8 +774,10 @@ export class Close {
     const p = await this.period(month);
     if (p.status === 'open') throw new ApiError('conflict', `${month}'s close hasn't started: this is a dry run`);
     if (p.status === 'locked' && !p.reopened) throw new ApiError('conflict', `${month} is locked`);
-    if (p.reopened && STEP_ORDER.indexOf(input.step) < 6)
-      throw new ApiError('conflict', `${month} is reopened: steps 1–6 stand as they were locked`);
+    if (p.reopened && !p.started) throw new ApiError('conflict', `Start round ${p.round} of ${month}'s close first`);
+    const at = STEP_ORDER.indexOf(input.step);
+    if (p.reopened && at < 6 && !RERUN_ON_REOPEN.includes(at))
+      throw new ApiError('conflict', `${month} is reopened: steps 1, 3, 4 and 6 stand as they were locked`);
     const view = await this.view(month);
     const step = view.steps.find((s) => s.key === input.step)!;
     if (step.state === 'done') throw new ApiError('conflict', `Step ${step.number} is done: nothing to explain`);
@@ -614,11 +791,16 @@ export class Close {
       if (row.explained) throw new ApiError('conflict', `${input.rowKey} is explained already`);
     } else if (input.rowKey) throw new ApiError('bad_request', 'Only step 2 explains a row');
     else if (step.state === 'explained') throw new ApiError('conflict', `Step ${step.number} is explained already`);
+    // Should-fix 3: what is explained is stored with it; a changed list turns the step (or row) red again.
+    const explainedProblems = input.rowKey
+      ? [rowProblem(step.rows!.find((r) => r.key === input.rowKey)!)]
+      : step.problems;
     const id = newId('cex');
     await this.sql.begin(async (tx) => {
       await tx`
-        INSERT INTO close_explanations (id, month, round, step, row_key, note, explained_by)
-        VALUES (${id}, ${`${month}-01`}, ${p.round}, ${input.step}, ${input.rowKey ?? null}, ${input.note}, ${by.id})`;
+        INSERT INTO close_explanations (id, month, round, step, row_key, note, explained_by, problems, problems_sha256)
+        VALUES (${id}, ${`${month}-01`}, ${p.round}, ${input.step}, ${input.rowKey ?? null}, ${input.note}, ${by.id},
+                ${tx.json(explainedProblems as never)}, ${problemsSha(explainedProblems)})`;
       await this.audit.append(
         {
           ...actorOf(by),
@@ -630,7 +812,8 @@ export class Close {
             step: input.step,
             ...(input.rowKey ? { rowKey: input.rowKey } : {}),
             note: input.note,
-            problems: step.problems,
+            problems: explainedProblems,
+            problemsSha256: problemsSha(explainedProblems),
           },
         },
         tx,
@@ -641,31 +824,79 @@ export class Close {
 
   /**
    * A signature on the lock. The first (a controller or the CFO) waits for the second, a different person in the other
-   * role; the second locks the month, writes the anchored audit entry and the lock's row.
+   * role; the second locks the month, stores the round's package, writes the anchored audit entry and the lock's row.
+   *
+   * Review of wave 4: the signature names the snapshot it is on (409 if it is not the current one) and its signer must
+   * have been served that snapshot (should-fix 1); with no snapshot yet, the first signature freezes one (should-fix
+   * 2); the gates are read under the period's and the accrual's locks (nit); a controller's signature keeps the duties
+   * rule. Only signatures on the current snapshot count.
    */
-  async sign(month: string, input: { as?: 'controller' | 'cfo'; note: string }, by: Principal): Promise<LockResult> {
+  async sign(
+    month: string,
+    input: { as?: 'controller' | 'cfo'; note: string; snapshotSha256?: string | null },
+    by: Principal,
+  ): Promise<LockResult> {
     this.person(by, ['controller', 'cfo'], 'signs a lock');
+    refuseServiceLike(by, 'signs a lock');
     const mine = (['controller', 'cfo'] as const).filter((r) => by.roles.includes(r));
     if (input.as && !mine.includes(input.as)) throw new ApiError('forbidden', `You don't hold the ${input.as} role`);
-    const p = await this.period(month);
-    if (p.status === 'open')
-      throw new ApiError('conflict', `Start ${month}'s close first: a month moves open → closing → locked`);
-    if (p.status === 'locked' && !p.reopened)
-      throw new ApiError('conflict', `${month} is locked: a reopen request (the CFO decides) lets it change`);
-    const view = await this.view(month);
-    const red = view.steps.filter((s) => s.key !== 'locked' && s.state !== 'done' && s.state !== 'explained');
-    if (red.length)
-      throw new ApiError(
-        'conflict',
-        `${month} isn't ready to lock: ${red.map((s) => `step ${s.number} (${s.title})`).join(', ')} not done or explained`,
-        { problems: red.flatMap((s) => s.problems.map((x) => `step ${s.number}: ${x}`)) },
-      );
-    if (view.snapshot && !view.snapshot.current)
-      throw new ApiError('conflict', "The month's figures moved since the snapshot: propose the accrual again");
     const first = `${month}-01`;
     const result = await this.sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext(${`period:${month}`}))`;
-      const already = await this.signoffs(month, p.round, tx);
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`accruals:${month}`}))`;
+      const p = await this.period(month, tx);
+      if (p.status === 'open')
+        throw new ApiError('conflict', `Start ${month}'s close first: a month moves open → closing → locked`);
+      if (p.status === 'locked' && !p.reopened)
+        throw new ApiError('conflict', `${month} is locked: a reopen request (the CFO decides) lets it change`);
+      if (!p.started) throw new ApiError('conflict', `Start round ${p.round} of ${month}'s close first`);
+      const view = await this.view(month);
+      const red = view.steps.filter((s) => s.key !== 'locked' && s.state !== 'done' && s.state !== 'explained');
+      if (red.length)
+        throw new ApiError(
+          'conflict',
+          `${month} isn't ready to lock: ${red.map((s) => `step ${s.number} (${s.title})`).join(', ')} not done or explained`,
+          { problems: red.flatMap((s) => s.problems.map((x) => `step ${s.number}: ${x}`)) },
+        );
+      let snap = await this.snapshots.latest(month, tx);
+      if (snap && !(await this.snapshots.isCurrent(snap)))
+        throw new ApiError('conflict', "The month's figures moved since the snapshot: propose the accrual again");
+      let seenAt: Date | null = null;
+      if (snap) {
+        if (input.snapshotSha256 !== snap.sha256)
+          throw new ApiError(
+            'conflict',
+            input.snapshotSha256
+              ? 'The snapshot changed since it was shown to you: reload the close and sign what it shows'
+              : 'Name the snapshot you sign (its sha256, as the close shows it)',
+            { snapshotSha256: snap.sha256 },
+          );
+        const [v] = await tx<{ at: Date | null }[]>`
+          SELECT max(served_at) AS at FROM close_snapshot_views WHERE snapshot_id = ${snap.id} AND person_id = ${by.id}`;
+        if (!v?.at || this.now().getTime() - v.at.getTime() > SEEN_WITHIN_MS)
+          throw new ApiError(
+            'conflict',
+            "You haven't been shown this snapshot in the last 24 hours: open the close (or the snapshot) and sign it there",
+            { snapshotSha256: snap.sha256 },
+          );
+        seenAt = v.at;
+      } else {
+        if (input.snapshotSha256)
+          throw new ApiError(
+            'conflict',
+            `${month} has no snapshot yet: sign without one and this signature freezes it`,
+          );
+        // Should-fix 2: steps 7–9 were explained, so no accrual froze a snapshot: the first signature freezes one.
+        const frozen = await this.snapshots.freezeIn(tx, month, {
+          accrual: null,
+          gates: view.steps.slice(0, 6).map((s) => ({ key: s.key, state: s.state, summary: s.summary })),
+          by: { id: by.id, actor: actorOf(by).actor },
+          accrualId: null,
+          reason: 'lock',
+        });
+        snap = (await this.snapshots.byId(frozen.id, tx))!;
+      }
+      const already = await this.signoffs(month, p.round, snap.sha256, tx);
       if (already.some((s) => s.person.id === by.id))
         throw new ApiError('conflict', 'You signed this lock already: a second, different person signs it');
       const taken = new Set(already.map((s) => s.role));
@@ -675,6 +906,17 @@ export class Close {
           'conflict',
           `The ${role === 'cfo' ? 'CFO' : 'controller'} signed already: the lock needs the other role`,
         );
+      if (role === 'controller') {
+        // Segregation of duties: the start, the accrual's acceptance and this signature take two people at least.
+        const d = await this.duties(month, p.round, tx);
+        const people = new Set([d.started?.id, d.accrual?.id, by.id].filter((x): x is string => !!x));
+        if (people.size < 2)
+          throw new ApiError(
+            'conflict',
+            `Segregation of duties: you ${d.started ? 'started this round of the close' : ''}${d.started && d.accrual ? ' and ' : ''}${d.accrual ? "accepted the month's accrual" : ''}; another controller signs it, or another person does one of those steps`,
+            { startedBy: d.started?.label ?? null, accrualAcceptedBy: d.accrual?.label ?? null },
+          );
+      }
       if (p.round === 0) {
         const [earlier] = await tx<{ month: Date }[]>`
           SELECT month FROM periods WHERE month < ${first} AND status <> 'locked' ORDER BY month LIMIT 1`;
@@ -682,27 +924,37 @@ export class Close {
           throw new ApiError('conflict', `Lock ${dayOf(earlier.month).slice(0, 7)} first: months lock in order`);
       }
       await tx`
-        INSERT INTO close_signoffs (month, round, person_id, role, note)
-        VALUES (${first}, ${p.round}, ${by.id}, ${role}, ${input.note})`;
+        INSERT INTO close_signoffs (month, round, person_id, role, note, snapshot_sha256, seen_at)
+        VALUES (${first}, ${p.round}, ${by.id}, ${role}, ${input.note}, ${snap.sha256}, ${seenAt})`;
       await this.audit.append(
         {
           ...actorOf(by),
           action: 'close.signed',
           subjectType: 'period',
           subjectId: month,
-          data: { round: p.round, role, note: input.note },
+          data: {
+            round: p.round,
+            role,
+            note: input.note,
+            snapshotSha256: snap.sha256,
+            seenAt: seenAt?.toISOString() ?? null,
+          },
         },
         tx,
       );
-      const signoffs = await this.signoffs(month, p.round, tx);
+      const signoffs = await this.signoffs(month, p.round, snap.sha256, tx);
       if (signoffs.length < 2) return { locked: false, signoffs, role };
+      // Should-fix 5: the round's package, built now and stored; its manifest's sha256 goes in the lock's entry.
+      const pkg = await this.packager!(month, p.round, signoffs);
+      await tx`
+        INSERT INTO close_packages (month, round, files, manifest, sha256, built_by)
+        VALUES (${first}, ${p.round}, ${tx.json(pkg.files as never)}, ${pkg.manifest}, ${pkg.sha256}, ${by.id})`;
       if (p.round === 0) {
         const [u] = await tx`
           UPDATE periods SET status = 'locked', locked_by = ${by.id}, locked_at = now()
           WHERE month = ${first} AND status = 'closing' RETURNING month`;
         if (!u) throw new ApiError('conflict', `${month} is not closing`);
       }
-      const snap = await this.snapshots.latest(month, tx);
       const gates: CloseStepView[] = view.steps.map((s) =>
         s.key === 'locked'
           ? {
@@ -726,27 +978,34 @@ export class Close {
             from: p.round === 0 ? 'closing' : 'reopened',
             to: 'locked',
             checks: 'four-eyes',
-            signoffs: signoffs.map((s) => ({ person: s.person.email ?? s.person.id, role: s.role, at: s.at })),
-            snapshotSha256: snap?.sha256 ?? null,
+            signoffs: signoffs.map((s) => ({
+              person: s.person.email ?? s.person.id,
+              role: s.role,
+              at: s.at,
+              snapshotSha256: s.snapshotSha256 ?? null,
+              seenAt: s.seenAt ?? null,
+            })),
+            snapshotSha256: snap.sha256,
+            packageSha256: pkg.sha256,
             gates: gates.map((g) => ({ step: g.number, key: g.key, state: g.state })),
           },
         },
         tx,
       );
       await tx`
-        INSERT INTO close_locks (month, round, signoffs, gates, snapshot_id, audit_seq, audit_hash)
-        VALUES (${first}, ${p.round}, ${tx.json(signoffs as never)}, ${tx.json(gates as never)}, ${snap?.id ?? null},
-                ${entry.seq}, ${entry.hash})`;
+        INSERT INTO close_locks (month, round, signoffs, gates, snapshot_id, audit_seq, audit_hash, package_sha256)
+        VALUES (${first}, ${p.round}, ${tx.json(signoffs as never)}, ${tx.json(gates as never)}, ${snap.id},
+                ${entry.seq}, ${entry.hash}, ${pkg.sha256})`;
       const data: PeriodLockedData = {
         month,
         round: p.round,
         signoffs,
         auditSeq: entry.seq,
         auditHash: entry.hash,
-        snapshotSha256: snap?.sha256 ?? null,
+        snapshotSha256: snap.sha256,
         url: `${this.config.consoleUrl}/close?month=${month}`,
       };
-      await this.webhooks.enqueue(tx, 'period.locked', data as never);
+      await this.webhooks.enqueue(tx, 'period.locked', { ...data, packageSha256: pkg.sha256 } as never);
       return { locked: true, signoffs, role };
     });
     let anchor: LockResult['anchor'] = null;

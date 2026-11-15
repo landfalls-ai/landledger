@@ -55,8 +55,11 @@ export class Periods {
     if (this.now().getTime() < Date.parse(`${next}T00:00:00Z`))
       problems.push(`${month} hasn't ended yet (it ends ${next} 00:00 UTC)`);
     const lastDay = day(new Date(Date.parse(`${next}T00:00:00Z`) - 86_400_000));
+    // Daily sources only: an invoice import's run (wave 3) is dated its month's first day and runs once, so it is never
+    // a source with missing days (review of wave 4: an October invoice imported before the close turned step 1 red).
     const sources = await tx<{ source: string; first: Date }[]>`
-      SELECT source, min(day) AS first FROM ingest_runs WHERE outcome = 'succeeded' AND source <> 'manual'
+      SELECT source, min(day) AS first FROM ingest_runs
+      WHERE outcome = 'succeeded' AND source NOT IN ('manual', 'invoice')
       GROUP BY source ORDER BY source`;
     for (const s of sources) {
       const from = day(s.first) > first ? day(s.first) : first;
@@ -109,13 +112,19 @@ export class Periods {
     to: 'closing' | 'locked',
     by: Principal,
     override?: { reason: string },
+    /** Review of wave 4: the close lets FP&A start it (open → closing); the duties rule counts the starter. */
+    opts: { fpaStarts?: boolean } = {},
   ): Promise<Period> {
     if (by.kind !== 'person')
       throw new ApiError(
         'forbidden',
         `Only a person signed in with Landbright ${to === 'locked' ? 'locks' : 'closes'} a month; an API key never does`,
       );
-    if (!by.roles.some((r) => r === 'controller' || r === 'cfo'))
+    if (
+      !by.roles.some(
+        (r) => r === 'controller' || r === 'cfo' || (r === 'fpa' && to === 'closing' && opts.fpaStarts === true),
+      )
+    )
       throw new ApiError('forbidden', 'Closing and locking a month is for the controller or the CFO');
     if (month > this.now().toISOString().slice(0, 7)) throw new ApiError('bad_request', `${month} hasn't started yet`);
     if (override && (to !== 'locked' || !by.roles.includes('controller')))

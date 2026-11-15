@@ -39,7 +39,7 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_COST_METRICS_ENDPOINT` | `${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics` | Where the cost metrics are posted (OTLP/HTTP JSON) |
 | `LANDLEDGER_STEP_DEADLINE_HOURS` | `24` | Business hours a pending approval step waits before it escalates (then as long again before the request expires); 1–720 |
 | `LANDLEDGER_BUSINESS_DAYS` | `mon-fri` | The days that count toward a deadline, each whole in `LANDLEDGER_TZ`: a range `mon-fri` or a list `sun,mon,tue,wed,thu`. This machine: `sun-thu` (a default to confirm, `docs/plan.md`) |
-| `LANDLEDGER_TZ` | `UTC` | The IANA time zone business days are counted in (`Asia/Jerusalem` on this machine); also when a month is over for its invoice, "today" for renewals and seats, and the access review's days |
+| `LANDLEDGER_TZ` | `UTC` | The IANA time zone business days are counted in (`Asia/Jerusalem` on this machine); also when a month is over for its invoice and for its close and accrual, the day an accrual reversal is dated, the month a month-end page shows by default, "today" for renewals and seats, and the access review's days |
 | `LANDLEDGER_HOLIDAYS_FILE` | `deploy/holidays.txt` | Dates that never count toward a deadline, nor are a contract's notice date: one `YYYY-MM-DD` per line, `#` comments; `none` for no file. The file is empty for now |
 | `LANDLEDGER_RECONCILE_TOLERANCE_PCT` | `2` | Reconciliation's tolerance: a provider × model × month is within it when \|invoiced − estimated\| ≤ this percent of the estimate |
 | `LANDLEDGER_RECONCILE_TOLERANCE_USD` | `0.50` | Reconciliation's floor: a variance this small is within tolerance whatever the percent |
@@ -55,5 +55,5 @@ Every default is in `.env.example`; copy it to `.env` (git-ignored) to change on
 | `LANDLEDGER_DATARAILS_MCP_TOKEN` | the fake's dev token when both URLs are loopback, else unset | Bearer token for the MCP server |
 | `LANDLEDGER_DATARAILS_USER`, `LANDLEDGER_DATARAILS_PASSWORD` | the fake's dev user when both URLs are loopback, else unset | Basic auth for the upload |
 | `LANDLEDGER_DATARAILS_FILEBOX` | `fb_technology_costs` | The FileBox the month's files go to |
-| `LANDLEDGER_DATARAILS_REAL` | unset | `true` lets the connector call a host that isn't loopback: a real tenant, wave 5 and the user's decision. Unset, such a host gets 503 |
+| `LANDLEDGER_DATARAILS_REAL` | unset | `true` lets the connector call a host that isn't loopback (only `127.0.0.1` and `::1` count as loopback; `localhost` doesn't). There is no tenant: wave 5 builds our own FP&A product instead (plan.md, Decision 4). Unset, such a host gets 503 |
 | `LANDLEDGER_INTEGRATION` | unset | Tests: a comma list of real services to test against (`db`, or `all`) |

@@ -882,10 +882,11 @@ export class Invoices {
     const version = (prev?.version ?? 0) + 1;
     await tx`
       INSERT INTO invoices (id, version, provider, number, month, status, origin, total_micros, currency, correction,
-                            added, reversed, unchanged, linked, ingest_run_id, file_name, file_sha256, note, imported_by)
+                            added, reversed, unchanged, linked, ingest_run_id, file_name, file_sha256, note, imported_by,
+                            imported_at)
       VALUES (${id}, ${version}, ${inv.provider}, ${inv.number}, ${`${inv.month}-01`}, 'posted', ${input.origin},
               ${total.micros.toString()}, ${USD}, ${locked}, ${added}, ${reversed}, ${unchanged}, ${want.links.length},
-              ${run}, ${input.fileName ?? null}, ${input.fileSha}, ${input.note}, ${userId})`;
+              ${run}, ${input.fileName ?? null}, ${input.fileSha}, ${input.note}, ${userId}, ${this.now()})`;
     await tx`INSERT INTO invoice_lines ${tx(
       inv.lines.map((l) => ({
         invoice_id: id,
@@ -1015,9 +1016,10 @@ export class Invoices {
       [...out, ...restores].forEach((r) => months.add(r.BillingPeriodStart.slice(0, 7)));
       await tx`
         INSERT INTO invoices (id, version, provider, number, month, status, origin, total_micros, currency, correction,
-                              added, reversed, unchanged, linked, ingest_run_id, file_name, file_sha256, note, imported_by)
+                              added, reversed, unchanged, linked, ingest_run_id, file_name, file_sha256, note, imported_by,
+                              imported_at)
         SELECT id, version + 1, provider, number, month, 'voided', origin, total_micros, currency, ${locked},
-               ${restores.length}, ${out.length}, 0, 0, ${run}, file_name, file_sha256, ${reason}, ${userId}
+               ${restores.length}, ${out.length}, 0, 0, ${run}, file_name, file_sha256, ${reason}, ${userId}, ${this.now()}
         FROM invoices WHERE id = ${id} AND version = ${prev.version}`;
       await tx`
         INSERT INTO invoice_lines (invoice_id, version, line, model, sku, quantity, unit, amount_micros, charge_category, description)

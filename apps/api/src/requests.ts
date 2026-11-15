@@ -224,6 +224,11 @@ type Via = 'session' | 'key' | 'mcp';
 
 /** The groups a step escalates to when it has nowhere else to go: the people who administer Landledger. */
 export const ADMIN_GROUPS = ['Finance Controllers', 'Finance CFO'];
+/**
+ * Request kinds only the CFO decides, whoever else is there (review of wave 4, B4): a step never escalates outside
+ * Finance CFO. With nobody eligible it waits and raises `request.no_approver` instead.
+ */
+export const CFO_ONLY_KINDS: readonly string[] = ['period_reopen'];
 /** A decision cites a snapshot served to its person (or, for a relay, the card's) within this long. */
 export const FRESH_MS = 30 * 60_000;
 /** A relay's person is current when SCIM manages them, or they signed in within this long. */
@@ -338,6 +343,10 @@ export class Requests {
     } else if (r.change?.type === 'policy') {
       const rows = await tx<{ id: string }[]>`SELECT proposed_by AS id FROM policies WHERE id = ${r.change.policyId}`;
       for (const row of rows) out.add(row.id);
+    } else if (r.change?.type === 'coa_mapping') {
+      const rows = await tx<{ id: string }[]>`
+        SELECT proposed_by AS id FROM coa_mapping_versions WHERE id = ${r.change.versionId}`;
+      for (const row of rows) out.add(row.id);
     }
     return out;
   }
@@ -396,6 +405,7 @@ export class Requests {
   private async startStep(tx: Tx, r: RequestRow, s: StepRow, rest: readonly StepRow[]): Promise<StepRow> {
     const decided = await tx<DecisionRow[]>`SELECT * FROM decisions WHERE request_id = ${r.id}`;
     if ((await this.approversOf(tx, r, s, decided)).length) return s;
+    if (CFO_ONLY_KINDS.includes(r.kind)) return this.waitForCfo(tx, r, s, 'start');
     const next = rest.find((x) => x.position > s.position);
     const to = next?.groups.length ? next.groups : ADMIN_GROUPS;
     const now = this.now();
@@ -422,6 +432,37 @@ export class Requests {
       tx,
     );
     return esc!;
+  }
+
+  /**
+   * A CFO-only step with nobody who may decide it (the CFO inactive, a service-like account, or the one who asked):
+   * it never escalates to another group (review of wave 4, B4). It waits, says why, and raises an alert:
+   * `request.no_approver` to webhooks and the audit log, again at each deadline it passes.
+   */
+  private async waitForCfo(tx: Tx, r: RequestRow, s: StepRow, at: 'start' | 'deadline'): Promise<StepRow> {
+    const now = this.now();
+    const why = `Nobody in ${s.groups.join(' or ')} can decide this ${r.kind.replace('_', ' ')} request now; it waits for the CFO and never goes to anyone else`;
+    const [w] = await tx<StepRow[]>`
+      UPDATE request_steps SET note = ${`${why}.`}, deadline_at = ${this.deadline(now, s.deadline_hours)}
+      WHERE request_id = ${r.id} AND position = ${s.position} RETURNING *`;
+    const data = { requestId: r.id, kind: r.kind, step: s.position, groups: s.groups, at, why };
+    await this.audit.append(
+      {
+        actor: 'policy',
+        actorKind: 'system',
+        action: 'request.no_approver',
+        subjectType: 'request',
+        subjectId: r.id,
+        data,
+      },
+      tx,
+    );
+    await this.webhooks.enqueue(tx, 'request.no_approver', {
+      ...data,
+      title: r.title,
+      url: `${this.config.consoleUrl}/requests/${r.id}`,
+    } as never);
+    return w!;
   }
 
   // Raising and submitting -------------------------------------------------------------------------------------------
@@ -499,6 +540,18 @@ export class Requests {
         contract: input.contract,
         seat: input.seat,
       });
+    // Should-fix 14 (review of wave 4): the seats beyond what the contract has left are Landledger's to count, never the
+    // caller's; they reserve money at the seat price.
+    if (input.seat && this.contracts) {
+      const ev = await this.contracts
+        .seatEvidence({ id: '', status: 'draft', seat: { ...input.seat, beyond: 0 } as never })
+        .catch(() => null);
+      const seats = input.seat.seats ?? 1;
+      input = {
+        ...input,
+        seat: { ...input.seat, beyond: ev ? Math.min(seats, Math.max(0, -ev.leftAfter)) : 0 },
+      };
+    }
     const contractStart = input.kind === 'contract' && input.contract ? input.contract.start : null;
     const start = input.start ?? contractStart ?? this.now().toISOString().slice(0, 10);
     const end = input.end ?? (input.recurrence === 'once' ? start : null);
@@ -782,10 +835,11 @@ export class Requests {
       const summary = async () => (await this.summaries([await this.rowIn(tx, id)], null, tx))[0]!;
       if (path.automatic) {
         await tx`UPDATE requests SET status = 'approved', decided_at = ${now}, closed_by = 'policy' WHERE id = ${id}`;
+        const rs = await this.seatBeyondIn(tx, r);
         const held =
           r.kind === 'contract'
             ? []
-            : await this.reservations.reserveApprovedIn(tx, { ...r, status: 'approved' }, 'policy');
+            : await this.reservations.reserveApprovedIn(tx, { ...rs, status: 'approved' }, 'policy');
         if (this.contracts && (r.contract || r.seat)) await this.contracts.approvedIn(tx, r, null);
         await this.audit.append(
           {
@@ -1273,8 +1327,9 @@ export class Requests {
       } else {
         // A contract reserves seats, never its TCV as money (spec 009); a seat request reserves both (spec 010).
         // A seat on a contract reserves seats only, not money (wave 4: within contract until Landbright prices seats).
-        if (r.kind !== 'contract' && !withinContract(r))
-          held = await this.reservations.reserveApprovedIn(tx, { ...r, status: 'approved' }, actor.actor);
+        const rs = await this.seatBeyondIn(tx, r);
+        if (r.kind !== 'contract' && !withinContract(rs))
+          held = await this.reservations.reserveApprovedIn(tx, { ...rs, status: 'approved' }, actor.actor);
         if (this.contracts && (r.contract || r.seat)) await this.contracts.approvedIn(tx, r, deciderId);
       }
       const [summary] = await this.summaries([await this.rowIn(tx, id)], null, tx);
@@ -1388,6 +1443,27 @@ export class Requests {
         url: `${this.config.consoleUrl}/close?month=${change.month}`,
       });
       return { change, effectiveFrom: first, version: round, by: by.actor };
+    }
+    if (change.type === 'coa_mapping') {
+      // Review of wave 4: a chart-of-accounts mapping version; journals frozen from now on map through it.
+      const [v] = await tx<{ version: number }[]>`
+        SELECT version FROM coa_mapping_versions WHERE id = ${change.versionId}`;
+      if (!v) throw new ApiError('not_found', `No mapping version ${change.versionId}`);
+      await tx`
+        INSERT INTO coa_mapping_decisions (version_id, outcome, decided_by, request_id)
+        VALUES (${change.versionId}, 'approved', ${decider.id}, ${r.id})`;
+      await this.audit.append(
+        {
+          actor: by.actor,
+          actorKind: 'person',
+          action: 'coa.mapping_approved',
+          subjectType: 'coa_mapping',
+          subjectId: change.versionId,
+          data: { version: v.version, requestId: r.id },
+        },
+        tx,
+      );
+      return { change, effectiveFrom: this.now().toISOString().slice(0, 10), version: v.version, by: by.actor };
     }
     await this.policies.approveIn(tx, change.policyId, decider.id);
     const p = await this.policies.byId(change.policyId, tx);
@@ -1617,6 +1693,18 @@ export class Requests {
           SELECT * FROM request_steps WHERE request_id = ${s.request_id} AND position = ${s.position}`;
         if (!r || r.status !== 'pending' || cur?.status !== 'pending') return;
         const now = this.now();
+        // A CFO-only request never escalates or expires on a deadline: it waits for the CFO, alerting again (B4).
+        if (CFO_ONLY_KINDS.includes(r.kind)) {
+          const decided = await tx<DecisionRow[]>`SELECT * FROM decisions WHERE request_id = ${r.id}`;
+          if (!(await this.approversOf(tx, r, cur, decided)).length) await this.waitForCfo(tx, r, cur, 'deadline');
+          else {
+            const [later] = await tx<StepRow[]>`
+              UPDATE request_steps SET deadline_at = ${this.deadline(now, cur.deadline_hours)}
+              WHERE request_id = ${r.id} AND position = ${cur.position} RETURNING *`;
+            await this.stepPending(tx, r, later!, false);
+          }
+          return;
+        }
         if (!cur.escalated_at) {
           const to = cur.escalate_to.length ? cur.escalate_to : ['Finance CFO'];
           const [esc] = await tx<StepRow[]>`
@@ -2269,11 +2357,31 @@ export class Requests {
     };
   }
 
-  /** A proposal's request (rate card, rule set, policy): raised and submitted with its change. */
+  /**
+   * Should-fix 14: at approval, the seats beyond what the contract has left are counted again (seats may have gone
+   * since the request was raised) and stored on the request, so its reservation holds them at the seat price.
+   */
+  private async seatBeyondIn<
+    R extends { id: string; kind: string; status: string; seat: z.output<typeof SeatTerms> | null },
+  >(tx: Tx, r: R): Promise<R> {
+    if (r.kind !== 'tool_or_seat' || !r.seat || !this.contracts) return r;
+    const ev = await this.contracts.seatEvidence({ ...r, status: 'pending' }).catch(() => null);
+    if (!ev) return r;
+    const beyond = Math.min(r.seat.seats, Math.max(0, -ev.leftAfter));
+    if (beyond === (r.seat.beyond ?? 0)) return r;
+    const seat = { ...r.seat, beyond };
+    await tx`UPDATE requests SET seat = ${tx.json(seat as never)} WHERE id = ${r.id}`;
+    return { ...r, seat };
+  }
+
+  /** A proposal's request (rate card, rule set, policy, reopen, mapping): raised and submitted with its change. */
   async raiseChange(
     tx: Tx,
     input: {
-      kind: Extract<RequestKind, 'rate_card_change' | 'rule_set_change' | 'policy_change' | 'period_reopen'>;
+      kind: Extract<
+        RequestKind,
+        'rate_card_change' | 'rule_set_change' | 'policy_change' | 'period_reopen' | 'coa_mapping_change'
+      >;
       title: string;
       note: string;
       change: RequestChange;

@@ -383,6 +383,11 @@ export interface ContractView {
   noticeCalendarDate: string;
   autoRenew: boolean;
   landbrightApp: string | null;
+  /**
+   * Review of wave 4 (should-fix 12, a default to confirm): how the vendor bills. Only `monthly_in_arrears` accrues;
+   * `prepaid_annual` amortises as a prepaid expense line; `monthly_in_advance` is invoiced before the month.
+   */
+  billing: ContractBilling;
   /** The day `seats.used` was counted (the CSV's `seats_used_as_of`, or the import day). */
   seatsUsedAsOf: string | null;
   /** An approved (or applied) contract request covers this version; false lists it in the exceptions report. */
@@ -420,6 +425,10 @@ export interface ContractsView {
   totals: { annualValue: Amount; tcv: Amount; seatsPaid: number; seatsUsed: number };
 }
 
+/** How a contract bills (review of wave 4, should-fix 12): the default is monthly in arrears. */
+export const ContractBilling = z.enum(['prepaid_annual', 'monthly_in_arrears', 'monthly_in_advance']);
+export type ContractBilling = z.infer<typeof ContractBilling>;
+
 /** A contract request's terms (kind `contract`): the amount is the TCV, once. Seats are what it reserves. */
 export const ContractTerms = z.object({
   vendor: z.string().trim().min(1).max(200),
@@ -439,6 +448,8 @@ export const ContractTerms = z.object({
   /** From a held import: seats used and the day they were counted. */
   seatsUsed: z.number().int().min(0).max(100_000).optional(),
   seatsUsedAsOf: Day.optional(),
+  /** How the vendor bills; default monthly in arrears (review of wave 4). */
+  billing: ContractBilling.optional(),
 });
 export type ContractTerms = z.input<typeof ContractTerms>;
 
@@ -469,6 +480,12 @@ export const SeatTerms = z.object({
   contractId: z.string().min(1).max(100),
   seats: z.number().int().min(1).max(100).default(1),
   seatPrice: PositiveAmount,
+  /**
+   * Review of wave 4 (should-fix 14): the seats beyond what the contract has left, set by Landledger when the request
+   * is raised and again at approval (never by the caller). Those seats reserve money at the seat price; the rest are
+   * within the contract.
+   */
+  beyond: z.number().int().min(0).max(100).optional(),
 });
 export type SeatTerms = z.input<typeof SeatTerms>;
 

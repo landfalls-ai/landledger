@@ -20,6 +20,7 @@ import { CostCenterOwners } from './owners.js';
 import { PersonLinks, RelayChannels } from './relays.js';
 import { Policies } from './policies.js';
 import { Proposals } from './proposals.js';
+import { actorOf } from './principal.js';
 import { Requests } from './requests.js';
 import { Reservations } from './reservations.js';
 import { SecretBox } from './secrets.js';
@@ -30,6 +31,7 @@ import { Anomalies } from './anomalies.js';
 import { Contracts } from './contracts.js';
 import { Invoices } from './invoices.js';
 import { Accruals } from './accruals.js';
+import { Journal } from './journal.js';
 import { Close } from './close.js';
 import { Datarails } from './datarails.js';
 import { ForecastHistory } from './forecast-history.js';
@@ -73,6 +75,7 @@ export interface Services {
   forecastHistory: ForecastHistory;
   snapshots: Snapshots;
   accruals: Accruals;
+  journal: Journal;
   notes: Notes;
   close: Close;
   datarails: Datarails;
@@ -219,6 +222,25 @@ export function createServices(
   const forecastHistory = new ForecastHistory(sql, spend, now);
   const snapshots = new Snapshots(sql, audit, spend, budgets, invoices, forecastHistory);
   const accruals = new Accruals(sql, audit, webhooks, spend, snapshots, config.consoleUrl, now);
+  // Review of wave 4: the frozen journal, the chart-of-accounts mapping (changed by a request) and the roll-forward.
+  const journal = new Journal(sql, audit, now);
+  accruals.journal = journal;
+  accruals.timeZone = config.timeZone ?? 'UTC';
+  journal.source = accruals;
+  journal.raise = (tx, input, by) =>
+    requests.raiseChange(
+      tx,
+      {
+        kind: 'coa_mapping_change',
+        title: `Chart-of-accounts mapping v${input.version}`,
+        note: input.note,
+        change: { type: 'coa_mapping', versionId: input.versionId },
+        evidence: { mapping: input.mapping },
+        start: now().toISOString().slice(0, 10),
+      },
+      by,
+    );
+  journal.submit = (id, by) => requests.submitById(id, actorOf(by));
   let closeRef: Close | null = null;
   const period = (month: string, tx?: Parameters<Close['period']>[1]) => closeRef!.period(month, tx);
   const notes = new Notes(sql, audit, webhooks, snapshots, period, config.consoleUrl);
@@ -234,7 +256,7 @@ export function createServices(
     accruals,
     notes,
     requests,
-    { consoleUrl: config.consoleUrl, unallocatedPct: config.closeUnallocatedPct ?? '5' },
+    { consoleUrl: config.consoleUrl, unallocatedPct: config.closeUnallocatedPct ?? '5', timeZone: config.timeZone },
     log,
     now,
   );
@@ -265,6 +287,7 @@ export function createServices(
     close,
     snapshots,
     accruals,
+    journal,
     notes,
     invoices,
     exceptions,
@@ -272,6 +295,7 @@ export function createServices(
     datarails,
     now,
   );
+  close.packager = (month, round, signing) => packages.forLock(month, round, signing);
   return {
     config,
     sql,
@@ -306,6 +330,7 @@ export function createServices(
     forecastHistory,
     snapshots,
     accruals,
+    journal,
     notes,
     close,
     datarails,

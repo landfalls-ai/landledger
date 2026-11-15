@@ -226,10 +226,12 @@ export class Anomalies {
       FROM anomalies a LEFT JOIN anomaly_acks k ON k.anomaly_id = a.id LEFT JOIN users u ON u.id = k.by_user`;
 
   /** Open: not closed, however old (nothing ages out). All: every one, newest first. */
-  async list(q: { status: 'open' | 'all'; kind?: AnomalyKind; limit: number }): Promise<AnomalyView[]> {
+  /** `month` (YYYY-MM, by the window's start in UTC) narrows it to a month's anomalies, every one (no newest-N cut). */
+  async list(q: { status: 'open' | 'all'; kind?: AnomalyKind; limit: number; month?: string }): Promise<AnomalyView[]> {
     const rows = await this.sql<AnomalyRow[]>`
       ${this.select(this.sql)}
       WHERE (${q.kind ?? null}::text IS NULL OR a.kind = ${q.kind ?? null})
+        AND (${q.month ?? null}::text IS NULL OR to_char(a.window_start AT TIME ZONE 'UTC', 'YYYY-MM') = ${q.month ?? null})
         AND (${q.status} = 'all' OR NOT EXISTS (
           SELECT 1 FROM anomaly_actions c WHERE c.anomaly_id = a.id AND c.action = 'closed'))
       ORDER BY a.detected_at DESC, a.id LIMIT ${q.limit}`;
